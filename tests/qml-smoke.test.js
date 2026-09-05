@@ -307,6 +307,7 @@ test("grid window provides 2x2, 2+3, and 1x1 layouts with zero grid lines", () =
 test("candlestick chart provides pure logarithmic right price scale without R/L toggle", () => {
   const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
   const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
 
   assert.match(chart, /property bool showPriceScale:\s*true/)
   assert.match(chart, /readonly property int scaleGutterWidth:\s*showPriceScale \? Style\.space\(52\) : 0/)
@@ -321,10 +322,11 @@ test("candlestick chart provides pure logarithmic right price scale without R/L 
   assert.match(chart, /id:\s*axisPriceBadge/)
   assert.match(cell, /property bool tfExpanded:\s*false/)
   assert.match(cell, /property bool changingInterval:\s*false/)
-  assert.match(cell, /function startIntervalInput\(\)/)
+  assert.match(cell, /function startIntervalInput\(/)
   assert.match(cell, /id:\s*intervalOverlay/)
   assert.match(cell, /id:\s*activeTfLabel/)
   assert.match(cell, /id:\s*expandedTfRow/)
+  assert.match(grid, /function getActiveCellItem\(\)/)
 })
 
 

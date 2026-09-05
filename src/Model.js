@@ -1101,19 +1101,72 @@ function buildDetailStats(quote, page, insights) {
 
 function parseInterval(query) {
   if (!query || typeof query !== "string") return null
-  var q = query.trim().toUpperCase()
+  var q = query.trim().toUpperCase().replace(/^[^0-9A-Z]+/, "").replace(/[^0-9A-Z]+$/, "")
   if (!q) return null
 
-  if (q === "60" || q === "60M" || q === "1H" || q === "H" || q === "60MIN")
+  if (
+    q === "60" ||
+    q === "60M" ||
+    q === "60MIN" ||
+    q === "60MINS" ||
+    q === "1H" ||
+    q === "1HR" ||
+    q === "1HOUR" ||
+    q === "H" ||
+    q === "HR" ||
+    q === "HOUR"
+  ) {
     return "60"
-  if (q === "1D" || q === "D" || q === "DAY" || q === "DAILY" || q === "1")
+  }
+
+  if (
+    q === "1D" ||
+    q === "1DAY" ||
+    q === "D" ||
+    q === "DAY" ||
+    q === "DAILY" ||
+    q === "1"
+  ) {
     return "1D"
-  if (q === "1W" || q === "W" || q === "WEEK" || q === "WEEKLY")
+  }
+
+  if (
+    q === "1W" ||
+    q === "1WK" ||
+    q === "1WEEK" ||
+    q === "W" ||
+    q === "WK" ||
+    q === "WEEK" ||
+    q === "WEEKLY"
+  ) {
     return "1W"
-  if (q === "1M" || q === "M" || q === "MO" || q === "MONTH" || q === "MONTHLY")
+  }
+
+  if (
+    q === "1M" ||
+    q === "1MO" ||
+    q === "1MON" ||
+    q === "1MONTH" ||
+    q === "M" ||
+    q === "MO" ||
+    q === "MON" ||
+    q === "MONTH" ||
+    q === "MONTHLY"
+  ) {
     return "1M"
-  if (q === "1Y" || q === "Y" || q === "YEAR" || q === "YEARLY")
+  }
+
+  if (
+    q === "1Y" ||
+    q === "1YR" ||
+    q === "1YEAR" ||
+    q === "Y" ||
+    q === "YR" ||
+    q === "YEAR" ||
+    q === "YEARLY"
+  ) {
     return "1Y"
+  }
 
   return null
 }

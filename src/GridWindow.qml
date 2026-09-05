@@ -276,6 +276,22 @@ FloatingWindow {
         root.stateSaveRequested(root.gridMode, sync, root.cellSymbols, splits);
     }
 
+    function getActiveCellItem() {
+        if (root.gridMode === "1x1")
+            return cellFocusSingle;
+        if (root.activeCellIndex === 0)
+            return cell0;
+        if (root.activeCellIndex === 1)
+            return cell1;
+        if (root.activeCellIndex === 2)
+            return root.gridMode === "2+3" ? cell2_3 : cell2;
+        if (root.activeCellIndex === 3)
+            return root.gridMode === "2+3" ? cell3_3 : cell3;
+        if (root.activeCellIndex === 4 && root.gridMode === "2+3")
+            return cell4;
+        return cell0;
+    }
+
     Component.onCompleted: {
         refreshAllCharts();
     }
@@ -289,6 +305,20 @@ FloatingWindow {
         focus: true
 
         Keys.onPressed: function (event) {
+            var activeCell = root.getActiveCellItem();
+            var inputActive = activeCell && (activeCell.searching || activeCell.changingInterval);
+
+            if (inputActive) {
+                if (event.key === Qt.Key_Escape) {
+                    if (activeCell.searching)
+                        activeCell.dismissSearch();
+                    else if (activeCell.changingInterval)
+                        activeCell.dismissIntervalInput();
+                    event.accepted = true;
+                }
+                return;
+            }
+
             if (event.key === Qt.Key_Escape) {
                 if (root.gridExpanded) {
                     root.gridExpanded = false;
@@ -306,34 +336,22 @@ FloatingWindow {
                 var maxIdx = root.gridMode === "2+3" ? 4 : (root.gridMode === "2x2" ? 3 : 0);
                 root.activeCellIndex = (root.activeCellIndex + 1) % (maxIdx + 1);
                 event.accepted = true;
-            } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_5) {
-                var target = event.key - Qt.Key_1;
-                root.activeCellIndex = target;
-                event.accepted = true;
+            } else if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9) {
+                if (activeCell) {
+                    var digit = (event.text && event.text.length > 0) ? event.text : String(event.key - Qt.Key_0);
+                    activeCell.startIntervalInput(digit);
+                    event.accepted = true;
+                }
             } else if (event.key === Qt.Key_Slash || event.key === Qt.Key_S) {
-                if (root.activeCellIndex === 0)
-                    cell0.startSearch();
-                else if (root.activeCellIndex === 1)
-                    cell1.startSearch();
-                else if (root.activeCellIndex === 2)
-                    (root.gridMode === "2+3" ? cell2_3 : cell2).startSearch();
-                else if (root.activeCellIndex === 3)
-                    (root.gridMode === "2+3" ? cell3_3 : cell3).startSearch();
-                else if (root.activeCellIndex === 4 && root.gridMode === "2+3")
-                    cell4.startSearch();
-                event.accepted = true;
+                if (activeCell) {
+                    activeCell.startSearch();
+                    event.accepted = true;
+                }
             } else if (event.key === Qt.Key_Comma || event.key === Qt.Key_I) {
-                if (root.activeCellIndex === 0)
-                    cell0.startIntervalInput();
-                else if (root.activeCellIndex === 1)
-                    cell1.startIntervalInput();
-                else if (root.activeCellIndex === 2)
-                    (root.gridMode === "2+3" ? cell2_3 : cell2).startIntervalInput();
-                else if (root.activeCellIndex === 3)
-                    (root.gridMode === "2+3" ? cell3_3 : cell3).startIntervalInput();
-                else if (root.activeCellIndex === 4 && root.gridMode === "2+3")
-                    cell4.startIntervalInput();
-                event.accepted = true;
+                if (activeCell) {
+                    activeCell.startIntervalInput("");
+                    event.accepted = true;
+                }
             }
         }
 

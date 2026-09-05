@@ -51,6 +51,8 @@ Item {
         root.searchQuery = "";
         root.suggestions = [];
         root.suggestionIndex = 0;
+        searchInput.text = "";
+        searchInput.cursorPosition = 0;
         searchInput.forceActiveFocus();
     }
 
@@ -76,12 +78,15 @@ Item {
         dismissSearch();
     }
 
-    function startIntervalInput() {
+    function startIntervalInput(initialChar) {
         if (root.searching)
             root.dismissSearch();
         root.tfExpanded = false;
         root.changingInterval = true;
-        root.intervalQuery = "";
+        var init = (typeof initialChar === "string") ? initialChar : "";
+        root.intervalQuery = init;
+        intervalInput.text = init;
+        intervalInput.cursorPosition = init.length;
         intervalInput.forceActiveFocus();
     }
 
@@ -108,14 +113,26 @@ Item {
     }
 
     Keys.onPressed: function (event) {
-        if (event.key === Qt.Key_Comma || event.key === Qt.Key_I) {
+        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9) {
             if (!root.searching && !root.changingInterval) {
-                root.startIntervalInput();
+                var digit = (event.text && event.text.length > 0) ? event.text : String(event.key - Qt.Key_0);
+                root.startIntervalInput(digit);
                 event.accepted = true;
                 return;
             }
-        }
-        if (event.key === Qt.Key_Escape) {
+        } else if (event.key === Qt.Key_Comma || event.key === Qt.Key_I) {
+            if (!root.searching && !root.changingInterval) {
+                root.startIntervalInput("");
+                event.accepted = true;
+                return;
+            }
+        } else if (event.key === Qt.Key_Slash || event.key === Qt.Key_S) {
+            if (!root.searching && !root.changingInterval) {
+                root.startSearch();
+                event.accepted = true;
+                return;
+            }
+        } else if (event.key === Qt.Key_Escape) {
             if (root.searching) {
                 root.dismissSearch();
                 event.accepted = true;
@@ -359,7 +376,7 @@ Item {
         anchors.left: parent.left
         anchors.leftMargin: Style.space(8)
         anchors.topMargin: Style.space(4)
-        width: Style.space(160)
+        width: Style.space(170)
         height: Style.space(28)
         z: 200
 
@@ -369,25 +386,46 @@ Item {
             border.width: 1
             border.color: root.foreground
 
-            TextInput {
-                id: intervalInput
+            Row {
                 anchors.fill: parent
-                anchors.margins: Style.space(4)
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                selectByMouse: true
+                anchors.leftMargin: Style.space(6)
+                anchors.rightMargin: Style.space(6)
+                spacing: Style.space(4)
 
-                onTextChanged: {
-                    root.intervalQuery = text;
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "INTERVAL:"
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
                 }
 
-                Keys.onReturnPressed: {
-                    root.commitIntervalInput();
-                }
+                TextInput {
+                    id: intervalInput
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - Style.space(70)
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                    selectByMouse: true
 
-                Keys.onEscapePressed: {
-                    root.dismissIntervalInput();
+                    onTextChanged: {
+                        root.intervalQuery = text;
+                    }
+
+                    Keys.onReturnPressed: {
+                        root.commitIntervalInput();
+                    }
+
+                    Keys.onEnterPressed: {
+                        root.commitIntervalInput();
+                    }
+
+                    Keys.onEscapePressed: {
+                        root.dismissIntervalInput();
+                    }
                 }
             }
         }
