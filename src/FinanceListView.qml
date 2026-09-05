@@ -195,8 +195,6 @@ Column {
                 readonly property var quote: controller.quotes[symbol] || null
                 readonly property bool selected: controller.cursorActive && index === controller.selectedIndex
                 readonly property bool isPinned: Model.isPinned(controller.pinned, symbol)
-                readonly property color sparkColor: controller.toneColor(quote ? quote.changePercent : null)
-
                 CursorSurface {
                     anchors.fill: parent
                     foreground: controller.contentForeground
@@ -226,7 +224,7 @@ Column {
                     Column {
                         id: nameCol
                         anchors.left: parent.left
-                        anchors.right: spark.left
+                        anchors.right: ftfcRow.left
                         anchors.leftMargin: Style.space(8)
                         anchors.rightMargin: Style.space(8)
                         anchors.verticalCenter: parent.verticalCenter
@@ -262,19 +260,70 @@ Column {
                         }
                     }
 
-                    Sparkline {
-                        id: spark
-                        width: Style.space(72)
-                        height: Style.space(28)
+                    Row {
+                        id: ftfcRow
                         anchors.right: parent.right
                         anchors.rightMargin: Style.space(8) + Style.space(108) + Style.space(10)
                         anchors.verticalCenter: parent.verticalCenter
-                        values: quote && quote.closes ? quote.closes : []
-                        lineColor: sparkColor
-                        fillColor: Qt.rgba(sparkColor.r, sparkColor.g, sparkColor.b, 0.2)
-                        showZeroLine: quote && Model.changeTone(quote.changePercent) === "down"
-                        zeroValue: quote && quote.previousClose != null ? quote.previousClose : Number.NaN
-                        zeroLineColor: controller.dim
+                        spacing: Style.space(3)
+
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "60"
+                            color: controller.timeframeColor(quote, "60")
+                            font.family: controller.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.letterSpacing: 1
+                            font.bold: true
+                        }
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "|"
+                            color: controller.dim
+                            font.family: controller.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall
+                        }
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "D"
+                            color: controller.timeframeColor(quote, "D")
+                            font.family: controller.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.letterSpacing: 1
+                            font.bold: true
+                        }
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "|"
+                            color: controller.dim
+                            font.family: controller.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall
+                        }
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "W"
+                            color: controller.timeframeColor(quote, "W")
+                            font.family: controller.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.letterSpacing: 1
+                            font.bold: true
+                        }
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "|"
+                            color: controller.dim
+                            font.family: controller.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall
+                        }
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "M"
+                            color: controller.timeframeColor(quote, "M")
+                            font.family: controller.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.letterSpacing: 1
+                            font.bold: true
+                        }
                     }
 
                     Column {

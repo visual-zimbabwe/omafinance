@@ -133,7 +133,7 @@ function sparkUrl(symbols) {
   var list = Array.isArray(symbols) ? symbols.slice() : []
   return "https://query1.finance.yahoo.com/v7/finance/spark?symbols="
     + encodeURIComponent(list.join(","))
-    + "&range=1d&interval=5m&includePrePost=true"
+    + "&range=1mo&interval=60m&includePrePost=true"
 }
 
 function quoteSymbolsForView(watchlist, detailSymbol, view) {
@@ -450,6 +450,112 @@ function parseCandles(timestamps, indicators) {
   return out
 }
 
+function extractFTFC(timestamps, indicators, price, meta) {
+  var quote = indicators && indicators.quote && indicators.quote[0] ? indicators.quote[0] : null
+  var closes = quote && quote.close ? quote.close : []
+  var opens = quote && quote.open ? quote.open : []
+  var ts = Array.isArray(timestamps) ? timestamps : []
+
+  var p = finiteOrNull(price)
+  if (p === null && closes.length) {
+    for (var k = closes.length - 1; k >= 0; k--) {
+      var ck = finiteOrNull(closes[k])
+      if (ck !== null) {
+        p = ck
+        break
+      }
+    }
+  }
+
+  var fallback = { "60": "flat", "D": "flat", "W": "flat", "M": "flat" }
+  if (p === null || closes.length === 0) return fallback
+
+  var lastTs = ts.length ? ts[ts.length - 1] : Math.floor(Date.now() / 1000)
+  var lastDate = new Date(lastTs * 1000)
+
+  // 60m: open of current 60m bar or close of preceding 60m bar
+  var open60 = null
+  if (opens.length && opens[opens.length - 1] != null) {
+    open60 = finiteOrNull(opens[opens.length - 1])
+  }
+  if (open60 === null && closes.length >= 2) {
+    open60 = finiteOrNull(closes[closes.length - 2])
+  }
+  if (open60 === null && closes.length >= 1) {
+    open60 = finiteOrNull(closes[0])
+  }
+
+  // D (Daily): regularMarketOpen or earliest bar today
+  var dayOpen = meta ? finiteOrNull(meta.regularMarketOpen) : null
+  if (dayOpen === 0) dayOpen = null
+  if (dayOpen === null && ts.length) {
+    for (var i = 0; i < ts.length; i++) {
+      var d = new Date(ts[i] * 1000)
+      if (d.getUTCFullYear() === lastDate.getUTCFullYear() &&
+          d.getUTCMonth() === lastDate.getUTCMonth() &&
+          d.getUTCDate() === lastDate.getUTCDate()) {
+        var oi = opens.length > i ? finiteOrNull(opens[i]) : null
+        dayOpen = oi !== null ? oi : finiteOrNull(closes[i])
+        if (dayOpen !== null) break
+      }
+    }
+  }
+  if (dayOpen === null) {
+    var prev = meta ? (finiteOrNull(meta.chartPreviousClose) || finiteOrNull(meta.previousClose)) : null
+    dayOpen = prev !== null ? prev : finiteOrNull(closes[0])
+  }
+
+  // W (Weekly): Monday 00:00 UTC open
+  var dayOfWeek = lastDate.getUTCDay()
+  var diffToMon = lastDate.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1)
+  var mondayUtc = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), diffToMon, 0, 0, 0) / 1000
+  var weekOpen = null
+  if (ts.length) {
+    for (var w = 0; w < ts.length; w++) {
+      if (ts[w] >= mondayUtc) {
+        var ow = opens.length > w ? finiteOrNull(opens[w]) : null
+        weekOpen = ow !== null ? ow : finiteOrNull(closes[w])
+        if (weekOpen !== null) break
+      }
+    }
+  }
+  if (weekOpen === null) weekOpen = finiteOrNull(closes[0])
+
+  // M (Monthly): 1st of current month 00:00 UTC open
+  var monthUtc = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), 1, 0, 0, 0) / 1000
+  var monthOpen = null
+  if (ts.length) {
+    for (var m = 0; m < ts.length; m++) {
+      if (ts[m] >= monthUtc) {
+        var om = opens.length > m ? finiteOrNull(opens[m]) : null
+        monthOpen = om !== null ? om : finiteOrNull(closes[m])
+        if (monthOpen !== null) break
+      }
+    }
+  }
+  if (monthOpen === null) monthOpen = finiteOrNull(closes[0])
+
+  function tone(curr, ref) {
+    if (curr === null || ref === null) return "flat"
+    return curr >= ref ? "up" : "down"
+  }
+
+  return {
+    "60": tone(p, open60),
+    "D": tone(p, dayOpen),
+    "W": tone(p, weekOpen),
+    "M": tone(p, monthOpen)
+  }
+}
+
+function timeframeColor(quote, tf, upColor, downColor, dimColor) {
+  if (!quote || !quote.ftfc) return dimColor || ""
+  var t = quote.ftfc[tf]
+  if (t === "up") return upColor || ""
+  if (t === "down") return downColor || ""
+  return dimColor || ""
+}
+
 function quoteFromChart(result, fallbackSymbol, rangeKey) {
   if (!result || !result.meta) return null
   var meta = result.meta
@@ -500,6 +606,8 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
     closes.push(candles[k].close)
   }
 
+  var ftfc = extractFTFC(result.timestamp, result.indicators, latest, meta)
+
   return {
     symbol: symbol,
     name: String(meta.shortName || meta.longName || symbol),
@@ -523,7 +631,8 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
     priceHint: meta.priceHint,
     yahooRange: meta.range ? String(meta.range) : "",
     closes: closes,
-    candles: candles
+    candles: candles,
+    ftfc: ftfc
   }
 }
 
@@ -1004,6 +1113,8 @@ if (typeof module !== "undefined") {
     formatIsoDate: formatIsoDate,
     formatCandleTime: formatCandleTime,
     stratScenario: stratScenario,
+    extractFTFC: extractFTFC,
+    timeframeColor: timeframeColor,
     buildDetailStats: buildDetailStats
   }
 }

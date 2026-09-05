@@ -113,54 +113,127 @@ Column {
         width: parent.width
         spacing: Style.space(2)
 
-        Row {
-            spacing: Style.space(8)
+        Item {
+            width: parent.width
+            height: Math.max(tickerRow.implicitHeight, ftfcRow.implicitHeight)
 
-            Text {
-                id: tickerLabel
-                textFormat: Text.PlainText
-                text: controller.detailSymbol
-                color: controller.dim
-                font.family: controller.contentFontFamily
-                font.pixelSize: Style.font.body
-                font.bold: true
+            Row {
+                id: tickerRow
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(8)
+
+                Text {
+                    id: tickerLabel
+                    textFormat: Text.PlainText
+                    text: controller.detailSymbol
+                    color: controller.dim
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                }
+
+                Item {
+                    id: detailsSpinnerSlot
+                    visible: detailViewRoot.showDetailsSpinner
+                    width: visible ? Style.font.body : 0
+                    height: tickerLabel.height
+
+                    Canvas {
+                        id: detailsSpinner
+                        width: Style.font.body
+                        height: Style.font.body
+                        anchors.verticalCenter: parent.verticalCenter
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
+                        onVisibleChanged: if (visible)
+                            requestPaint()
+                        onPaint: {
+                            var ctx = getContext("2d");
+                            var line = Math.max(1.5, width * 0.14);
+                            var radius = Math.min(width, height) / 2 - line;
+                            ctx.reset();
+                            ctx.lineWidth = line;
+                            ctx.lineCap = "round";
+                            ctx.strokeStyle = controller.dim;
+                            ctx.beginPath();
+                            ctx.arc(width / 2, height / 2, radius, 0, Math.PI * 1.5);
+                            ctx.stroke();
+                        }
+
+                        RotationAnimation on rotation {
+                            running: detailsSpinner.visible
+                            from: 0
+                            to: 360
+                            duration: 800
+                            loops: Animation.Infinite
+                        }
+                    }
+                }
             }
 
-            Item {
-                id: detailsSpinnerSlot
-                visible: detailViewRoot.showDetailsSpinner
-                width: visible ? Style.font.body : 0
-                height: tickerLabel.height
+            Row {
+                id: ftfcRow
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(3)
 
-                Canvas {
-                    id: detailsSpinner
-                    width: Style.font.body
-                    height: Style.font.body
-                    anchors.verticalCenter: parent.verticalCenter
-                    onWidthChanged: requestPaint()
-                    onHeightChanged: requestPaint()
-                    onVisibleChanged: if (visible)
-                        requestPaint()
-                    onPaint: {
-                        var ctx = getContext("2d");
-                        var line = Math.max(1.5, width * 0.14);
-                        var radius = Math.min(width, height) / 2 - line;
-                        ctx.reset();
-                        ctx.lineWidth = line;
-                        ctx.lineCap = "round";
-                        ctx.strokeStyle = controller.dim;
-                        ctx.beginPath();
-                        ctx.arc(width / 2, height / 2, radius, 0, Math.PI * 1.5);
-                        ctx.stroke();
-                    }
-
-                    RotationAnimation on rotation {
-                        running: detailsSpinner.visible
-                        from: 0
-                        to: 360
-                        duration: 800
-                        loops: Animation.Infinite
-                    }
+                Text {
+                    textFormat: Text.PlainText
+                    text: "60"
+                    color: controller.timeframeColor(controller.activeQuote, "60")
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.letterSpacing: 1
+                    font.bold: true
+                }
+                Text {
+                    textFormat: Text.PlainText
+                    text: "|"
+                    color: controller.dim
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                }
+                Text {
+                    textFormat: Text.PlainText
+                    text: "D"
+                    color: controller.timeframeColor(controller.activeQuote, "D")
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.letterSpacing: 1
+                    font.bold: true
+                }
+                Text {
+                    textFormat: Text.PlainText
+                    text: "|"
+                    color: controller.dim
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                }
+                Text {
+                    textFormat: Text.PlainText
+                    text: "W"
+                    color: controller.timeframeColor(controller.activeQuote, "W")
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.letterSpacing: 1
+                    font.bold: true
+                }
+                Text {
+                    textFormat: Text.PlainText
+                    text: "|"
+                    color: controller.dim
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                }
+                Text {
+                    textFormat: Text.PlainText
+                    text: "M"
+                    color: controller.timeframeColor(controller.activeQuote, "M")
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.letterSpacing: 1
+                    font.bold: true
                 }
             }
         }
