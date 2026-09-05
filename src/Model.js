@@ -481,8 +481,9 @@ function extractFTFC(timestamps, indicators, price, meta) {
       if (d.getUTCFullYear() === lastDate.getUTCFullYear() &&
           d.getUTCMonth() === lastDate.getUTCMonth() &&
           d.getUTCDate() === lastDate.getUTCDate()) {
-        var cOpen = hasExplicitOpen ? hourlyCandles[i].open : (i > 0 ? hourlyCandles[i - 1].close : hourlyCandles[i].open)
-        dayOpen = cOpen != null ? cOpen : hourlyCandles[i].close
+        dayOpen = hasExplicitOpen && hourlyCandles[i].open != null
+          ? hourlyCandles[i].open
+          : (hourlyCandles[i].open != null ? hourlyCandles[i].open : hourlyCandles[i].close)
         break
       }
     }
@@ -499,8 +500,9 @@ function extractFTFC(timestamps, indicators, price, meta) {
   var weekOpen = null
   for (var w = 0; w < N; w++) {
     if (hourlyCandles[w].timestamp >= mondayUtc) {
-      var wOpen = hasExplicitOpen ? hourlyCandles[w].open : (w > 0 ? hourlyCandles[w - 1].close : hourlyCandles[w].open)
-      weekOpen = wOpen != null ? wOpen : hourlyCandles[w].close
+      weekOpen = hasExplicitOpen && hourlyCandles[w].open != null
+        ? hourlyCandles[w].open
+        : (hourlyCandles[w].open != null ? hourlyCandles[w].open : hourlyCandles[w].close)
       break
     }
   }
@@ -511,8 +513,9 @@ function extractFTFC(timestamps, indicators, price, meta) {
   var monthOpen = null
   for (var m = 0; m < N; m++) {
     if (hourlyCandles[m].timestamp >= monthUtc) {
-      var mOpen = hasExplicitOpen ? hourlyCandles[m].open : (m > 0 ? hourlyCandles[m - 1].close : hourlyCandles[m].open)
-      monthOpen = mOpen != null ? mOpen : hourlyCandles[m].close
+      monthOpen = hasExplicitOpen && hourlyCandles[m].open != null
+        ? hourlyCandles[m].open
+        : (hourlyCandles[m].open != null ? hourlyCandles[m].open : hourlyCandles[m].close)
       break
     }
   }
