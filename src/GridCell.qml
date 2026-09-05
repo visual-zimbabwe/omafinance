@@ -23,6 +23,8 @@ Item {
     property var suggestions: []
     property int suggestionIndex: 0
     property bool tfExpanded: false
+    property bool changingInterval: false
+    property string intervalQuery: ""
 
     signal focusRequested(int index)
     signal maximizeRequested(int index)
@@ -42,6 +44,8 @@ Item {
     }
 
     function startSearch() {
+        if (root.changingInterval)
+            root.dismissIntervalInput();
         root.tfExpanded = false;
         root.searching = true;
         root.searchQuery = "";
@@ -72,6 +76,29 @@ Item {
         dismissSearch();
     }
 
+    function startIntervalInput() {
+        if (root.searching)
+            root.dismissSearch();
+        root.tfExpanded = false;
+        root.changingInterval = true;
+        root.intervalQuery = "";
+        intervalInput.forceActiveFocus();
+    }
+
+    function dismissIntervalInput() {
+        root.changingInterval = false;
+        root.intervalQuery = "";
+        root.forceActiveFocus();
+    }
+
+    function commitIntervalInput() {
+        var parsed = Model.parseInterval(root.intervalQuery);
+        if (parsed) {
+            root.timeframeChangedManually(root.cellIndex, parsed);
+        }
+        dismissIntervalInput();
+    }
+
     HoverHandler {
         id: cellHoverHandler
         onHoveredChanged: {
@@ -81,9 +108,19 @@ Item {
     }
 
     Keys.onPressed: function (event) {
+        if (event.key === Qt.Key_Comma || event.key === Qt.Key_I) {
+            if (!root.searching && !root.changingInterval) {
+                root.startIntervalInput();
+                event.accepted = true;
+                return;
+            }
+        }
         if (event.key === Qt.Key_Escape) {
             if (root.searching) {
                 root.dismissSearch();
+                event.accepted = true;
+            } else if (root.changingInterval) {
+                root.dismissIntervalInput();
                 event.accepted = true;
             } else if (root.tfExpanded) {
                 root.tfExpanded = false;
@@ -309,6 +346,48 @@ Item {
 
                 Keys.onEscapePressed: {
                     root.dismissSearch();
+                }
+            }
+        }
+    }
+
+    // Floating Change Interval Input (Zero-Chrome)
+    Item {
+        id: intervalOverlay
+        visible: root.changingInterval
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(8)
+        anchors.topMargin: Style.space(4)
+        width: Style.space(160)
+        height: Style.space(28)
+        z: 200
+
+        Rectangle {
+            anchors.fill: parent
+            color: Color.popups.background
+            border.width: 1
+            border.color: root.foreground
+
+            TextInput {
+                id: intervalInput
+                anchors.fill: parent
+                anchors.margins: Style.space(4)
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                selectByMouse: true
+
+                onTextChanged: {
+                    root.intervalQuery = text;
+                }
+
+                Keys.onReturnPressed: {
+                    root.commitIntervalInput();
+                }
+
+                Keys.onEscapePressed: {
+                    root.dismissIntervalInput();
                 }
             }
         }

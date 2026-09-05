@@ -1099,6 +1099,25 @@ function buildDetailStats(quote, page, insights) {
   return rows
 }
 
+function parseInterval(query) {
+  if (!query || typeof query !== "string") return null
+  var q = query.trim().toUpperCase()
+  if (!q) return null
+
+  if (q === "60" || q === "60M" || q === "1H" || q === "H" || q === "60MIN")
+    return "60"
+  if (q === "1D" || q === "D" || q === "DAY" || q === "DAILY" || q === "1")
+    return "1D"
+  if (q === "1W" || q === "W" || q === "WEEK" || q === "WEEKLY")
+    return "1W"
+  if (q === "1M" || q === "M" || q === "MO" || q === "MONTH" || q === "MONTHLY")
+    return "1M"
+  if (q === "1Y" || q === "Y" || q === "YEAR" || q === "YEARLY")
+    return "1Y"
+
+  return null
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -1160,7 +1179,8 @@ if (typeof module !== "undefined") {
     defaultGridMode: defaultGridMode,
     defaultGridSync: defaultGridSync,
     defaultGridSplits: defaultGridSplits,
-    gridTimeframes: gridTimeframes
+    gridTimeframes: gridTimeframes,
+    parseInterval: parseInterval
   }
 }
 

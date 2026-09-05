@@ -316,11 +316,23 @@ FloatingWindow {
                 else if (root.activeCellIndex === 1)
                     cell1.startSearch();
                 else if (root.activeCellIndex === 2)
-                    cell2.startSearch();
+                    (root.gridMode === "2+3" ? cell2_3 : cell2).startSearch();
                 else if (root.activeCellIndex === 3)
-                    cell3.startSearch();
-                else if (root.activeCellIndex === 4)
+                    (root.gridMode === "2+3" ? cell3_3 : cell3).startSearch();
+                else if (root.activeCellIndex === 4 && root.gridMode === "2+3")
                     cell4.startSearch();
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Comma || event.key === Qt.Key_I) {
+                if (root.activeCellIndex === 0)
+                    cell0.startIntervalInput();
+                else if (root.activeCellIndex === 1)
+                    cell1.startIntervalInput();
+                else if (root.activeCellIndex === 2)
+                    (root.gridMode === "2+3" ? cell2_3 : cell2).startIntervalInput();
+                else if (root.activeCellIndex === 3)
+                    (root.gridMode === "2+3" ? cell3_3 : cell3).startIntervalInput();
+                else if (root.activeCellIndex === 4 && root.gridMode === "2+3")
+                    cell4.startIntervalInput();
                 event.accepted = true;
             }
         }

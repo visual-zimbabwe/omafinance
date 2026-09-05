@@ -424,5 +424,25 @@ test("gridTimeframes returns expected timeframes per layout", () => {
   assert.deepEqual(Model.gridTimeframes("1x1"), ["1D"])
 })
 
+test("parseInterval parses TradingView-style interval keystrokes and shorthands", () => {
+  assert.equal(Model.parseInterval("60"), "60")
+  assert.equal(Model.parseInterval("60m"), "60")
+  assert.equal(Model.parseInterval("1h"), "60")
+  assert.equal(Model.parseInterval("H"), "60")
+  assert.equal(Model.parseInterval("1D"), "1D")
+  assert.equal(Model.parseInterval("d"), "1D")
+  assert.equal(Model.parseInterval("1"), "1D")
+  assert.equal(Model.parseInterval("1W"), "1W")
+  assert.equal(Model.parseInterval("w"), "1W")
+  assert.equal(Model.parseInterval("1M"), "1M")
+  assert.equal(Model.parseInterval("m"), "1M")
+  assert.equal(Model.parseInterval("1Y"), "1Y")
+  assert.equal(Model.parseInterval("y"), "1Y")
+  assert.equal(Model.parseInterval("invalid"), null)
+  assert.equal(Model.parseInterval(""), null)
+  assert.equal(Model.parseInterval(null), null)
+})
+
+
 
 
