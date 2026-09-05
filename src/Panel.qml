@@ -282,6 +282,19 @@ Panel {
         return dim;
     }
 
+    function timeframeColor(quote, tf) {
+        var sym = (quote && quote.symbol) || detailSymbol;
+        var q = (sym && quotes[sym] && quotes[sym].ftfc) ? quotes[sym] : (quote || (detailSymbol ? quotes[detailSymbol] : null));
+        if (!q || !q.ftfc)
+            return dim;
+        var state = q.ftfc[tf];
+        if (state === "up")
+            return upColor;
+        if (state === "down")
+            return downColor;
+        return dim;
+    }
+
     function pillFill(pct) {
         var tone = Model.changeTone(pct);
         if (tone === "up")
@@ -1011,6 +1024,8 @@ Panel {
                 var valid = parsed && parsed.symbol === root.detailSymbol && (!parsed.yahooRange || parsed.yahooRange === expected);
                 if (valid) {
                     parsed.chartRange = root.detailRange;
+                    if (root.quotes[root.detailSymbol] && root.quotes[root.detailSymbol].ftfc)
+                        parsed.ftfc = root.quotes[root.detailSymbol].ftfc;
                     root.detailQuote = parsed;
                     root.chartFailureCount = 0;
                     root.chartError = "";

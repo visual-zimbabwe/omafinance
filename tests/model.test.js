@@ -278,5 +278,84 @@ test("mergePeriodCandles merges trailing duplicate period snapshots", () => {
     close: 319,
     volume: 4000
   })
+
+  // 60-Minute test: 19:30 UTC (1788550200) and 20:00 UTC market close snapshot (1788552000)
+  const hourlyCandles = [
+    { timestamp: 1788546600, open: 320, high: 322, low: 320, close: 321, volume: 2000 },
+    { timestamp: 1788550200, open: 321, high: 322, low: 319, close: 320, volume: 4000 },
+    { timestamp: 1788552000, open: 319.5, high: 320, low: 319.5, close: 319.5, volume: 0 }
+  ]
+  const mergedHourly = Model.mergePeriodCandles(hourlyCandles, "60")
+  assert.equal(mergedHourly.length, 2)
+  assert.deepEqual(mergedHourly[1], {
+    timestamp: 1788550200,
+    open: 321,
+    high: 322,
+    low: 319,
+    close: 319.5,
+    volume: 4000
+  })
 })
+
+test("extractFTFC accurately extracts multi-timeframe continuity", () => {
+  // Construct timestamps:
+  // Mon Aug 31, 2026: 1788148800 (Week open)
+  // Tue Sep 1, 2026: 1788235200 (Month open)
+  // Fri Sep 4, 2026 14:00 UTC: 1788530400 (Day open)
+  // Fri Sep 4, 2026 15:00 UTC: 1788534000 (Prev hour close / 60m open)
+  // Fri Sep 4, 2026 16:00 UTC: 1788537600 (Current bar)
+  const timestamps = [1788148800, 1788235200, 1788530400, 1788534000, 1788537600]
+  const indicators = {
+    quote: [{
+      close: [100, 105, 110, 115, 120]
+    }]
+  }
+
+  // Case 1: Bullish across all (price 125 >= 115, 110, 100, 105)
+  const ftfcBull = Model.extractFTFC(timestamps, indicators, 125, { regularMarketOpen: 110 })
+  assert.deepEqual(ftfcBull, {
+    "60": "up",
+    "D": "up",
+    "W": "up",
+    "M": "up"
+  })
+
+  // Case 2: Mixed (price 112 -> 60m down vs 115, D up vs 110, W up vs 100, M up vs 105)
+  const ftfcMixed = Model.extractFTFC(timestamps, indicators, 112, { regularMarketOpen: 110 })
+  assert.deepEqual(ftfcMixed, {
+    "60": "down",
+    "D": "up",
+    "W": "up",
+    "M": "up"
+  })
+
+  // Case 3: Bearish across all (price 95)
+  const ftfcBear = Model.extractFTFC(timestamps, indicators, 95, { regularMarketOpen: 110 })
+  assert.deepEqual(ftfcBear, {
+    "60": "down",
+    "D": "down",
+    "W": "down",
+    "M": "down"
+  })
+
+  // Case 4: Missing data returns flat fallback
+  assert.deepEqual(Model.extractFTFC([], {}, null, null), {
+    "60": "flat",
+    "D": "flat",
+    "W": "flat",
+    "M": "flat"
+  })
+})
+
+test("timeframeColor maps FTFC continuity tone to color", () => {
+  const quote = {
+    ftfc: { "60": "up", "D": "down", "W": "flat", "M": "up" }
+  }
+  assert.equal(Model.timeframeColor(quote, "60", "green", "red", "gray"), "green")
+  assert.equal(Model.timeframeColor(quote, "D", "green", "red", "gray"), "red")
+  assert.equal(Model.timeframeColor(quote, "W", "green", "red", "gray"), "gray")
+  assert.equal(Model.timeframeColor(quote, "M", "green", "red", "gray"), "green")
+  assert.equal(Model.timeframeColor(null, "60", "green", "red", "gray"), "gray")
+})
+
 

@@ -241,3 +241,28 @@ test("manifest entry points exist", () => {
   for (const entry of Object.values(manifest.entryPoints))
     assert.equal(fs.existsSync(path.join(root, entry)), true, `missing ${entry}`)
 })
+
+test("detail view presents FTFC 60|D|W|M on far right of header", () => {
+  const detail = fs.readFileSync(source("FinanceDetailView.qml"), "utf8")
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+
+  assert.match(panel, /function timeframeColor\(quote, tf\)/)
+  assert.match(detail, /id:\s*detailHeader/)
+  assert.match(detail, /id:\s*ftfcRow[\s\S]*?anchors\.right:\s*parent\.right/)
+  assert.match(detail, /text:\s*"60"[\s\S]*?controller\.timeframeColor/)
+  assert.match(detail, /text:\s*"D"[\s\S]*?controller\.timeframeColor/)
+  assert.match(detail, /text:\s*"W"[\s\S]*?controller\.timeframeColor/)
+  assert.match(detail, /text:\s*"M"[\s\S]*?controller\.timeframeColor/)
+})
+
+test("watchlist rows display FTFC 60|D|W|M replacing snapshot chart", () => {
+  const list = fs.readFileSync(source("FinanceListView.qml"), "utf8")
+
+  assert.doesNotMatch(list, /\bSparkline\s*\{/)
+  assert.match(list, /id:\s*ftfcRow/)
+  assert.match(list, /text:\s*"60"[\s\S]*?controller\.timeframeColor\(quote, "60"\)/)
+  assert.match(list, /text:\s*"D"[\s\S]*?controller\.timeframeColor\(quote, "D"\)/)
+  assert.match(list, /text:\s*"W"[\s\S]*?controller\.timeframeColor\(quote, "W"\)/)
+  assert.match(list, /text:\s*"M"[\s\S]*?controller\.timeframeColor\(quote, "M"\)/)
+})
+
