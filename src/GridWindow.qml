@@ -16,6 +16,7 @@ FloatingWindow {
 
     property string gridMode: "2x2" // "2x2", "2+3", "1x1"
     property string previousGridMode: "2x2"
+    property bool gridExpanded: false
     property bool syncSymbol: true
     property bool syncTimeframe: false
     property bool syncCrosshair: true
@@ -289,6 +290,11 @@ FloatingWindow {
 
         Keys.onPressed: function (event) {
             if (event.key === Qt.Key_Escape) {
+                if (root.gridExpanded) {
+                    root.gridExpanded = false;
+                    event.accepted = true;
+                    return;
+                }
                 if (root.gridMode === "1x1") {
                     root.gridMode = root.previousGridMode;
                     event.accepted = true;
@@ -329,12 +335,13 @@ FloatingWindow {
                 width: parent.width
                 height: Style.space(36)
 
-                // Grid Layout Selector (Left-aligned)
+                // Grid Layout Selector (Left-aligned, collapsible)
                 Row {
+                    id: gridLayoutRow
                     anchors.left: parent.left
                     anchors.leftMargin: Style.space(12)
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(6)
+                    spacing: Style.space(8)
 
                     Text {
                         text: "GRID"
@@ -344,31 +351,77 @@ FloatingWindow {
                         font.bold: true
                     }
 
-                    Repeater {
-                        model: ["2x2", "2+3", "1x1"]
+                    Item {
+                        id: gridLayoutContainer
+                        implicitWidth: root.gridExpanded ? expandedGridRow.implicitWidth : activeGridLabel.implicitWidth
+                        implicitHeight: Math.max(activeGridLabel.implicitHeight, expandedGridRow.implicitHeight)
+                        anchors.verticalCenter: parent.verticalCenter
 
                         Text {
-                            required property string modelData
+                            id: activeGridLabel
+                            visible: !root.gridExpanded
+                            anchors.verticalCenter: parent.verticalCenter
                             textFormat: Text.PlainText
-                            text: modelData
-                            color: modelData === root.gridMode ? root.foreground : Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
+                            text: root.gridMode
+                            color: root.foreground
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.bodySmall
-                            font.bold: modelData === root.gridMode
+                            font.bold: true
 
                             MouseArea {
                                 anchors.fill: parent
                                 anchors.margins: -Style.space(4)
                                 cursorShape: Qt.PointingHandCursor
+                                hoverEnabled: true
                                 onClicked: {
-                                    root.gridMode = modelData;
-                                    if (!root.syncTimeframe) {
-                                        root.cellTimeframes = Model.gridTimeframes(modelData);
-                                    }
-                                    root.refreshAllCharts();
-                                    root.saveGridState();
+                                    root.gridExpanded = true;
                                 }
                             }
+                        }
+
+                        Row {
+                            id: expandedGridRow
+                            visible: root.gridExpanded
+                            spacing: Style.space(6)
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Repeater {
+                                model: ["2x2", "2+3", "1x1"]
+
+                                Text {
+                                    required property string modelData
+                                    textFormat: Text.PlainText
+                                    text: modelData
+                                    color: modelData === root.gridMode ? root.foreground : Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    font.bold: modelData === root.gridMode
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.margins: -Style.space(4)
+                                        cursorShape: Qt.PointingHandCursor
+                                        hoverEnabled: true
+                                        onClicked: {
+                                            root.gridMode = modelData;
+                                            if (!root.syncTimeframe) {
+                                                root.cellTimeframes = Model.gridTimeframes(modelData);
+                                            }
+                                            root.gridExpanded = false;
+                                            root.refreshAllCharts();
+                                            root.saveGridState();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    HoverHandler {
+                        id: gridLayoutHover
+                        onHoveredChanged: {
+                            if (!hovered)
+                                root.gridExpanded = false;
                         }
                     }
                 }

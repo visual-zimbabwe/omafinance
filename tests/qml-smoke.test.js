@@ -293,6 +293,9 @@ test("grid window provides 2x2, 2+3, and 1x1 layouts with zero grid lines", () =
   const gridWin = fs.readFileSync(source("GridWindow.qml"), "utf8")
   const gridCell = fs.readFileSync(source("GridCell.qml"), "utf8")
 
+  assert.match(gridWin, /property bool gridExpanded:\s*false/)
+  assert.match(gridWin, /id:\s*activeGridLabel/)
+  assert.match(gridWin, /id:\s*expandedGridRow/)
   assert.match(gridWin, /model:\s*\["2x2",\s*"2\+3",\s*"1x1"\]/)
   assert.match(gridWin, /SYM\s*"\s*\+\s*\(root\.syncSymbol/)
   assert.match(gridWin, /CROSS\s*"\s*\+\s*\(root\.syncCrosshair/)
