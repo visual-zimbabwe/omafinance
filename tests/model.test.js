@@ -178,3 +178,105 @@ test("state parsing normalizes symbols and removes invalid pins", () => {
     detailRange: "1Y"
   })
 })
+
+test("parseCandles extracts and sanitizes OHLCV candle structures", () => {
+  const timestamps = [1700000000, 1700000300, 1700000600]
+  const indicators = {
+    quote: [{
+      open: [150.0, null, 153.0],
+      high: [155.0, 154.0, null],
+      low: [149.0, 150.0, 151.0],
+      close: [152.0, 151.0, null],
+      volume: [1000, null, 2000]
+    }]
+  }
+
+  const candles = Model.parseCandles(timestamps, indicators)
+  assert.equal(candles.length, 2)
+  assert.deepEqual(candles[0], {
+    timestamp: 1700000000,
+    open: 150.0,
+    high: 155.0,
+    low: 149.0,
+    close: 152.0,
+    volume: 1000
+  })
+  assert.deepEqual(candles[1], {
+    timestamp: 1700000300,
+    open: 151.0,
+    high: 154.0,
+    low: 150.0,
+    close: 151.0,
+    volume: 0
+  })
+})
+
+test("formatCandleTime formats timestamps per timeframe range", () => {
+  const ts = 1725548400 // specific unix timestamp
+  assert.ok(Model.formatCandleTime(ts, "60").length > 0)
+  assert.ok(Model.formatCandleTime(ts, "1D").length > 0)
+  assert.ok(Model.formatCandleTime(ts, "1W").length > 0)
+  assert.ok(Model.formatCandleTime(ts, "1M").length > 0)
+  assert.ok(Model.formatCandleTime(ts, "1Y").length > 0)
+  assert.equal(Model.formatCandleTime(null, "60"), "")
+})
+
+test("stratScenario accurately identifies 1, 2u, 2d, and 3 scenarios", () => {
+  const prev = { high: 100, low: 90 }
+
+  // 1: Inside bar (high <= prev.high && low >= prev.low)
+  assert.equal(Model.stratScenario({ high: 99, low: 91 }, prev), "1")
+  assert.equal(Model.stratScenario({ high: 100, low: 90 }, prev), "1")
+
+  // 2u: Directional Up (high > prev.high && low >= prev.low)
+  assert.equal(Model.stratScenario({ high: 105, low: 90 }, prev), "2u")
+  assert.equal(Model.stratScenario({ high: 105, low: 95 }, prev), "2u")
+
+  // 2d: Directional Down (low < prev.low && high <= prev.high)
+  assert.equal(Model.stratScenario({ high: 100, low: 85 }, prev), "2d")
+  assert.equal(Model.stratScenario({ high: 95, low: 85 }, prev), "2d")
+
+  // 3: Outside bar (high > prev.high && low < prev.low)
+  assert.equal(Model.stratScenario({ high: 105, low: 85 }, prev), "3")
+
+  // Missing or invalid data
+  assert.equal(Model.stratScenario(null, prev), "-")
+  assert.equal(Model.stratScenario({ high: 100, low: 90 }, null), "-")
+})
+
+test("mergePeriodCandles merges trailing duplicate period snapshots", () => {
+  // Weekly test: Mon Aug 31 (1788148800) and Fri Sep 4 (1788552001)
+  const weeklyCandles = [
+    { timestamp: 1787544000, open: 310, high: 315, low: 305, close: 312, volume: 1000 },
+    { timestamp: 1788148800, open: 319, high: 325, low: 318, close: 320, volume: 2000 },
+    { timestamp: 1788552001, open: 325, high: 328, low: 317, close: 328, volume: 500 }
+  ]
+  const mergedWeekly = Model.mergePeriodCandles(weeklyCandles, "1W")
+  assert.equal(mergedWeekly.length, 2)
+  assert.deepEqual(mergedWeekly[1], {
+    timestamp: 1788148800,
+    open: 319,
+    high: 328, // max(325, 328)
+    low: 317,  // min(318, 317)
+    close: 328, // updated to latest close
+    volume: 2500
+  })
+
+  // Monthly test: Sep 1 (1788235200) and Sep 4 (1788552001)
+  const monthlyCandles = [
+    { timestamp: 1780286400, open: 300, high: 310, low: 295, close: 305, volume: 5000 },
+    { timestamp: 1788235200, open: 305, high: 315, low: 302, close: 310, volume: 3000 },
+    { timestamp: 1788552001, open: 310, high: 320, low: 308, close: 319, volume: 1000 }
+  ]
+  const mergedMonthly = Model.mergePeriodCandles(monthlyCandles, "1M")
+  assert.equal(mergedMonthly.length, 2)
+  assert.deepEqual(mergedMonthly[1], {
+    timestamp: 1788235200,
+    open: 305,
+    high: 320,
+    low: 302,
+    close: 319,
+    volume: 4000
+  })
+})
+
