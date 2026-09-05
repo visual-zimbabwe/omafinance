@@ -329,157 +329,43 @@ FloatingWindow {
                 width: parent.width
                 height: Style.space(36)
 
+                // Grid Layout Selector (Left-aligned)
                 Row {
                     anchors.left: parent.left
                     anchors.leftMargin: Style.space(12)
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(16)
+                    spacing: Style.space(6)
 
-                    // Grid Layout Selector
-                    Row {
-                        spacing: Style.space(6)
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        Text {
-                            text: "GRID"
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: true
-                        }
-
-                        Repeater {
-                            model: ["2x2", "2+3", "1x1"]
-
-                            Text {
-                                required property string modelData
-                                textFormat: Text.PlainText
-                                text: modelData
-                                color: modelData === root.gridMode ? root.foreground : Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                font.bold: modelData === root.gridMode
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    anchors.margins: -Style.space(4)
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        root.gridMode = modelData;
-                                        if (!root.syncTimeframe) {
-                                            root.cellTimeframes = Model.gridTimeframes(modelData);
-                                        }
-                                        root.refreshAllCharts();
-                                        root.saveGridState();
-                                    }
-                                }
-                            }
-                        }
+                    Text {
+                        text: "GRID"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
                     }
 
-                    // Sync Toggles
-                    Row {
-                        spacing: Style.space(10)
-                        anchors.verticalCenter: parent.verticalCenter
+                    Repeater {
+                        model: ["2x2", "2+3", "1x1"]
 
                         Text {
-                            text: "SYNC"
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: true
-                        }
-
-                        Text {
+                            required property string modelData
                             textFormat: Text.PlainText
-                            text: "SYM " + (root.syncSymbol ? "[ON]" : "[OFF]")
-                            color: root.syncSymbol ? root.foreground : root.dim
+                            text: modelData
+                            color: modelData === root.gridMode ? root.foreground : Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.bodySmall
-                            font.bold: root.syncSymbol
+                            font.bold: modelData === root.gridMode
 
                             MouseArea {
                                 anchors.fill: parent
                                 anchors.margins: -Style.space(4)
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
-                                    root.syncSymbol = !root.syncSymbol;
-                                    if (root.syncSymbol) {
-                                        var currentSym = root.symbolForCell(root.activeCellIndex);
-                                        root.mainSymbol = currentSym;
-                                        var nextSymbols = [];
-                                        for (var i = 0; i < 5; i++)
-                                            nextSymbols.push(currentSym);
-                                        root.cellSymbols = nextSymbols;
+                                    root.gridMode = modelData;
+                                    if (!root.syncTimeframe) {
+                                        root.cellTimeframes = Model.gridTimeframes(modelData);
                                     }
                                     root.refreshAllCharts();
-                                    root.saveGridState();
-                                }
-                            }
-                        }
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "TF " + (root.syncTimeframe ? "[ON]" : "[OFF]")
-                            color: root.syncTimeframe ? root.foreground : root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: root.syncTimeframe
-
-                            MouseArea {
-                                anchors.fill: parent
-                                anchors.margins: -Style.space(4)
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.syncTimeframe = !root.syncTimeframe;
-                                    if (root.syncTimeframe) {
-                                        var currentTf = root.timeframeForCell(root.activeCellIndex);
-                                        var nextTfs = [];
-                                        for (var i = 0; i < 5; i++)
-                                            nextTfs.push(currentTf);
-                                        root.cellTimeframes = nextTfs;
-                                    } else {
-                                        root.cellTimeframes = Model.gridTimeframes(root.gridMode === "1x1" ? root.previousGridMode : root.gridMode);
-                                    }
-                                    root.refreshAllCharts();
-                                    root.saveGridState();
-                                }
-                            }
-                        }
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "CROSS " + (root.syncCrosshair ? "[ON]" : "[OFF]")
-                            color: root.syncCrosshair ? root.foreground : root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: root.syncCrosshair
-
-                            MouseArea {
-                                anchors.fill: parent
-                                anchors.margins: -Style.space(4)
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.syncCrosshair = !root.syncCrosshair;
-                                    root.saveGridState();
-                                }
-                            }
-                        }
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "TIME " + (root.syncTime ? "[ON]" : "[OFF]")
-                            color: root.syncTime ? root.foreground : root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: root.syncTime
-
-                            MouseArea {
-                                anchors.fill: parent
-                                anchors.margins: -Style.space(4)
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.syncTime = !root.syncTime;
                                     root.saveGridState();
                                 }
                             }
@@ -487,22 +373,114 @@ FloatingWindow {
                     }
                 }
 
-                // Close / Dismiss
-                Text {
+                // Sync Toggles (Right-aligned)
+                Row {
                     anchors.right: parent.right
                     anchors.rightMargin: Style.space(12)
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "CLOSE"
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.bold: true
+                    spacing: Style.space(10)
 
-                    MouseArea {
-                        anchors.fill: parent
-                        anchors.margins: -Style.space(4)
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.visible = false
+                    Text {
+                        text: "SYNC"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: "SYM " + (root.syncSymbol ? "[ON]" : "[OFF]")
+                        color: root.syncSymbol ? root.foreground : root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: root.syncSymbol
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.syncSymbol = !root.syncSymbol;
+                                if (root.syncSymbol) {
+                                    var currentSym = root.symbolForCell(root.activeCellIndex);
+                                    root.mainSymbol = currentSym;
+                                    var nextSymbols = [];
+                                    for (var i = 0; i < 5; i++)
+                                        nextSymbols.push(currentSym);
+                                    root.cellSymbols = nextSymbols;
+                                }
+                                root.refreshAllCharts();
+                                root.saveGridState();
+                            }
+                        }
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: "TF " + (root.syncTimeframe ? "[ON]" : "[OFF]")
+                        color: root.syncTimeframe ? root.foreground : root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: root.syncTimeframe
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.syncTimeframe = !root.syncTimeframe;
+                                if (root.syncTimeframe) {
+                                    var currentTf = root.timeframeForCell(root.activeCellIndex);
+                                    var nextTfs = [];
+                                    for (var i = 0; i < 5; i++)
+                                        nextTfs.push(currentTf);
+                                    root.cellTimeframes = nextTfs;
+                                } else {
+                                    root.cellTimeframes = Model.gridTimeframes(root.gridMode === "1x1" ? root.previousGridMode : root.gridMode);
+                                }
+                                root.refreshAllCharts();
+                                root.saveGridState();
+                            }
+                        }
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: "CROSS " + (root.syncCrosshair ? "[ON]" : "[OFF]")
+                        color: root.syncCrosshair ? root.foreground : root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: root.syncCrosshair
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.syncCrosshair = !root.syncCrosshair;
+                                root.saveGridState();
+                            }
+                        }
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: "TIME " + (root.syncTime ? "[ON]" : "[OFF]")
+                        color: root.syncTime ? root.foreground : root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: root.syncTime
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.syncTime = !root.syncTime;
+                                root.saveGridState();
+                            }
+                        }
                     }
                 }
             }
