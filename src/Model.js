@@ -133,7 +133,7 @@ function sparkUrl(symbols) {
   var list = Array.isArray(symbols) ? symbols.slice() : []
   return "https://query1.finance.yahoo.com/v7/finance/spark?symbols="
     + encodeURIComponent(list.join(","))
-    + "&range=1mo&interval=60m&includePrePost=true"
+    + "&range=1mo&interval=60m&includePrePost=false"
 }
 
 function quoteSymbolsForView(watchlist, detailSymbol, view) {
@@ -452,57 +452,46 @@ function parseCandles(timestamps, indicators) {
 
 function extractFTFC(timestamps, indicators, price, meta) {
   var quote = indicators && indicators.quote && indicators.quote[0] ? indicators.quote[0] : null
-  var closes = quote && quote.close ? quote.close : []
-  var opens = quote && quote.open ? quote.open : []
-  var ts = Array.isArray(timestamps) ? timestamps : []
-
+  var hasExplicitOpen = !!(quote && quote.open && quote.open.length)
   var p = finiteOrNull(price)
-  if (p === null && closes.length) {
-    for (var k = closes.length - 1; k >= 0; k--) {
-      var ck = finiteOrNull(closes[k])
-      if (ck !== null) {
-        p = ck
-        break
-      }
-    }
-  }
+  var rawCandles = parseCandles(timestamps, indicators)
+  var hourlyCandles = mergePeriodCandles(rawCandles, "60")
+  var N = hourlyCandles.length
 
   var fallback = { "60": "flat", "D": "flat", "W": "flat", "M": "flat" }
-  if (p === null || closes.length === 0) return fallback
+  if (!N || p === null) return fallback
 
-  var lastTs = ts.length ? ts[ts.length - 1] : Math.floor(Date.now() / 1000)
-  var lastDate = new Date(lastTs * 1000)
+  var lastCandle = hourlyCandles[N - 1]
+  var lastDate = new Date(lastCandle.timestamp * 1000)
 
-  // 60m: open of current 60m bar or close of preceding 60m bar
+  // 60m: open of current 60m bar
   var open60 = null
-  if (opens.length && opens[opens.length - 1] != null) {
-    open60 = finiteOrNull(opens[opens.length - 1])
-  }
-  if (open60 === null && closes.length >= 2) {
-    open60 = finiteOrNull(closes[closes.length - 2])
-  }
-  if (open60 === null && closes.length >= 1) {
-    open60 = finiteOrNull(closes[0])
+  if (hasExplicitOpen && lastCandle.open != null) {
+    open60 = lastCandle.open
+  } else if (N >= 2) {
+    open60 = hourlyCandles[N - 2].close
+  } else {
+    open60 = lastCandle.open != null ? lastCandle.open : lastCandle.close
   }
 
   // D (Daily): regularMarketOpen or earliest bar today
   var dayOpen = meta ? finiteOrNull(meta.regularMarketOpen) : null
   if (dayOpen === 0) dayOpen = null
-  if (dayOpen === null && ts.length) {
-    for (var i = 0; i < ts.length; i++) {
-      var d = new Date(ts[i] * 1000)
+  if (dayOpen === null) {
+    for (var i = 0; i < N; i++) {
+      var d = new Date(hourlyCandles[i].timestamp * 1000)
       if (d.getUTCFullYear() === lastDate.getUTCFullYear() &&
           d.getUTCMonth() === lastDate.getUTCMonth() &&
           d.getUTCDate() === lastDate.getUTCDate()) {
-        var oi = opens.length > i ? finiteOrNull(opens[i]) : null
-        dayOpen = oi !== null ? oi : finiteOrNull(closes[i])
-        if (dayOpen !== null) break
+        var cOpen = hasExplicitOpen ? hourlyCandles[i].open : (i > 0 ? hourlyCandles[i - 1].close : hourlyCandles[i].open)
+        dayOpen = cOpen != null ? cOpen : hourlyCandles[i].close
+        break
       }
     }
   }
   if (dayOpen === null) {
     var prev = meta ? (finiteOrNull(meta.chartPreviousClose) || finiteOrNull(meta.previousClose)) : null
-    dayOpen = prev !== null ? prev : finiteOrNull(closes[0])
+    dayOpen = prev !== null ? prev : hourlyCandles[0].close
   }
 
   // W (Weekly): Monday 00:00 UTC open
@@ -510,30 +499,26 @@ function extractFTFC(timestamps, indicators, price, meta) {
   var diffToMon = lastDate.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1)
   var mondayUtc = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), diffToMon, 0, 0, 0) / 1000
   var weekOpen = null
-  if (ts.length) {
-    for (var w = 0; w < ts.length; w++) {
-      if (ts[w] >= mondayUtc) {
-        var ow = opens.length > w ? finiteOrNull(opens[w]) : null
-        weekOpen = ow !== null ? ow : finiteOrNull(closes[w])
-        if (weekOpen !== null) break
-      }
+  for (var w = 0; w < N; w++) {
+    if (hourlyCandles[w].timestamp >= mondayUtc) {
+      var wOpen = hasExplicitOpen ? hourlyCandles[w].open : (w > 0 ? hourlyCandles[w - 1].close : hourlyCandles[w].open)
+      weekOpen = wOpen != null ? wOpen : hourlyCandles[w].close
+      break
     }
   }
-  if (weekOpen === null) weekOpen = finiteOrNull(closes[0])
+  if (weekOpen === null) weekOpen = hourlyCandles[0].close
 
   // M (Monthly): 1st of current month 00:00 UTC open
   var monthUtc = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), 1, 0, 0, 0) / 1000
   var monthOpen = null
-  if (ts.length) {
-    for (var m = 0; m < ts.length; m++) {
-      if (ts[m] >= monthUtc) {
-        var om = opens.length > m ? finiteOrNull(opens[m]) : null
-        monthOpen = om !== null ? om : finiteOrNull(closes[m])
-        if (monthOpen !== null) break
-      }
+  for (var m = 0; m < N; m++) {
+    if (hourlyCandles[m].timestamp >= monthUtc) {
+      var mOpen = hasExplicitOpen ? hourlyCandles[m].open : (m > 0 ? hourlyCandles[m - 1].close : hourlyCandles[m].open)
+      monthOpen = mOpen != null ? mOpen : hourlyCandles[m].close
+      break
     }
   }
-  if (monthOpen === null) monthOpen = finiteOrNull(closes[0])
+  if (monthOpen === null) monthOpen = hourlyCandles[0].close
 
   function tone(curr, ref) {
     if (curr === null || ref === null) return "flat"
