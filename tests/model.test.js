@@ -338,7 +338,45 @@ test("extractFTFC accurately extracts multi-timeframe continuity", () => {
     "M": "down"
   })
 
-  // Case 4: Missing data returns flat fallback
+  // Case 4: GOOGL multi-timeframe scenario (Spark without open array)
+  // Aug 28 (prior week close: 346.59), Aug 31 (Mon close: 337.525), Sep 1 (Month close: 336.66),
+  // Sep 3 (Thu close: 342.48), Sep 4 14:00 (Fri 10:30am close: 337.99), Sep 4 15:00 (prev hr close: 338.50), Sep 4 16:00 (cur close: 338.46)
+  const googlTimestamps = [1787976000, 1788148800, 1788235200, 1788448800, 1788530400, 1788534000, 1788537600]
+  const googlSparkIndicators = {
+    quote: [{
+      close: [346.59, 337.525, 336.66, 342.48, 337.99, 338.50, 338.46]
+    }]
+  }
+  const ftfcGooglSpark = Model.extractFTFC(googlTimestamps, googlSparkIndicators, 338.46, {
+    regularMarketOpen: 342.47,
+    previousClose: 342.48
+  })
+  assert.deepEqual(ftfcGooglSpark, {
+    "60": "down",
+    "D": "down",
+    "W": "down",
+    "M": "up"
+  })
+
+  // Case 5: Explicit open array (Chart payload)
+  const googlChartIndicators = {
+    quote: [{
+      open: [345.00, 343.83, 336.00, 340.00, 342.47, 338.50, 338.50],
+      close: [346.59, 337.525, 336.66, 342.48, 337.99, 338.50, 338.46]
+    }]
+  }
+  const ftfcGooglChart = Model.extractFTFC(googlTimestamps, googlChartIndicators, 338.46, {
+    regularMarketOpen: 342.47,
+    previousClose: 342.48
+  })
+  assert.deepEqual(ftfcGooglChart, {
+    "60": "down",
+    "D": "down",
+    "W": "down",
+    "M": "up"
+  })
+
+  // Case 6: Missing data returns flat fallback
   assert.deepEqual(Model.extractFTFC([], {}, null, null), {
     "60": "flat",
     "D": "flat",
@@ -357,5 +395,34 @@ test("timeframeColor maps FTFC continuity tone to color", () => {
   assert.equal(Model.timeframeColor(quote, "M", "green", "red", "gray"), "green")
   assert.equal(Model.timeframeColor(null, "60", "green", "red", "gray"), "gray")
 })
+
+test("grid state parsing and serialization preserves grid configuration", () => {
+  const customSplits = {
+    "2x2": { rowRatio: 0.6, colTopRatio: 0.4, colBotRatio: 0.5 },
+    "2+3": { rowRatio: 0.45, colTopRatio: 0.5, colBotRatios: [0.3, 0.35, 0.35] }
+  }
+  const serialized = Model.serializeState(
+    ["AAPL", "TSLA"],
+    ["AAPL"],
+    "1D",
+    "2+3",
+    { symbol: false, timeframe: true, crosshair: true, time: true },
+    ["AAPL", "NVDA", "MSFT", "AMZN", "GOOGL"],
+    customSplits
+  )
+  const parsed = Model.parseState(serialized)
+
+  assert.equal(parsed.gridMode, "2+3")
+  assert.deepEqual(parsed.gridSync, { symbol: false, timeframe: true, crosshair: true, time: true })
+  assert.deepEqual(parsed.gridSymbols, ["AAPL", "NVDA", "MSFT", "AMZN", "GOOGL"])
+  assert.deepEqual(parsed.gridSplits, customSplits)
+})
+
+test("gridTimeframes returns expected timeframes per layout", () => {
+  assert.deepEqual(Model.gridTimeframes("2x2"), ["60", "1D", "1W", "1M"])
+  assert.deepEqual(Model.gridTimeframes("2+3"), ["60", "1D", "1W", "1M", "1Y"])
+  assert.deepEqual(Model.gridTimeframes("1x1"), ["1D"])
+})
+
 
 

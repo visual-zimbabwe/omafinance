@@ -14,7 +14,10 @@ const qmlFiles = [
   "FinanceListView.qml",
   "FinanceSettingsView.qml",
   "FinanceDetailView.qml",
-  "PriceRoll.qml"
+  "PriceRoll.qml",
+  "GridSplitter.qml",
+  "GridCell.qml",
+  "GridWindow.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
@@ -193,7 +196,7 @@ test("candlestick chart renders OHLC candles and interactive crosshairs", () => 
   assert.match(candleChart, /onCandlesChanged:\s*refreshGeometry\(\)/)
   assert.match(candleChart, /Model\.stratScenario/)
   assert.match(candleChart, /function buildGeom\(\)/)
-  assert.match(candleChart, /updateHover\(mouse\.x\)/)
+  assert.match(candleChart, /updateHover\(mouse\.x,\s*mouse\.y\)/)
   assert.match(candleChart, /ctx\.fillRect\(bodyLeft, bodyTop/)
   assert.match(detail, /\bCandlestickChart\s*\{/)
   assert.match(detail, /symbol:\s*controller\.detailSymbol/)
@@ -265,4 +268,59 @@ test("watchlist rows display FTFC 60|D|W|M replacing snapshot chart", () => {
   assert.match(list, /text:\s*"W"[\s\S]*?controller\.timeframeColor\(quote, "W"\)/)
   assert.match(list, /text:\s*"M"[\s\S]*?controller\.timeframeColor\(quote, "M"\)/)
 })
+
+test("detail view includes Grid button after Pin", () => {
+  const detail = fs.readFileSync(source("FinanceDetailView.qml"), "utf8")
+  const pinIdx = detail.indexOf('text: Model.isPinned(controller.pinned, controller.detailSymbol) ? "Pinned" : "Pin"')
+  const gridIdx = detail.indexOf('text: "Grid"')
+
+  assert.notEqual(pinIdx, -1)
+  assert.notEqual(gridIdx, -1)
+  assert.ok(gridIdx > pinIdx)
+  assert.match(detail, /onClicked:\s*controller\.openGrid\(controller\.detailSymbol\)/)
+})
+
+test("panel configures and loads GridWindow with persistence", () => {
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+
+  assert.match(panel, /readonly property var detailActionIds:[\s\S]*?"grid"/)
+  assert.match(panel, /function openGrid\(symbol\)/)
+  assert.match(panel, /GridWindow\s*\{/)
+  assert.match(panel, /onStateSaveRequested:\s*function\s*\(mode,\s*sync,\s*symbols,\s*splits\)/)
+})
+
+test("grid window provides 2x2, 2+3, and 1x1 layouts with zero grid lines", () => {
+  const gridWin = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const gridCell = fs.readFileSync(source("GridCell.qml"), "utf8")
+
+  assert.match(gridWin, /model:\s*\["2x2",\s*"2\+3",\s*"1x1"\]/)
+  assert.match(gridWin, /SYM\s*"\s*\+\s*\(root\.syncSymbol/)
+  assert.match(gridWin, /CROSS\s*"\s*\+\s*\(root\.syncCrosshair/)
+  assert.match(gridWin, /TIME\s*"\s*\+\s*\(root\.syncTime/)
+  assert.match(gridCell, /showGridLines:\s*false/)
+  assert.match(gridCell, /showTooltipHeader:\s*false/)
+})
+
+test("candlestick chart provides pure logarithmic right price scale without R/L toggle", () => {
+  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+
+  assert.match(chart, /property bool showPriceScale:\s*true/)
+  assert.match(chart, /readonly property int scaleGutterWidth:\s*showPriceScale \? Style\.space\(52\) : 0/)
+  assert.match(chart, /var right = Math\.max\(left \+ 1, w - root\.pad - scaleGutter\);/)
+  assert.match(chart, /var logMin = Math\.log\(safeMin\);/)
+  assert.doesNotMatch(chart, /property string scaleMode/)
+  assert.doesNotMatch(chart, /id:\s*scaleModeBtn/)
+  assert.match(chart, /property bool hoveringScale:\s*false/)
+  assert.match(chart, /property int hoveredTickIndex:\s*-1/)
+  assert.match(chart, /if\s*\(root\.showPriceScale\s*&&\s*px\s*>=\s*g\.right\)/)
+  assert.match(chart, /id:\s*horizontalCrosshair[\s\S]*?dashPattern:\s*\[2,\s*3\]/)
+  assert.match(chart, /id:\s*axisPriceBadge/)
+  assert.match(cell, /property bool tfExpanded:\s*false/)
+  assert.match(cell, /id:\s*activeTfLabel/)
+  assert.match(cell, /id:\s*expandedTfRow/)
+})
+
+
+
 

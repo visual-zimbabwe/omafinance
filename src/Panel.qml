@@ -26,6 +26,16 @@ Panel {
     property string detailSymbol: ""
     property string detailRange: "1D"
     property var detailQuote: null
+    property string gridMode: "2x2"
+    property var gridSync: ({
+            symbol: true,
+            timeframe: false,
+            crosshair: true,
+            time: true
+        })
+    property var gridSymbols: []
+    property var gridSplits: ({})
+    property bool gridOpened: false
     property string chartFetchSymbol: ""
     property string chartFetchRange: ""
     property string insightsFetchSymbol: ""
@@ -200,7 +210,7 @@ Panel {
     readonly property string priceCaption: Model.rangeCaption(detailRange, sessionQuote)
     readonly property bool detailIsFavorite: Model.isFavorite(watchlist, detailSymbol)
     readonly property var detailActionIds: {
-        var actions = ["favorite", "pin"];
+        var actions = ["favorite", "pin", "grid"];
         if (detailIsFavorite)
             actions.push("remove");
         return actions;
@@ -327,7 +337,7 @@ Panel {
     }
 
     function persist() {
-        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange));
+        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits));
     }
 
     function persistSettings(values) {
@@ -400,6 +410,10 @@ Panel {
         persistSettings({
             barSection: next
         });
+        if (root.bar && root.bar.shell && typeof root.bar.shell.movePluginEntry === "function") {
+            root.bar.shell.movePluginEntry(root.moduleName, next);
+            return;
+        }
         barMoveProc.command = ["omarchy", "bar", "move", root.moduleName, "--section", next];
         barMoveProc.running = true;
     }
@@ -418,6 +432,14 @@ Panel {
         pinned = state.pinned;
         if (state.detailRange)
             detailRange = state.detailRange;
+        if (state.gridMode)
+            gridMode = state.gridMode;
+        if (state.gridSync)
+            gridSync = state.gridSync;
+        if (state.gridSymbols)
+            gridSymbols = state.gridSymbols;
+        if (state.gridSplits)
+            gridSplits = state.gridSplits;
         clampSelected();
         if (before !== after && (opened || showBarQuote))
             Qt.callLater(refresh);
@@ -841,6 +863,8 @@ Panel {
                 toggleFavorite(detailSymbol);
             else if (action === "pin")
                 pinSymbol(detailSymbol);
+            else if (action === "grid")
+                openGrid(detailSymbol);
             else if (action === "remove") {
                 removeSymbol(detailSymbol);
                 closeDetail();
@@ -1323,6 +1347,54 @@ Panel {
                         controller: root
                         visible: root.view === "detail"
                     }
+                }
+            }
+        }
+    }
+
+    function openGrid(symbol) {
+        var sym = symbol || detailSymbol || (watchlist.length > 0 ? watchlist[0] : "AAPL");
+        if (gridLoader.item) {
+            gridLoader.item.mainSymbol = sym;
+            gridLoader.item.visible = true;
+        } else {
+            root.gridOpened = true;
+        }
+    }
+
+    Loader {
+        id: gridLoader
+        active: root.gridOpened
+        sourceComponent: Component {
+            GridWindow {
+                id: gridWin
+                visible: true
+                mainSymbol: root.detailSymbol || (root.watchlist.length > 0 ? root.watchlist[0] : "AAPL")
+                watchlist: root.watchlist
+                pinned: root.pinned
+                gridMode: root.gridMode || "2x2"
+                syncSymbol: root.gridSync ? root.gridSync.symbol !== false : true
+                syncTimeframe: root.gridSync ? root.gridSync.timeframe === true : false
+                syncCrosshair: root.gridSync ? root.gridSync.crosshair !== false : true
+                syncTime: root.gridSync ? root.gridSync.time !== false : true
+                cellSymbols: root.gridSymbols && root.gridSymbols.length > 0 ? root.gridSymbols : [mainSymbol, mainSymbol, mainSymbol, mainSymbol, mainSymbol]
+                rowSplitRatio: root.gridSplits && root.gridSplits[gridMode] && root.gridSplits[gridMode].rowRatio ? root.gridSplits[gridMode].rowRatio : 0.5
+                topColSplitRatio: root.gridSplits && root.gridSplits[gridMode] && root.gridSplits[gridMode].colTopRatio ? root.gridSplits[gridMode].colTopRatio : 0.5
+                botColSplitRatio: root.gridSplits && root.gridSplits[gridMode] && root.gridSplits[gridMode].colBotRatio ? root.gridSplits[gridMode].colBotRatio : 0.5
+
+                onStateSaveRequested: function (mode, sync, symbols, splits) {
+                    root.gridMode = mode;
+                    root.gridSync = sync;
+                    root.gridSymbols = symbols;
+                    var nextSplits = Object.assign({}, root.gridSplits || ({}));
+                    nextSplits[mode] = splits[mode];
+                    root.gridSplits = nextSplits;
+                    root.persist();
+                }
+
+                onVisibleChanged: {
+                    if (!visible)
+                        root.gridOpened = false;
                 }
             }
         }

@@ -10,6 +10,21 @@ function defaultDetailRange() {
   return "1D"
 }
 
+function defaultGridMode() {
+  return "2x2"
+}
+
+function defaultGridSync() {
+  return { symbol: true, timeframe: false, crosshair: true, time: true }
+}
+
+function defaultGridSplits() {
+  return {
+    "2x2": { rowRatio: 0.5, colTopRatio: 0.5, colBotRatio: 0.5 },
+    "2+3": { rowRatio: 0.5, colTopRatio: 0.5, colBotRatios: [0.333, 0.333, 0.334] }
+  }
+}
+
 function defaultState() {
   return { watchlist: defaultWatchlist().slice(), pinned: defaultPinned(), detailRange: defaultDetailRange() }
 }
@@ -40,23 +55,52 @@ function parseState(raw) {
       seen[symbol] = true
       list.push(symbol)
     }
-    return {
+    var res = {
       watchlist: list,
       pinned: parsePinned(data.pinned, list),
       detailRange: normalizeRange(data.detailRange)
     }
+    if (data.gridMode !== undefined) res.gridMode = (data.gridMode === "2+3" || data.gridMode === "1x1") ? data.gridMode : "2x2"
+    if (data.gridSync !== undefined && typeof data.gridSync === "object") {
+      res.gridSync = {
+        symbol: data.gridSync.symbol !== false,
+        timeframe: data.gridSync.timeframe === true,
+        crosshair: data.gridSync.crosshair !== false,
+        time: data.gridSync.time !== false
+      }
+    }
+    if (Array.isArray(data.gridSymbols)) {
+      var gSymbols = []
+      for (var si = 0; si < data.gridSymbols.length; si++) {
+        gSymbols.push(normalizeSymbol(data.gridSymbols[si]))
+      }
+      res.gridSymbols = gSymbols
+    }
+    if (data.gridSplits !== undefined && typeof data.gridSplits === "object") res.gridSplits = data.gridSplits
+    return res
   } catch (e) {
     return fallback
   }
 }
 
-function serializeState(watchlist, pinned, detailRange) {
+function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits) {
   var list = Array.isArray(watchlist) ? watchlist.slice() : []
-  return JSON.stringify({
+  var obj = {
     watchlist: list,
     pinned: parsePinned(pinned, list),
     detailRange: normalizeRange(detailRange)
-  }, null, 2) + "\n"
+  }
+  if (gridMode !== undefined) obj.gridMode = gridMode
+  if (gridSync !== undefined) obj.gridSync = gridSync
+  if (gridSymbols !== undefined) obj.gridSymbols = gridSymbols
+  if (gridSplits !== undefined) obj.gridSplits = gridSplits
+  return JSON.stringify(obj, null, 2) + "\n"
+}
+
+function gridTimeframes(gridMode) {
+  if (gridMode === "2+3") return ["60", "1D", "1W", "1M", "1Y"]
+  if (gridMode === "1x1") return ["1D"]
+  return ["60", "1D", "1W", "1M"]
 }
 
 function addSymbol(watchlist, symbol) {
@@ -143,7 +187,7 @@ function quoteSymbolsForView(watchlist, detailSymbol, view) {
 }
 
 function chartRanges() {
-  return ["60", "1D", "1W", "1M", "YTD", "1Y"]
+  return ["60", "1D", "1W", "1M", "1Y"]
 }
 
 function normalizeRange(value) {
@@ -157,7 +201,6 @@ function chartSpec(range) {
     case "60": return { range: "1mo", interval: "60m" }
     case "1W": return { range: "5y", interval: "1wk" }
     case "1M": return { range: "10y", interval: "1mo" }
-    case "YTD": return { range: "ytd", interval: "1d" }
     case "1Y": return { range: "max", interval: "1mo" }
     default: return { range: "1y", interval: "1d" }
   }
@@ -265,7 +308,6 @@ function rangeCaption(rangeKey, quote) {
     case "1D": return "1-Day Candles (1 Year)"
     case "1W": return "1-Week Candles (5 Years)"
     case "1M": return "1-Month Candles (10 Years)"
-    case "YTD": return "Year to date (Daily)"
     case "1Y": return "1-Year Candles (All Time)"
     default: return ""
   }
@@ -375,7 +417,7 @@ function mergePeriodCandles(candles, rangeKey) {
       return getUtcMonday(t1) === getUtcMonday(t2)
     }
 
-    if (range === "1D" || range === "YTD") {
+    if (range === "1D") {
       var d1d = new Date(t1 * 1000)
       var d2d = new Date(t2 * 1000)
       return d1d.getUTCFullYear() === d2d.getUTCFullYear()
@@ -474,7 +516,7 @@ function extractFTFC(timestamps, indicators, price, meta) {
     open60 = lastCandle.open != null ? lastCandle.open : lastCandle.close
   }
 
-  // D (Daily): regularMarketOpen or earliest bar today
+  // D (Daily): regularMarketOpen, first bar open, or prior day close
   var dayOpen = meta ? finiteOrNull(meta.regularMarketOpen) : null
   if (dayOpen === 0) dayOpen = null
   if (dayOpen === null) {
@@ -483,8 +525,13 @@ function extractFTFC(timestamps, indicators, price, meta) {
       if (d.getUTCFullYear() === lastDate.getUTCFullYear() &&
           d.getUTCMonth() === lastDate.getUTCMonth() &&
           d.getUTCDate() === lastDate.getUTCDate()) {
-        var cOpen = hasExplicitOpen ? hourlyCandles[i].open : (i > 0 ? hourlyCandles[i - 1].close : hourlyCandles[i].open)
-        dayOpen = cOpen != null ? cOpen : hourlyCandles[i].close
+        if (hasExplicitOpen && hourlyCandles[i].open != null) {
+          dayOpen = hourlyCandles[i].open
+        } else if (i > 0) {
+          dayOpen = hourlyCandles[i - 1].close
+        } else {
+          dayOpen = hourlyCandles[i].close
+        }
         break
       }
     }
@@ -494,27 +541,33 @@ function extractFTFC(timestamps, indicators, price, meta) {
     dayOpen = prev !== null ? prev : hourlyCandles[0].close
   }
 
-  // W (Weekly): Monday 00:00 UTC open
+  // W (Weekly): Monday open if explicit, else prior week close
   var dayOfWeek = lastDate.getUTCDay()
   var diffToMon = lastDate.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1)
   var mondayUtc = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), diffToMon, 0, 0, 0) / 1000
   var weekOpen = null
   for (var w = 0; w < N; w++) {
     if (hourlyCandles[w].timestamp >= mondayUtc) {
-      var wOpen = hasExplicitOpen ? hourlyCandles[w].open : (w > 0 ? hourlyCandles[w - 1].close : hourlyCandles[w].open)
-      weekOpen = wOpen != null ? wOpen : hourlyCandles[w].close
+      if (hasExplicitOpen && hourlyCandles[w].open != null) {
+        weekOpen = hourlyCandles[w].open
+      } else if (w > 0) {
+        weekOpen = hourlyCandles[w - 1].close
+      } else {
+        weekOpen = hourlyCandles[w].close
+      }
       break
     }
   }
   if (weekOpen === null) weekOpen = hourlyCandles[0].close
 
-  // M (Monthly): 1st of current month 00:00 UTC open
+  // M (Monthly): 1st of current month open if explicit, else first bar close
   var monthUtc = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), 1, 0, 0, 0) / 1000
   var monthOpen = null
   for (var m = 0; m < N; m++) {
     if (hourlyCandles[m].timestamp >= monthUtc) {
-      var mOpen = hasExplicitOpen ? hourlyCandles[m].open : (m > 0 ? hourlyCandles[m - 1].close : hourlyCandles[m].open)
-      monthOpen = mOpen != null ? mOpen : hourlyCandles[m].close
+      monthOpen = hasExplicitOpen && hourlyCandles[m].open != null
+        ? hourlyCandles[m].open
+        : (hourlyCandles[m].open != null ? hourlyCandles[m].open : hourlyCandles[m].close)
       break
     }
   }
@@ -1103,6 +1156,11 @@ if (typeof module !== "undefined") {
     stratScenario: stratScenario,
     extractFTFC: extractFTFC,
     timeframeColor: timeframeColor,
-    buildDetailStats: buildDetailStats
+    buildDetailStats: buildDetailStats,
+    defaultGridMode: defaultGridMode,
+    defaultGridSync: defaultGridSync,
+    defaultGridSplits: defaultGridSplits,
+    gridTimeframes: gridTimeframes
   }
 }
+
