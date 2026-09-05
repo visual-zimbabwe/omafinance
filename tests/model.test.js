@@ -338,7 +338,45 @@ test("extractFTFC accurately extracts multi-timeframe continuity", () => {
     "M": "down"
   })
 
-  // Case 4: Missing data returns flat fallback
+  // Case 4: GOOGL multi-timeframe scenario (Spark without open array)
+  // Aug 28 (prior week close: 346.59), Aug 31 (Mon close: 337.525), Sep 1 (Month close: 336.66),
+  // Sep 3 (Thu close: 342.48), Sep 4 14:00 (Fri 10:30am close: 337.99), Sep 4 15:00 (prev hr close: 338.50), Sep 4 16:00 (cur close: 338.46)
+  const googlTimestamps = [1787976000, 1788148800, 1788235200, 1788448800, 1788530400, 1788534000, 1788537600]
+  const googlSparkIndicators = {
+    quote: [{
+      close: [346.59, 337.525, 336.66, 342.48, 337.99, 338.50, 338.46]
+    }]
+  }
+  const ftfcGooglSpark = Model.extractFTFC(googlTimestamps, googlSparkIndicators, 338.46, {
+    regularMarketOpen: 342.47,
+    previousClose: 342.48
+  })
+  assert.deepEqual(ftfcGooglSpark, {
+    "60": "down",
+    "D": "down",
+    "W": "down",
+    "M": "up"
+  })
+
+  // Case 5: Explicit open array (Chart payload)
+  const googlChartIndicators = {
+    quote: [{
+      open: [345.00, 343.83, 336.00, 340.00, 342.47, 338.50, 338.50],
+      close: [346.59, 337.525, 336.66, 342.48, 337.99, 338.50, 338.46]
+    }]
+  }
+  const ftfcGooglChart = Model.extractFTFC(googlTimestamps, googlChartIndicators, 338.46, {
+    regularMarketOpen: 342.47,
+    previousClose: 342.48
+  })
+  assert.deepEqual(ftfcGooglChart, {
+    "60": "down",
+    "D": "down",
+    "W": "down",
+    "M": "up"
+  })
+
+  // Case 6: Missing data returns flat fallback
   assert.deepEqual(Model.extractFTFC([], {}, null, null), {
     "60": "flat",
     "D": "flat",

@@ -472,7 +472,7 @@ function extractFTFC(timestamps, indicators, price, meta) {
     open60 = lastCandle.open != null ? lastCandle.open : lastCandle.close
   }
 
-  // D (Daily): regularMarketOpen or earliest bar today
+  // D (Daily): regularMarketOpen, first bar open, or prior day close
   var dayOpen = meta ? finiteOrNull(meta.regularMarketOpen) : null
   if (dayOpen === 0) dayOpen = null
   if (dayOpen === null) {
@@ -481,9 +481,13 @@ function extractFTFC(timestamps, indicators, price, meta) {
       if (d.getUTCFullYear() === lastDate.getUTCFullYear() &&
           d.getUTCMonth() === lastDate.getUTCMonth() &&
           d.getUTCDate() === lastDate.getUTCDate()) {
-        dayOpen = hasExplicitOpen && hourlyCandles[i].open != null
-          ? hourlyCandles[i].open
-          : (hourlyCandles[i].open != null ? hourlyCandles[i].open : hourlyCandles[i].close)
+        if (hasExplicitOpen && hourlyCandles[i].open != null) {
+          dayOpen = hourlyCandles[i].open
+        } else if (i > 0) {
+          dayOpen = hourlyCandles[i - 1].close
+        } else {
+          dayOpen = hourlyCandles[i].close
+        }
         break
       }
     }
@@ -493,22 +497,26 @@ function extractFTFC(timestamps, indicators, price, meta) {
     dayOpen = prev !== null ? prev : hourlyCandles[0].close
   }
 
-  // W (Weekly): Monday 00:00 UTC open
+  // W (Weekly): Monday open if explicit, else prior week close
   var dayOfWeek = lastDate.getUTCDay()
   var diffToMon = lastDate.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1)
   var mondayUtc = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), diffToMon, 0, 0, 0) / 1000
   var weekOpen = null
   for (var w = 0; w < N; w++) {
     if (hourlyCandles[w].timestamp >= mondayUtc) {
-      weekOpen = hasExplicitOpen && hourlyCandles[w].open != null
-        ? hourlyCandles[w].open
-        : (hourlyCandles[w].open != null ? hourlyCandles[w].open : hourlyCandles[w].close)
+      if (hasExplicitOpen && hourlyCandles[w].open != null) {
+        weekOpen = hourlyCandles[w].open
+      } else if (w > 0) {
+        weekOpen = hourlyCandles[w - 1].close
+      } else {
+        weekOpen = hourlyCandles[w].close
+      }
       break
     }
   }
   if (weekOpen === null) weekOpen = hourlyCandles[0].close
 
-  // M (Monthly): 1st of current month 00:00 UTC open
+  // M (Monthly): 1st of current month open if explicit, else first bar close
   var monthUtc = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), 1, 0, 0, 0) / 1000
   var monthOpen = null
   for (var m = 0; m < N; m++) {
