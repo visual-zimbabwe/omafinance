@@ -123,9 +123,7 @@ Item {
                 Text {
                     id: newDigit
                     anchors.horizontalCenter: parent.horizontalCenter
-                    y: modelData.changed && root.animating
-                        ? (root.rollDirection > 0 ? (1 - root.rollProgress) * parent.height : -(1 - root.rollProgress) * parent.height)
-                        : 0
+                    y: modelData.changed && root.animating ? (root.rollDirection > 0 ? (1 - root.rollProgress) * parent.height : -(1 - root.rollProgress) * parent.height) : 0
                     textFormat: Text.PlainText
                     text: modelData.newCharacter
                     color: modelData.changed && root.animating ? root.activeColor : root.neutralColor

@@ -278,6 +278,23 @@ test("mergePeriodCandles merges trailing duplicate period snapshots", () => {
     close: 319,
     volume: 4000
   })
+
+  // 60-Minute test: 19:30 UTC (1788550200) and 20:00 UTC market close snapshot (1788552000)
+  const hourlyCandles = [
+    { timestamp: 1788546600, open: 320, high: 322, low: 320, close: 321, volume: 2000 },
+    { timestamp: 1788550200, open: 321, high: 322, low: 319, close: 320, volume: 4000 },
+    { timestamp: 1788552000, open: 319.5, high: 320, low: 319.5, close: 319.5, volume: 0 }
+  ]
+  const mergedHourly = Model.mergePeriodCandles(hourlyCandles, "60")
+  assert.equal(mergedHourly.length, 2)
+  assert.deepEqual(mergedHourly[1], {
+    timestamp: 1788550200,
+    open: 321,
+    high: 322,
+    low: 319,
+    close: 319.5,
+    volume: 4000
+  })
 })
 
 test("extractFTFC accurately extracts multi-timeframe continuity", () => {

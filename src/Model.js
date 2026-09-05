@@ -384,7 +384,7 @@ function mergePeriodCandles(candles, rangeKey) {
     }
 
     if (range === "60") {
-      return Math.floor(t1 / 3600) === Math.floor(t2 / 3600)
+      return Math.abs(t2 - t1) < 3600
     }
 
     return false
