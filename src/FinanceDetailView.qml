@@ -91,9 +91,19 @@ Column {
                 onClicked: controller.pinSymbol(controller.detailSymbol)
             }
             Button {
+                text: "Grid"
+                hasCursor: controller.detailSection === 0 && controller.detailActionIndex === 2
+                foreground: controller.dim
+                fontFamily: controller.contentFontFamily
+                fontSize: Style.font.bodySmall
+                horizontalPadding: Style.space(8)
+                verticalPadding: Style.space(3)
+                onClicked: controller.openGrid(controller.detailSymbol)
+            }
+            Button {
                 visible: controller.detailIsFavorite
                 text: "Remove"
-                hasCursor: controller.detailSection === 0 && controller.detailActionIndex === 2
+                hasCursor: controller.detailSection === 0 && controller.detailActionIndex === 3
                 foreground: controller.contentUrgent
                 accent: controller.contentUrgent
                 fontFamily: controller.contentFontFamily

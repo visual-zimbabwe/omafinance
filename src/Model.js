@@ -10,6 +10,21 @@ function defaultDetailRange() {
   return "1D"
 }
 
+function defaultGridMode() {
+  return "2x2"
+}
+
+function defaultGridSync() {
+  return { symbol: true, timeframe: false, crosshair: true, time: true }
+}
+
+function defaultGridSplits() {
+  return {
+    "2x2": { rowRatio: 0.5, colTopRatio: 0.5, colBotRatio: 0.5 },
+    "2+3": { rowRatio: 0.5, colTopRatio: 0.5, colBotRatios: [0.333, 0.333, 0.334] }
+  }
+}
+
 function defaultState() {
   return { watchlist: defaultWatchlist().slice(), pinned: defaultPinned(), detailRange: defaultDetailRange() }
 }
@@ -40,23 +55,52 @@ function parseState(raw) {
       seen[symbol] = true
       list.push(symbol)
     }
-    return {
+    var res = {
       watchlist: list,
       pinned: parsePinned(data.pinned, list),
       detailRange: normalizeRange(data.detailRange)
     }
+    if (data.gridMode !== undefined) res.gridMode = (data.gridMode === "2+3" || data.gridMode === "1x1") ? data.gridMode : "2x2"
+    if (data.gridSync !== undefined && typeof data.gridSync === "object") {
+      res.gridSync = {
+        symbol: data.gridSync.symbol !== false,
+        timeframe: data.gridSync.timeframe === true,
+        crosshair: data.gridSync.crosshair !== false,
+        time: data.gridSync.time !== false
+      }
+    }
+    if (Array.isArray(data.gridSymbols)) {
+      var gSymbols = []
+      for (var si = 0; si < data.gridSymbols.length; si++) {
+        gSymbols.push(normalizeSymbol(data.gridSymbols[si]))
+      }
+      res.gridSymbols = gSymbols
+    }
+    if (data.gridSplits !== undefined && typeof data.gridSplits === "object") res.gridSplits = data.gridSplits
+    return res
   } catch (e) {
     return fallback
   }
 }
 
-function serializeState(watchlist, pinned, detailRange) {
+function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits) {
   var list = Array.isArray(watchlist) ? watchlist.slice() : []
-  return JSON.stringify({
+  var obj = {
     watchlist: list,
     pinned: parsePinned(pinned, list),
     detailRange: normalizeRange(detailRange)
-  }, null, 2) + "\n"
+  }
+  if (gridMode !== undefined) obj.gridMode = gridMode
+  if (gridSync !== undefined) obj.gridSync = gridSync
+  if (gridSymbols !== undefined) obj.gridSymbols = gridSymbols
+  if (gridSplits !== undefined) obj.gridSplits = gridSplits
+  return JSON.stringify(obj, null, 2) + "\n"
+}
+
+function gridTimeframes(gridMode) {
+  if (gridMode === "2+3") return ["60", "1D", "1W", "1M", "1Y"]
+  if (gridMode === "1x1") return ["1D"]
+  return ["60", "1D", "1W", "1M"]
 }
 
 function addSymbol(watchlist, symbol) {
@@ -1112,6 +1156,11 @@ if (typeof module !== "undefined") {
     stratScenario: stratScenario,
     extractFTFC: extractFTFC,
     timeframeColor: timeframeColor,
-    buildDetailStats: buildDetailStats
+    buildDetailStats: buildDetailStats,
+    defaultGridMode: defaultGridMode,
+    defaultGridSync: defaultGridSync,
+    defaultGridSplits: defaultGridSplits,
+    gridTimeframes: gridTimeframes
   }
 }
+

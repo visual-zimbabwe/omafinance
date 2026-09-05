@@ -43,7 +43,7 @@
       {
         "key": "showChange",
         "type": "boolean",
-        "label": "Show percentage change",
+        "label": "Show change on bar",
         "defaultValue": true
       },
       {

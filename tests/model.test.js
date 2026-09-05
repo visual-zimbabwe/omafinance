@@ -396,4 +396,33 @@ test("timeframeColor maps FTFC continuity tone to color", () => {
   assert.equal(Model.timeframeColor(null, "60", "green", "red", "gray"), "gray")
 })
 
+test("grid state parsing and serialization preserves grid configuration", () => {
+  const customSplits = {
+    "2x2": { rowRatio: 0.6, colTopRatio: 0.4, colBotRatio: 0.5 },
+    "2+3": { rowRatio: 0.45, colTopRatio: 0.5, colBotRatios: [0.3, 0.35, 0.35] }
+  }
+  const serialized = Model.serializeState(
+    ["AAPL", "TSLA"],
+    ["AAPL"],
+    "1D",
+    "2+3",
+    { symbol: false, timeframe: true, crosshair: true, time: true },
+    ["AAPL", "NVDA", "MSFT", "AMZN", "GOOGL"],
+    customSplits
+  )
+  const parsed = Model.parseState(serialized)
+
+  assert.equal(parsed.gridMode, "2+3")
+  assert.deepEqual(parsed.gridSync, { symbol: false, timeframe: true, crosshair: true, time: true })
+  assert.deepEqual(parsed.gridSymbols, ["AAPL", "NVDA", "MSFT", "AMZN", "GOOGL"])
+  assert.deepEqual(parsed.gridSplits, customSplits)
+})
+
+test("gridTimeframes returns expected timeframes per layout", () => {
+  assert.deepEqual(Model.gridTimeframes("2x2"), ["60", "1D", "1W", "1M"])
+  assert.deepEqual(Model.gridTimeframes("2+3"), ["60", "1D", "1W", "1M", "1Y"])
+  assert.deepEqual(Model.gridTimeframes("1x1"), ["1D"])
+})
+
+
 
