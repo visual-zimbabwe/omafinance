@@ -348,6 +348,72 @@ function aggregateYearlyCandles(candles) {
   return out
 }
 
+function mergePeriodCandles(candles, rangeKey) {
+  if (!candles || candles.length <= 1) return candles || []
+  var range = String(rangeKey || "1D")
+  var out = []
+
+  function isSamePeriod(c1, c2) {
+    if (!c1 || !c2 || !c1.timestamp || !c2.timestamp) return false
+    var t1 = c1.timestamp
+    var t2 = c2.timestamp
+    if (t1 === t2) return true
+
+    if (range === "1M") {
+      var d1 = new Date(t1 * 1000)
+      var d2 = new Date(t2 * 1000)
+      return d1.getUTCFullYear() === d2.getUTCFullYear() && d1.getUTCMonth() === d2.getUTCMonth()
+    }
+
+    if (range === "1W") {
+      function getUtcMonday(t) {
+        var dt = new Date(t * 1000)
+        var day = dt.getUTCDay()
+        var diff = dt.getUTCDate() - day + (day === 0 ? -6 : 1)
+        return new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), diff)).getTime()
+      }
+      return getUtcMonday(t1) === getUtcMonday(t2)
+    }
+
+    if (range === "1D" || range === "YTD") {
+      var d1d = new Date(t1 * 1000)
+      var d2d = new Date(t2 * 1000)
+      return d1d.getUTCFullYear() === d2d.getUTCFullYear()
+        && d1d.getUTCMonth() === d2d.getUTCMonth()
+        && d1d.getUTCDate() === d2d.getUTCDate()
+    }
+
+    if (range === "60") {
+      return Math.floor(t1 / 3600) === Math.floor(t2 / 3600)
+    }
+
+    return false
+  }
+
+  for (var i = 0; i < candles.length; i++) {
+    var c = candles[i]
+    if (!c) continue
+    if (out.length > 0 && isSamePeriod(out[out.length - 1], c)) {
+      var last = out[out.length - 1]
+      last.high = Math.max(last.high, c.high)
+      last.low = Math.min(last.low, c.low)
+      last.close = c.close
+      last.volume = (last.volume || 0) + (c.volume || 0)
+    } else {
+      out.push({
+        timestamp: c.timestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+        volume: c.volume || 0
+      })
+    }
+  }
+
+  return out
+}
+
 function parseCandles(timestamps, indicators) {
   var quote = indicators && indicators.quote && indicators.quote[0] ? indicators.quote[0] : null
   if (!quote || !quote.close) return []
@@ -424,13 +490,14 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
   if (openPx === 0) openPx = null
 
   var candles = parseCandles(result.timestamp, result.indicators)
-  var closes = numericCloses(result.indicators)
   if (rangeKey === "1Y") {
     candles = aggregateYearlyCandles(candles)
-    closes = []
-    for (var k = 0; k < candles.length; k++) {
-      closes.push(candles[k].close)
-    }
+  } else {
+    candles = mergePeriodCandles(candles, rangeKey)
+  }
+  var closes = []
+  for (var k = 0; k < candles.length; k++) {
+    closes.push(candles[k].close)
   }
 
   return {
@@ -912,6 +979,7 @@ if (typeof module !== "undefined") {
     parseChart: parseChart,
     parseCandles: parseCandles,
     aggregateYearlyCandles: aggregateYearlyCandles,
+    mergePeriodCandles: mergePeriodCandles,
     mergeQuotes: mergeQuotes,
     backoffDelay: backoffDelay,
     delayedLoaderDelayMs: delayedLoaderDelayMs,
