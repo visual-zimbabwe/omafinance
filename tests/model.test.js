@@ -424,5 +424,42 @@ test("gridTimeframes returns expected timeframes per layout", () => {
   assert.deepEqual(Model.gridTimeframes("1x1"), ["1D"])
 })
 
+test("parseInterval parses TradingView-style interval keystrokes and shorthands", () => {
+  assert.equal(Model.parseInterval("60"), "60")
+  assert.equal(Model.parseInterval("60m"), "60")
+  assert.equal(Model.parseInterval("60min"), "60")
+  assert.equal(Model.parseInterval("1h"), "60")
+  assert.equal(Model.parseInterval("1hr"), "60")
+  assert.equal(Model.parseInterval("H"), "60")
+  assert.equal(Model.parseInterval("hour"), "60")
+  assert.equal(Model.parseInterval("1D"), "1D")
+  assert.equal(Model.parseInterval("d"), "1D")
+  assert.equal(Model.parseInterval("1"), "1D")
+  assert.equal(Model.parseInterval("day"), "1D")
+  assert.equal(Model.parseInterval("daily"), "1D")
+  assert.equal(Model.parseInterval("1W"), "1W")
+  assert.equal(Model.parseInterval("w"), "1W")
+  assert.equal(Model.parseInterval("week"), "1W")
+  assert.equal(Model.parseInterval("weekly"), "1W")
+  assert.equal(Model.parseInterval("1M"), "1M")
+  assert.equal(Model.parseInterval("m"), "1M")
+  assert.equal(Model.parseInterval("mo"), "1M")
+  assert.equal(Model.parseInterval("month"), "1M")
+  assert.equal(Model.parseInterval("monthly"), "1M")
+  assert.equal(Model.parseInterval("1Y"), "1Y")
+  assert.equal(Model.parseInterval("y"), "1Y")
+  assert.equal(Model.parseInterval("yr"), "1Y")
+  assert.equal(Model.parseInterval("year"), "1Y")
+  assert.equal(Model.parseInterval("yearly"), "1Y")
+  // Leading / trailing punctuation or whitespace
+  assert.equal(Model.parseInterval(",1M"), "1M")
+  assert.equal(Model.parseInterval(" 60 "), "60")
+  assert.equal(Model.parseInterval(",1D"), "1D")
+  assert.equal(Model.parseInterval("invalid"), null)
+  assert.equal(Model.parseInterval(""), null)
+  assert.equal(Model.parseInterval(null), null)
+})
+
+
 
 
