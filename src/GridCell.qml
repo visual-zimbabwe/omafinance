@@ -31,15 +31,6 @@ Item {
     signal crosshairMoved(real timestamp, real price, var candle)
     signal crosshairCleared
 
-    readonly property string priceText: quote ? Model.formatPrice(quote.price !== null && quote.price !== undefined ? quote.price : quote.regularMarketPrice, quote.currency, quote.priceHint) : "-"
-    readonly property string changeText: quote ? Model.formatPercent(quote.changePercent !== null && quote.changePercent !== undefined ? quote.changePercent : quote.regularMarketChangePercent) : "-"
-    readonly property color changeColor: {
-        var pct = quote ? (quote.changePercent !== null && quote.changePercent !== undefined ? quote.changePercent : quote.regularMarketChangePercent) : null;
-        if (pct === null || pct === undefined || isNaN(pct) || pct === 0)
-            return root.dim;
-        return pct > 0 ? root.upColor : root.downColor;
-    }
-
     readonly property var activeHoverCandle: chart.hoverCandle
 
     function syncToTimestamp(ts) {
@@ -209,16 +200,6 @@ Item {
                             }
                         }
                     }
-                }
-
-                // Price & Change
-                Text {
-                    textFormat: Text.PlainText
-                    text: root.priceText + "  " + root.changeText
-                    color: root.changeColor
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.bold: true
                 }
             }
 
