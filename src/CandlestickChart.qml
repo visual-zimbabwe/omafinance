@@ -92,6 +92,7 @@ Item {
         hoverCandle = candles[bestIdx];
         hoverX = g.xs[bestIdx];
         hoverY = g.yCloses[bestIdx];
+        hoverPrice = hoverCandle ? hoverCandle.close : 0;
         hovering = true;
         isSyncing = false;
     }
@@ -234,33 +235,80 @@ Item {
 
         // Psychological Levels Quantizer for Right Price Scale Ticks
         var ticks = [];
-        if (root.showPriceScale && max > min) {
-            var targetTicks = Math.max(3, Math.min(6, Math.floor(innerH / Style.space(36))));
-            var rawSpan = max - min;
-            var roughStep = rawSpan / targetTicks;
-            var mag = Math.pow(10, Math.floor(Math.log10(roughStep)));
-            var norm = roughStep / mag;
-            var step;
-            if (norm <= 1.25)
-                step = 1 * mag;
-            else if (norm <= 2.5)
-                step = 2 * mag;
-            else if (norm <= 3.75)
-                step = 2.5 * mag;
-            else if (norm <= 7.5)
-                step = 5 * mag;
-            else
-                step = 10 * mag;
+        if (root.showPriceScale && max > min && logSpan > 0) {
+            var minSpacing = Style.space(28);
+            var targetTicks = Math.max(3, Math.min(7, Math.floor(innerH / Style.space(36))));
+            var ratio = max / min;
 
-            var startPrice = Math.ceil(min / step) * step;
-            for (var p = startPrice; p <= max; p += step) {
-                var ty = priceToY(p);
-                if (ty >= top - 2 && ty <= bot + 2) {
-                    ticks.push({
-                        price: p,
-                        y: ty,
-                        label: Model.formatPrice(p, root.currency, root.priceHint)
-                    });
+            if (ratio >= 2.2) {
+                // Multi-decade logarithmic tick quantization (1, 2, 5 series per decade)
+                var minDecade = Math.floor(Math.log10(min));
+                var maxDecade = Math.ceil(Math.log10(max));
+                var pxPerDecade = innerH / Math.max(1, (logMax - logMin) / Math.LN10);
+                var multipliers;
+                if (pxPerDecade >= Style.space(160))
+                    multipliers = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+                else if (pxPerDecade >= Style.space(40))
+                    multipliers = [1, 2, 5];
+                else
+                    multipliers = [1];
+
+                var candidates = [];
+                for (var d = minDecade; d <= maxDecade; d++) {
+                    var base = Math.pow(10, d);
+                    for (var mi = 0; mi < multipliers.length; mi++) {
+                        var val = Number((multipliers[mi] * base).toPrecision(12));
+                        if (val >= min && val <= max) {
+                            candidates.push(val);
+                        }
+                    }
+                }
+
+                candidates.sort(function (a, b) { return a - b; });
+                var lastY = -99999;
+                for (var ci = 0; ci < candidates.length; ci++) {
+                    var cp = candidates[ci];
+                    var cty = priceToY(cp);
+                    if (cty >= top - 2 && cty <= bot + 2) {
+                        if (ticks.length === 0 || Math.abs(cty - lastY) >= minSpacing) {
+                            ticks.push({
+                                price: cp,
+                                y: cty,
+                                label: Model.formatPrice(cp, root.currency, root.priceHint)
+                            });
+                            lastY = cty;
+                        }
+                    }
+                }
+            } else {
+                // Adaptive linear subdivision over local logarithmic space
+                var rawSpan = max - min;
+                var roughStep = rawSpan / targetTicks;
+                var mag = Math.pow(10, Math.floor(Math.log10(roughStep)));
+                var norm = roughStep / mag;
+                var step;
+                if (norm <= 1.25)
+                    step = 1 * mag;
+                else if (norm <= 2.5)
+                    step = 2 * mag;
+                else if (norm <= 3.75)
+                    step = 2.5 * mag;
+                else if (norm <= 7.5)
+                    step = 5 * mag;
+                else
+                    step = 10 * mag;
+
+                step = Number(step.toPrecision(12));
+                var startPrice = Math.ceil(min / step) * step;
+                for (var p = startPrice; p <= max; p += step) {
+                    var ty = priceToY(p);
+                    if (ty >= top - 2 && ty <= bot + 2) {
+                        ticks.push({
+                            price: p,
+                            y: ty,
+                            label: Model.formatPrice(p, root.currency, root.priceHint)
+                        });
+                    }
                 }
             }
         }
@@ -365,15 +413,47 @@ Item {
         hoverIndex = idx;
         hoverCandle = g.candles[idx];
         hoverX = g.xs[idx];
-        hoverY = g.yCloses[idx];
-        hoverPrice = hoverCandle ? hoverCandle.close : 0;
+
+        // Determine closest OHLC point on the hovered candle to py
+        var oY = g.yOpens[idx];
+        var hY = g.yHighs[idx];
+        var lY = g.yLows[idx];
+        var cY = g.yCloses[idx];
+
+        var oDist = Math.abs(oY - py);
+        var hDist = Math.abs(hY - py);
+        var lDist = Math.abs(lY - py);
+        var cDist = Math.abs(cY - py);
+
+        var bestY = cY;
+        var bestPrice = hoverCandle ? hoverCandle.close : 0;
+        var minDist = cDist;
+
+        if (oDist < minDist) {
+            minDist = oDist;
+            bestY = oY;
+            bestPrice = hoverCandle ? hoverCandle.open : 0;
+        }
+        if (hDist < minDist) {
+            minDist = hDist;
+            bestY = hY;
+            bestPrice = hoverCandle ? hoverCandle.high : 0;
+        }
+        if (lDist < minDist) {
+            minDist = lDist;
+            bestY = lY;
+            bestPrice = hoverCandle ? hoverCandle.low : 0;
+        }
+
+        hoverY = bestY;
+        hoverPrice = bestPrice;
         hovering = true;
 
         if (wasHoveringScale)
             canvas.requestPaint();
 
         if (!isSyncing && hoverCandle)
-            root.crosshairMoved(hoverCandle.timestamp, hoverCandle.close, hoverCandle);
+            root.crosshairMoved(hoverCandle.timestamp, hoverPrice, hoverCandle);
     }
 
     function clearHover() {
@@ -643,14 +723,24 @@ Item {
         }
     }
 
-    // Vertical Crosshair
-    Rectangle {
+    // Vertical Crosshair (Dashed Hairline [2, 3])
+    Shape {
+        id: verticalCrosshair
         visible: root.interactive && root.hovering && !root.hoveringScale
-        x: Math.round(root.hoverX)
-        y: root.cachedGeometry ? root.cachedGeometry.top : 0
-        width: 1
-        height: root.cachedGeometry ? root.cachedGeometry.innerH : parent.height
-        color: root.crosshairColor
+        anchors.fill: parent
+
+        ShapePath {
+            strokeColor: root.crosshairColor
+            strokeWidth: 1
+            strokeStyle: ShapePath.DashLine
+            dashPattern: [2, 3]
+            startX: Math.round(root.hoverX) + 0.5
+            startY: root.cachedGeometry ? root.cachedGeometry.top : 0
+            PathLine {
+                x: Math.round(root.hoverX) + 0.5
+                y: root.cachedGeometry ? root.cachedGeometry.bot : parent.height
+            }
+        }
     }
 
     // Horizontal Crosshair (Faint Dotted Hairline [2, 3])
@@ -702,13 +792,7 @@ Item {
         Text {
             anchors.centerIn: parent
             textFormat: Text.PlainText
-            text: {
-                if (root.hoverCandle)
-                    return Model.formatPrice(root.hoverCandle.close, root.currency, root.priceHint);
-                if (root.hoveringScale)
-                    return Model.formatPrice(root.hoverPrice, root.currency, root.priceHint);
-                return "";
-            }
+            text: (root.hoverCandle || root.hoveringScale) ? Model.formatPrice(root.hoverPrice, root.currency, root.priceHint) : ""
             color: Color.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall

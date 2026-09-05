@@ -12,6 +12,11 @@ Item {
     property var quote: null
     property var candles: []
     property bool activeFocusCell: false
+    focus: activeFocusCell
+    onActiveFocusCellChanged: {
+        if (activeFocusCell)
+            root.forceActiveFocus();
+    }
     property color foreground: Color.foreground
     property color dim: Qt.darker(foreground, 1.45)
     property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
@@ -23,6 +28,8 @@ Item {
     property var suggestions: []
     property int suggestionIndex: 0
     property bool tfExpanded: false
+    property bool changingInterval: false
+    property string intervalQuery: ""
 
     signal focusRequested(int index)
     signal maximizeRequested(int index)
@@ -30,15 +37,6 @@ Item {
     signal timeframeChangedManually(int index, string nextTimeframe)
     signal crosshairMoved(real timestamp, real price, var candle)
     signal crosshairCleared
-
-    readonly property string priceText: quote ? Model.formatPrice(quote.price !== null && quote.price !== undefined ? quote.price : quote.regularMarketPrice, quote.currency, quote.priceHint) : "-"
-    readonly property string changeText: quote ? Model.formatPercent(quote.changePercent !== null && quote.changePercent !== undefined ? quote.changePercent : quote.regularMarketChangePercent) : "-"
-    readonly property color changeColor: {
-        var pct = quote ? (quote.changePercent !== null && quote.changePercent !== undefined ? quote.changePercent : quote.regularMarketChangePercent) : null;
-        if (pct === null || pct === undefined || isNaN(pct) || pct === 0)
-            return root.dim;
-        return pct > 0 ? root.upColor : root.downColor;
-    }
 
     readonly property var activeHoverCandle: chart.hoverCandle
 
@@ -51,11 +49,15 @@ Item {
     }
 
     function startSearch() {
+        if (root.changingInterval)
+            root.dismissIntervalInput();
         root.tfExpanded = false;
         root.searching = true;
         root.searchQuery = "";
         root.suggestions = [];
         root.suggestionIndex = 0;
+        searchInput.text = "";
+        searchInput.cursorPosition = 0;
         searchInput.forceActiveFocus();
     }
 
@@ -81,6 +83,32 @@ Item {
         dismissSearch();
     }
 
+    function startIntervalInput(initialChar) {
+        if (root.searching)
+            root.dismissSearch();
+        root.tfExpanded = false;
+        root.changingInterval = true;
+        var init = (typeof initialChar === "string") ? initialChar : "";
+        root.intervalQuery = init;
+        intervalInput.text = init;
+        intervalInput.cursorPosition = init.length;
+        intervalInput.forceActiveFocus();
+    }
+
+    function dismissIntervalInput() {
+        root.changingInterval = false;
+        root.intervalQuery = "";
+        root.forceActiveFocus();
+    }
+
+    function commitIntervalInput() {
+        var parsed = Model.parseInterval(root.intervalQuery);
+        if (parsed) {
+            root.timeframeChangedManually(root.cellIndex, parsed);
+        }
+        dismissIntervalInput();
+    }
+
     HoverHandler {
         id: cellHoverHandler
         onHoveredChanged: {
@@ -90,9 +118,31 @@ Item {
     }
 
     Keys.onPressed: function (event) {
-        if (event.key === Qt.Key_Escape) {
+        if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9) {
+            if (!root.searching && !root.changingInterval) {
+                var digit = (event.text && event.text.length > 0) ? event.text : String(event.key - Qt.Key_0);
+                root.startIntervalInput(digit);
+                event.accepted = true;
+                return;
+            }
+        } else if (event.key === Qt.Key_Comma || event.key === Qt.Key_I) {
+            if (!root.searching && !root.changingInterval) {
+                root.startIntervalInput("");
+                event.accepted = true;
+                return;
+            }
+        } else if (event.key === Qt.Key_Slash || event.key === Qt.Key_S) {
+            if (!root.searching && !root.changingInterval) {
+                root.startSearch();
+                event.accepted = true;
+                return;
+            }
+        } else if (event.key === Qt.Key_Escape) {
             if (root.searching) {
                 root.dismissSearch();
+                event.accepted = true;
+            } else if (root.changingInterval) {
+                root.dismissIntervalInput();
                 event.accepted = true;
             } else if (root.tfExpanded) {
                 root.tfExpanded = false;
@@ -105,6 +155,7 @@ Item {
         anchors.fill: parent
         acceptedButtons: Qt.LeftButton
         onPressed: function (mouse) {
+            root.forceActiveFocus();
             root.focusRequested(root.cellIndex);
             mouse.accepted = false;
         }
@@ -141,6 +192,7 @@ Item {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
+                            root.forceActiveFocus();
                             root.focusRequested(root.cellIndex);
                             root.startSearch();
                         }
@@ -171,6 +223,7 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             hoverEnabled: true
                             onClicked: {
+                                root.forceActiveFocus();
                                 root.focusRequested(root.cellIndex);
                                 root.tfExpanded = true;
                             }
@@ -201,6 +254,7 @@ Item {
                                     cursorShape: Qt.PointingHandCursor
                                     hoverEnabled: true
                                     onClicked: {
+                                        root.forceActiveFocus();
                                         root.focusRequested(root.cellIndex);
                                         root.timeframeChangedManually(root.cellIndex, modelData);
                                         root.tfExpanded = false;
@@ -209,16 +263,6 @@ Item {
                             }
                         }
                     }
-                }
-
-                // Price & Change
-                Text {
-                    textFormat: Text.PlainText
-                    text: root.priceText + "  " + root.changeText
-                    color: root.changeColor
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.bold: true
                 }
             }
 
@@ -328,6 +372,69 @@ Item {
 
                 Keys.onEscapePressed: {
                     root.dismissSearch();
+                }
+            }
+        }
+    }
+
+    // Floating Change Interval Input (Zero-Chrome)
+    Item {
+        id: intervalOverlay
+        visible: root.changingInterval
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(8)
+        anchors.topMargin: Style.space(4)
+        width: Style.space(170)
+        height: Style.space(28)
+        z: 200
+
+        Rectangle {
+            anchors.fill: parent
+            color: Color.popups.background
+            border.width: 1
+            border.color: root.foreground
+
+            Row {
+                anchors.fill: parent
+                anchors.leftMargin: Style.space(6)
+                anchors.rightMargin: Style.space(6)
+                spacing: Style.space(4)
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "INTERVAL:"
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                }
+
+                TextInput {
+                    id: intervalInput
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width - Style.space(70)
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                    selectByMouse: true
+
+                    onTextChanged: {
+                        root.intervalQuery = text;
+                    }
+
+                    Keys.onReturnPressed: {
+                        root.commitIntervalInput();
+                    }
+
+                    Keys.onEnterPressed: {
+                        root.commitIntervalInput();
+                    }
+
+                    Keys.onEscapePressed: {
+                        root.dismissIntervalInput();
+                    }
                 }
             }
         }

@@ -293,6 +293,9 @@ test("grid window provides 2x2, 2+3, and 1x1 layouts with zero grid lines", () =
   const gridWin = fs.readFileSync(source("GridWindow.qml"), "utf8")
   const gridCell = fs.readFileSync(source("GridCell.qml"), "utf8")
 
+  assert.match(gridWin, /property bool gridExpanded:\s*false/)
+  assert.match(gridWin, /id:\s*activeGridLabel/)
+  assert.match(gridWin, /id:\s*expandedGridRow/)
   assert.match(gridWin, /model:\s*\["2x2",\s*"2\+3",\s*"1x1"\]/)
   assert.match(gridWin, /SYM\s*"\s*\+\s*\(root\.syncSymbol/)
   assert.match(gridWin, /CROSS\s*"\s*\+\s*\(root\.syncCrosshair/)
@@ -304,6 +307,7 @@ test("grid window provides 2x2, 2+3, and 1x1 layouts with zero grid lines", () =
 test("candlestick chart provides pure logarithmic right price scale without R/L toggle", () => {
   const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
   const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
 
   assert.match(chart, /property bool showPriceScale:\s*true/)
   assert.match(chart, /readonly property int scaleGutterWidth:\s*showPriceScale \? Style\.space\(52\) : 0/)
@@ -313,14 +317,27 @@ test("candlestick chart provides pure logarithmic right price scale without R/L 
   assert.doesNotMatch(chart, /id:\s*scaleModeBtn/)
   assert.match(chart, /property bool hoveringScale:\s*false/)
   assert.match(chart, /property int hoveredTickIndex:\s*-1/)
-  assert.match(chart, /if\s*\(root\.showPriceScale\s*&&\s*px\s*>=\s*g\.right\)/)
+  assert.match(chart, /if\s*\(ratio\s*>=\s*2\.2\)/)
+  assert.match(chart, /multipliers\s*=\s*\[1,\s*2,\s*5\]/)
+  assert.match(chart, /id:\s*verticalCrosshair[\s\S]*?dashPattern:\s*\[2,\s*3\]/)
   assert.match(chart, /id:\s*horizontalCrosshair[\s\S]*?dashPattern:\s*\[2,\s*3\]/)
-  assert.match(chart, /id:\s*axisPriceBadge/)
   assert.match(cell, /property bool tfExpanded:\s*false/)
+  assert.match(cell, /property bool changingInterval:\s*false/)
+  assert.match(cell, /function startIntervalInput\(/)
+  assert.match(cell, /id:\s*intervalOverlay/)
   assert.match(cell, /id:\s*activeTfLabel/)
   assert.match(cell, /id:\s*expandedTfRow/)
+  assert.match(grid, /function getActiveCellItem\(\)/)
 })
 
+test("grid keyboard focus manages active cell across layouts and clicks", () => {
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
 
-
-
+  assert.match(cell, /focus:\s*activeFocusCell/)
+  assert.match(cell, /onActiveFocusCellChanged:/)
+  assert.match(cell, /root\.forceActiveFocus\(\)[\s\S]*?root\.focusRequested\(root\.cellIndex\)/)
+  assert.match(grid, /onActiveCellIndexChanged:/)
+  assert.match(grid, /onGridModeChanged:[\s\S]*?item\.forceActiveFocus\(\)/)
+  assert.match(grid, /Qt\.Key_Tab[\s\S]*?activeItem\.forceActiveFocus\(\)/)
+})

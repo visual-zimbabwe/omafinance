@@ -16,6 +16,7 @@ FloatingWindow {
 
     property string gridMode: "2x2" // "2x2", "2+3", "1x1"
     property string previousGridMode: "2x2"
+    property bool gridExpanded: false
     property bool syncSymbol: true
     property bool syncTimeframe: false
     property bool syncCrosshair: true
@@ -275,12 +276,58 @@ FloatingWindow {
         root.stateSaveRequested(root.gridMode, sync, root.cellSymbols, splits);
     }
 
+    function getActiveCellItem() {
+        if (root.gridMode === "1x1")
+            return cellFocusSingle;
+        if (root.activeCellIndex === 0)
+            return cell0;
+        if (root.activeCellIndex === 1)
+            return cell1;
+        if (root.activeCellIndex === 2)
+            return root.gridMode === "2+3" ? cell2_3 : cell2;
+        if (root.activeCellIndex === 3)
+            return root.gridMode === "2+3" ? cell3_3 : cell3;
+        if (root.activeCellIndex === 4 && root.gridMode === "2+3")
+            return cell4;
+        return cell0;
+    }
+
     Component.onCompleted: {
         refreshAllCharts();
+        Qt.callLater(function () {
+            var item = root.getActiveCellItem();
+            if (item)
+                item.forceActiveFocus();
+        });
+    }
+
+    onVisibleChanged: {
+        if (visible) {
+            Qt.callLater(function () {
+                var item = root.getActiveCellItem();
+                if (item)
+                    item.forceActiveFocus();
+            });
+        }
+    }
+
+    onActiveCellIndexChanged: {
+        Qt.callLater(function () {
+            var item = root.getActiveCellItem();
+            if (item)
+                item.forceActiveFocus();
+        });
     }
 
     onMainSymbolChanged: refreshAllCharts()
-    onGridModeChanged: refreshAllCharts()
+    onGridModeChanged: {
+        refreshAllCharts();
+        Qt.callLater(function () {
+            var item = root.getActiveCellItem();
+            if (item)
+                item.forceActiveFocus();
+        });
+    }
 
     Item {
         id: container
@@ -288,7 +335,26 @@ FloatingWindow {
         focus: true
 
         Keys.onPressed: function (event) {
+            var activeCell = root.getActiveCellItem();
+            var inputActive = activeCell && (activeCell.searching || activeCell.changingInterval);
+
+            if (inputActive) {
+                if (event.key === Qt.Key_Escape) {
+                    if (activeCell.searching)
+                        activeCell.dismissSearch();
+                    else if (activeCell.changingInterval)
+                        activeCell.dismissIntervalInput();
+                    event.accepted = true;
+                }
+                return;
+            }
+
             if (event.key === Qt.Key_Escape) {
+                if (root.gridExpanded) {
+                    root.gridExpanded = false;
+                    event.accepted = true;
+                    return;
+                }
                 if (root.gridMode === "1x1") {
                     root.gridMode = root.previousGridMode;
                     event.accepted = true;
@@ -299,23 +365,26 @@ FloatingWindow {
             } else if (event.key === Qt.Key_Tab) {
                 var maxIdx = root.gridMode === "2+3" ? 4 : (root.gridMode === "2x2" ? 3 : 0);
                 root.activeCellIndex = (root.activeCellIndex + 1) % (maxIdx + 1);
+                var activeItem = root.getActiveCellItem();
+                if (activeItem)
+                    activeItem.forceActiveFocus();
                 event.accepted = true;
-            } else if (event.key >= Qt.Key_1 && event.key <= Qt.Key_5) {
-                var target = event.key - Qt.Key_1;
-                root.activeCellIndex = target;
-                event.accepted = true;
+            } else if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9) {
+                if (activeCell) {
+                    var digit = (event.text && event.text.length > 0) ? event.text : String(event.key - Qt.Key_0);
+                    activeCell.startIntervalInput(digit);
+                    event.accepted = true;
+                }
             } else if (event.key === Qt.Key_Slash || event.key === Qt.Key_S) {
-                if (root.activeCellIndex === 0)
-                    cell0.startSearch();
-                else if (root.activeCellIndex === 1)
-                    cell1.startSearch();
-                else if (root.activeCellIndex === 2)
-                    cell2.startSearch();
-                else if (root.activeCellIndex === 3)
-                    cell3.startSearch();
-                else if (root.activeCellIndex === 4)
-                    cell4.startSearch();
-                event.accepted = true;
+                if (activeCell) {
+                    activeCell.startSearch();
+                    event.accepted = true;
+                }
+            } else if (event.key === Qt.Key_Comma || event.key === Qt.Key_I) {
+                if (activeCell) {
+                    activeCell.startIntervalInput("");
+                    event.accepted = true;
+                }
             }
         }
 
@@ -329,180 +398,205 @@ FloatingWindow {
                 width: parent.width
                 height: Style.space(36)
 
+                // Grid Layout Selector (Left-aligned, collapsible)
                 Row {
+                    id: gridLayoutRow
                     anchors.left: parent.left
                     anchors.leftMargin: Style.space(12)
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(16)
+                    spacing: Style.space(8)
 
-                    // Grid Layout Selector
-                    Row {
-                        spacing: Style.space(6)
+                    Text {
+                        text: "GRID"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+                    }
+
+                    Item {
+                        id: gridLayoutContainer
+                        implicitWidth: root.gridExpanded ? expandedGridRow.implicitWidth : activeGridLabel.implicitWidth
+                        implicitHeight: Math.max(activeGridLabel.implicitHeight, expandedGridRow.implicitHeight)
                         anchors.verticalCenter: parent.verticalCenter
 
                         Text {
-                            text: "GRID"
-                            color: root.dim
+                            id: activeGridLabel
+                            visible: !root.gridExpanded
+                            anchors.verticalCenter: parent.verticalCenter
+                            textFormat: Text.PlainText
+                            text: root.gridMode
+                            color: root.foreground
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.bodySmall
                             font.bold: true
+
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.margins: -Style.space(4)
+                                cursorShape: Qt.PointingHandCursor
+                                hoverEnabled: true
+                                onClicked: {
+                                    root.gridExpanded = true;
+                                }
+                            }
                         }
 
-                        Repeater {
-                            model: ["2x2", "2+3", "1x1"]
+                        Row {
+                            id: expandedGridRow
+                            visible: root.gridExpanded
+                            spacing: Style.space(6)
+                            anchors.verticalCenter: parent.verticalCenter
 
-                            Text {
-                                required property string modelData
-                                textFormat: Text.PlainText
-                                text: modelData
-                                color: modelData === root.gridMode ? root.foreground : Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                font.bold: modelData === root.gridMode
+                            Repeater {
+                                model: ["2x2", "2+3", "1x1"]
 
-                                MouseArea {
-                                    anchors.fill: parent
-                                    anchors.margins: -Style.space(4)
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        root.gridMode = modelData;
-                                        if (!root.syncTimeframe) {
-                                            root.cellTimeframes = Model.gridTimeframes(modelData);
+                                Text {
+                                    required property string modelData
+                                    textFormat: Text.PlainText
+                                    text: modelData
+                                    color: modelData === root.gridMode ? root.foreground : Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    font.bold: modelData === root.gridMode
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.margins: -Style.space(4)
+                                        cursorShape: Qt.PointingHandCursor
+                                        hoverEnabled: true
+                                        onClicked: {
+                                            root.gridMode = modelData;
+                                            if (!root.syncTimeframe) {
+                                                root.cellTimeframes = Model.gridTimeframes(modelData);
+                                            }
+                                            root.gridExpanded = false;
+                                            root.refreshAllCharts();
+                                            root.saveGridState();
                                         }
-                                        root.refreshAllCharts();
-                                        root.saveGridState();
                                     }
                                 }
                             }
                         }
                     }
 
-                    // Sync Toggles
-                    Row {
-                        spacing: Style.space(10)
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        Text {
-                            text: "SYNC"
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: true
-                        }
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "SYM " + (root.syncSymbol ? "[ON]" : "[OFF]")
-                            color: root.syncSymbol ? root.foreground : root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: root.syncSymbol
-
-                            MouseArea {
-                                anchors.fill: parent
-                                anchors.margins: -Style.space(4)
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.syncSymbol = !root.syncSymbol;
-                                    if (root.syncSymbol) {
-                                        var currentSym = root.symbolForCell(root.activeCellIndex);
-                                        root.mainSymbol = currentSym;
-                                        var nextSymbols = [];
-                                        for (var i = 0; i < 5; i++)
-                                            nextSymbols.push(currentSym);
-                                        root.cellSymbols = nextSymbols;
-                                    }
-                                    root.refreshAllCharts();
-                                    root.saveGridState();
-                                }
-                            }
-                        }
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "TF " + (root.syncTimeframe ? "[ON]" : "[OFF]")
-                            color: root.syncTimeframe ? root.foreground : root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: root.syncTimeframe
-
-                            MouseArea {
-                                anchors.fill: parent
-                                anchors.margins: -Style.space(4)
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.syncTimeframe = !root.syncTimeframe;
-                                    if (root.syncTimeframe) {
-                                        var currentTf = root.timeframeForCell(root.activeCellIndex);
-                                        var nextTfs = [];
-                                        for (var i = 0; i < 5; i++)
-                                            nextTfs.push(currentTf);
-                                        root.cellTimeframes = nextTfs;
-                                    } else {
-                                        root.cellTimeframes = Model.gridTimeframes(root.gridMode === "1x1" ? root.previousGridMode : root.gridMode);
-                                    }
-                                    root.refreshAllCharts();
-                                    root.saveGridState();
-                                }
-                            }
-                        }
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "CROSS " + (root.syncCrosshair ? "[ON]" : "[OFF]")
-                            color: root.syncCrosshair ? root.foreground : root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: root.syncCrosshair
-
-                            MouseArea {
-                                anchors.fill: parent
-                                anchors.margins: -Style.space(4)
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.syncCrosshair = !root.syncCrosshair;
-                                    root.saveGridState();
-                                }
-                            }
-                        }
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "TIME " + (root.syncTime ? "[ON]" : "[OFF]")
-                            color: root.syncTime ? root.foreground : root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: root.syncTime
-
-                            MouseArea {
-                                anchors.fill: parent
-                                anchors.margins: -Style.space(4)
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.syncTime = !root.syncTime;
-                                    root.saveGridState();
-                                }
-                            }
+                    HoverHandler {
+                        id: gridLayoutHover
+                        onHoveredChanged: {
+                            if (!hovered)
+                                root.gridExpanded = false;
                         }
                     }
                 }
 
-                // Close / Dismiss
-                Text {
+                // Sync Toggles (Right-aligned)
+                Row {
                     anchors.right: parent.right
                     anchors.rightMargin: Style.space(12)
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "CLOSE"
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.bold: true
+                    spacing: Style.space(10)
 
-                    MouseArea {
-                        anchors.fill: parent
-                        anchors.margins: -Style.space(4)
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.visible = false
+                    Text {
+                        text: "SYNC"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: "SYM " + (root.syncSymbol ? "[ON]" : "[OFF]")
+                        color: root.syncSymbol ? root.foreground : root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: root.syncSymbol
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.syncSymbol = !root.syncSymbol;
+                                if (root.syncSymbol) {
+                                    var currentSym = root.symbolForCell(root.activeCellIndex);
+                                    root.mainSymbol = currentSym;
+                                    var nextSymbols = [];
+                                    for (var i = 0; i < 5; i++)
+                                        nextSymbols.push(currentSym);
+                                    root.cellSymbols = nextSymbols;
+                                }
+                                root.refreshAllCharts();
+                                root.saveGridState();
+                            }
+                        }
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: "TF " + (root.syncTimeframe ? "[ON]" : "[OFF]")
+                        color: root.syncTimeframe ? root.foreground : root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: root.syncTimeframe
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.syncTimeframe = !root.syncTimeframe;
+                                if (root.syncTimeframe) {
+                                    var currentTf = root.timeframeForCell(root.activeCellIndex);
+                                    var nextTfs = [];
+                                    for (var i = 0; i < 5; i++)
+                                        nextTfs.push(currentTf);
+                                    root.cellTimeframes = nextTfs;
+                                } else {
+                                    root.cellTimeframes = Model.gridTimeframes(root.gridMode === "1x1" ? root.previousGridMode : root.gridMode);
+                                }
+                                root.refreshAllCharts();
+                                root.saveGridState();
+                            }
+                        }
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: "CROSS " + (root.syncCrosshair ? "[ON]" : "[OFF]")
+                        color: root.syncCrosshair ? root.foreground : root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: root.syncCrosshair
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.syncCrosshair = !root.syncCrosshair;
+                                root.saveGridState();
+                            }
+                        }
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: "TIME " + (root.syncTime ? "[ON]" : "[OFF]")
+                        color: root.syncTime ? root.foreground : root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: root.syncTime
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.syncTime = !root.syncTime;
+                                root.saveGridState();
+                            }
+                        }
                     }
                 }
             }
