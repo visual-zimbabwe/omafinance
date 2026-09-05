@@ -156,7 +156,7 @@ function chartSpec(range) {
   switch (String(range || "1D")) {
     case "60": return { range: "1mo", interval: "60m" }
     case "1W": return { range: "5y", interval: "1wk" }
-    case "1M": return { range: "max", interval: "1mo" }
+    case "1M": return { range: "10y", interval: "1mo" }
     case "YTD": return { range: "ytd", interval: "1d" }
     case "1Y": return { range: "max", interval: "1mo" }
     default: return { range: "1y", interval: "1d" }
@@ -264,7 +264,7 @@ function rangeCaption(rangeKey, quote) {
     case "60": return "60-Minute Candles (1 Month)"
     case "1D": return "1-Day Candles (1 Year)"
     case "1W": return "1-Week Candles (5 Years)"
-    case "1M": return "1-Month Candles (All Time)"
+    case "1M": return "1-Month Candles (10 Years)"
     case "YTD": return "Year to date (Daily)"
     case "1Y": return "1-Year Candles (All Time)"
     default: return ""
