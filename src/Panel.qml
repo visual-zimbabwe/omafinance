@@ -283,7 +283,8 @@ Panel {
     }
 
     function timeframeColor(quote, tf) {
-        var q = quote || (detailSymbol ? quotes[detailSymbol] : null);
+        var sym = (quote && quote.symbol) || detailSymbol;
+        var q = (sym && quotes[sym] && quotes[sym].ftfc) ? quotes[sym] : (quote || (detailSymbol ? quotes[detailSymbol] : null));
         if (!q || !q.ftfc)
             return dim;
         var state = q.ftfc[tf];
@@ -1023,7 +1024,7 @@ Panel {
                 var valid = parsed && parsed.symbol === root.detailSymbol && (!parsed.yahooRange || parsed.yahooRange === expected);
                 if (valid) {
                     parsed.chartRange = root.detailRange;
-                    if ((!parsed.ftfc || parsed.ftfc["60"] === "flat") && root.quotes[root.detailSymbol] && root.quotes[root.detailSymbol].ftfc)
+                    if (root.quotes[root.detailSymbol] && root.quotes[root.detailSymbol].ftfc)
                         parsed.ftfc = root.quotes[root.detailSymbol].ftfc;
                     root.detailQuote = parsed;
                     root.chartFailureCount = 0;

@@ -591,7 +591,10 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
     closes.push(candles[k].close)
   }
 
-  var ftfc = extractFTFC(result.timestamp, result.indicators, latest, meta)
+  var ftfcPrice = regularPrice != null ? regularPrice : latest
+  var granularity = String(meta.dataGranularity || "")
+  var isHourly = granularity === "1h" || granularity === "60m" || rangeKey === "60"
+  var ftfc = isHourly ? extractFTFC(result.timestamp, result.indicators, ftfcPrice, meta) : null
 
   return {
     symbol: symbol,
