@@ -143,7 +143,7 @@ function quoteSymbolsForView(watchlist, detailSymbol, view) {
 }
 
 function chartRanges() {
-  return ["60", "1D", "1W", "1M", "YTD", "1Y"]
+  return ["60", "1D", "1W", "1M", "1Y"]
 }
 
 function normalizeRange(value) {
@@ -157,7 +157,6 @@ function chartSpec(range) {
     case "60": return { range: "1mo", interval: "60m" }
     case "1W": return { range: "5y", interval: "1wk" }
     case "1M": return { range: "10y", interval: "1mo" }
-    case "YTD": return { range: "ytd", interval: "1d" }
     case "1Y": return { range: "max", interval: "1mo" }
     default: return { range: "1y", interval: "1d" }
   }
@@ -265,7 +264,6 @@ function rangeCaption(rangeKey, quote) {
     case "1D": return "1-Day Candles (1 Year)"
     case "1W": return "1-Week Candles (5 Years)"
     case "1M": return "1-Month Candles (10 Years)"
-    case "YTD": return "Year to date (Daily)"
     case "1Y": return "1-Year Candles (All Time)"
     default: return ""
   }
@@ -375,7 +373,7 @@ function mergePeriodCandles(candles, rangeKey) {
       return getUtcMonday(t1) === getUtcMonday(t2)
     }
 
-    if (range === "1D" || range === "YTD") {
+    if (range === "1D") {
       var d1d = new Date(t1 * 1000)
       var d2d = new Date(t2 * 1000)
       return d1d.getUTCFullYear() === d2d.getUTCFullYear()
