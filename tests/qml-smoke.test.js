@@ -285,6 +285,8 @@ test("panel configures and loads GridWindow with persistence", () => {
 
   assert.match(panel, /readonly property var detailActionIds:[\s\S]*?"grid"/)
   assert.match(panel, /function openGrid\(symbol\)/)
+  assert.match(panel, /property var activeGridWindows:\s*\[\]/)
+  assert.match(panel, /gridWindowComponent\.createObject/)
   assert.match(panel, /GridWindow\s*\{/)
   assert.match(panel, /onStateSaveRequested:\s*function\s*\(mode,\s*sync,\s*symbols,\s*splits\)/)
 })

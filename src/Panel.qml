@@ -35,6 +35,7 @@ Panel {
         })
     property var gridSymbols: []
     property var gridSplits: ({})
+    property var activeGridWindows: []
     property bool gridOpened: false
     property string chartFetchSymbol: ""
     property string chartFetchRange: ""
@@ -1354,47 +1355,72 @@ Panel {
 
     function openGrid(symbol) {
         var sym = symbol || detailSymbol || (watchlist.length > 0 ? watchlist[0] : "AAPL");
-        if (gridLoader.item) {
-            gridLoader.item.mainSymbol = sym;
-            gridLoader.item.visible = true;
-        } else {
-            root.gridOpened = true;
+        for (var i = 0; i < root.activeGridWindows.length; i++) {
+            var existing = root.activeGridWindows[i];
+            if (existing && existing.visible && existing.mainSymbol === sym) {
+                if (typeof existing.raise === "function")
+                    existing.raise();
+                if (typeof existing.requestActivate === "function")
+                    existing.requestActivate();
+                return;
+            }
+        }
+
+        var nextWindows = [];
+        for (var j = 0; j < root.activeGridWindows.length; j++) {
+            if (root.activeGridWindows[j] && root.activeGridWindows[j].visible)
+                nextWindows.push(root.activeGridWindows[j]);
+        }
+
+        var currentSplits = root.gridSplits || ({});
+        var currentMode = root.gridMode || "2x2";
+        var win = gridWindowComponent.createObject(root, {
+            mainSymbol: sym,
+            watchlist: root.watchlist,
+            pinned: root.pinned,
+            gridMode: currentMode,
+            syncSymbol: root.gridSync ? root.gridSync.symbol !== false : true,
+            syncTimeframe: root.gridSync ? root.gridSync.timeframe === true : false,
+            syncCrosshair: root.gridSync ? root.gridSync.crosshair !== false : true,
+            syncTime: root.gridSync ? root.gridSync.time !== false : true,
+            cellSymbols: [sym, sym, sym, sym, sym],
+            rowSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].rowRatio ? currentSplits[currentMode].rowRatio : 0.5,
+            topColSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].colTopRatio ? currentSplits[currentMode].colTopRatio : 0.5,
+            botColSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].colBotRatio ? currentSplits[currentMode].colBotRatio : 0.5
+        });
+
+        if (win) {
+            nextWindows.push(win);
+            root.activeGridWindows = nextWindows;
         }
     }
 
-    Loader {
-        id: gridLoader
-        active: root.gridOpened
-        sourceComponent: Component {
-            GridWindow {
-                id: gridWin
-                visible: true
-                mainSymbol: root.detailSymbol || (root.watchlist.length > 0 ? root.watchlist[0] : "AAPL")
-                watchlist: root.watchlist
-                pinned: root.pinned
-                gridMode: root.gridMode || "2x2"
-                syncSymbol: root.gridSync ? root.gridSync.symbol !== false : true
-                syncTimeframe: root.gridSync ? root.gridSync.timeframe === true : false
-                syncCrosshair: root.gridSync ? root.gridSync.crosshair !== false : true
-                syncTime: root.gridSync ? root.gridSync.time !== false : true
-                cellSymbols: root.gridSymbols && root.gridSymbols.length > 0 ? root.gridSymbols : [mainSymbol, mainSymbol, mainSymbol, mainSymbol, mainSymbol]
-                rowSplitRatio: root.gridSplits && root.gridSplits[gridMode] && root.gridSplits[gridMode].rowRatio ? root.gridSplits[gridMode].rowRatio : 0.5
-                topColSplitRatio: root.gridSplits && root.gridSplits[gridMode] && root.gridSplits[gridMode].colTopRatio ? root.gridSplits[gridMode].colTopRatio : 0.5
-                botColSplitRatio: root.gridSplits && root.gridSplits[gridMode] && root.gridSplits[gridMode].colBotRatio ? root.gridSplits[gridMode].colBotRatio : 0.5
+    Component {
+        id: gridWindowComponent
+        GridWindow {
+            id: gridWin
+            visible: true
 
-                onStateSaveRequested: function (mode, sync, symbols, splits) {
-                    root.gridMode = mode;
-                    root.gridSync = sync;
-                    root.gridSymbols = symbols;
-                    var nextSplits = Object.assign({}, root.gridSplits || ({}));
-                    nextSplits[mode] = splits[mode];
-                    root.gridSplits = nextSplits;
-                    root.persist();
-                }
+            onStateSaveRequested: function (mode, sync, symbols, splits) {
+                root.gridMode = mode;
+                root.gridSync = sync;
+                root.gridSymbols = symbols;
+                var nextSplits = Object.assign({}, root.gridSplits || ({}));
+                nextSplits[mode] = splits[mode];
+                root.gridSplits = nextSplits;
+                root.persist();
+            }
 
-                onVisibleChanged: {
-                    if (!visible)
-                        root.gridOpened = false;
+            onVisibleChanged: {
+                if (!visible) {
+                    var remaining = [];
+                    for (var i = 0; i < root.activeGridWindows.length; i++) {
+                        var w = root.activeGridWindows[i];
+                        if (w && w !== gridWin && w.visible)
+                            remaining.push(w);
+                    }
+                    root.activeGridWindows = remaining;
+                    gridWin.destroy();
                 }
             }
         }
