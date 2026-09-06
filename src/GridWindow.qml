@@ -38,6 +38,11 @@ FloatingWindow {
     property var chartCache: ({})
     property var pendingFetches: []
     property bool fetching: false
+    property int quoteFailureCount: 0
+    property int chartFailureCount: 0
+    readonly property int liveRefreshMs: Model.backoffDelay(2000, quoteFailureCount, 60000)
+    readonly property int chartRefreshMs: Model.backoffDelay(15000, chartFailureCount, 120000)
+    property bool quoteRefreshPending: false
 
     signal stateSaveRequested(string mode, var sync, var symbols, var splits)
 
@@ -52,6 +57,41 @@ FloatingWindow {
     readonly property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
     readonly property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
     readonly property string fontFamily: Style.font.family
+
+    function activeCellCount() {
+        if (root.gridMode === "1x1")
+            return 1;
+        if (root.gridMode === "2+3")
+            return 5;
+        return 4;
+    }
+
+    function activeSymbols() {
+        var count = activeCellCount();
+        var symbols = [];
+        for (var i = 0; i < count; i++) {
+            var idx = (root.gridMode === "1x1") ? root.activeCellIndex : i;
+            var sym = symbolForCell(idx);
+            if (sym && symbols.indexOf(sym) === -1)
+                symbols.push(sym);
+        }
+        return symbols;
+    }
+
+    function refreshQuotes() {
+        var syms = activeSymbols();
+        if (syms.length === 0) {
+            root.quoteRefreshPending = false;
+            return;
+        }
+        if (quoteProc.running) {
+            root.quoteRefreshPending = true;
+            return;
+        }
+        root.quoteRefreshPending = false;
+        quoteProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.sparkUrl(syms)];
+        quoteProc.running = true;
+    }
 
     function symbolForCell(index) {
         if (root.syncSymbol)
@@ -77,9 +117,9 @@ FloatingWindow {
         return root.chartCache[key] || [];
     }
 
-    function requestChartFetch(sym, tf) {
+    function requestChartFetch(sym, tf, force) {
         var key = cacheKey(sym, tf);
-        if (root.chartCache[key])
+        if (!force && root.chartCache[key])
             return;
         for (var i = 0; i < root.pendingFetches.length; i++) {
             if (root.pendingFetches[i].symbol === sym && root.pendingFetches[i].rangeKey === tf)
@@ -107,6 +147,26 @@ FloatingWindow {
     property string currentFetchRange: ""
 
     Process {
+        id: quoteProc
+        onExited: function (exitCode) {
+            var raw = String(quoteStdout.text || "").trim();
+            var parsed = exitCode === 0 && raw ? Model.parseSpark(raw) : ({});
+            if (Object.keys(parsed).length > 0) {
+                root.quotes = Model.mergeQuotes(root.quotes, parsed);
+                root.quoteFailureCount = 0;
+            } else {
+                root.quoteFailureCount = Math.min(10, root.quoteFailureCount + 1);
+            }
+            if (root.quoteRefreshPending)
+                Qt.callLater(root.refreshQuotes);
+        }
+        stdout: StdioCollector {
+            id: quoteStdout
+            waitForEnd: true
+        }
+    }
+
+    Process {
         id: chartFetchProc
         onExited: function (exitCode) {
             if (exitCode === 0 && chartFetchStdout.text) {
@@ -122,7 +182,12 @@ FloatingWindow {
                         nextQuotes[root.currentFetchSymbol] = parsed.quote;
                         root.quotes = nextQuotes;
                     }
+                    root.chartFailureCount = 0;
+                } else {
+                    root.chartFailureCount = Math.min(10, root.chartFailureCount + 1);
                 }
+            } else {
+                root.chartFailureCount = Math.min(10, root.chartFailureCount + 1);
             }
             if (root.pendingFetches.length > 0)
                 Qt.callLater(root.processNextFetch);
@@ -133,18 +198,36 @@ FloatingWindow {
         }
     }
 
-    function refreshAllCharts() {
+    Timer {
+        id: liveTimer
+        interval: root.liveRefreshMs
+        running: root.visible
+        repeat: true
+        onTriggered: if (!quoteProc.running)
+            root.refreshQuotes()
+    }
+
+    Timer {
+        id: chartLiveTimer
+        interval: root.chartRefreshMs
+        running: root.visible
+        repeat: true
+        onTriggered: root.refreshAllCharts(true)
+    }
+
+    function refreshAllCharts(force) {
+        var isForced = force === true;
         if (root.gridMode === "1x1") {
             var sym1 = symbolForCell(root.activeCellIndex);
             var tf1 = timeframeForCell(root.activeCellIndex);
-            requestChartFetch(sym1, tf1);
+            requestChartFetch(sym1, tf1, isForced);
             return;
         }
         var count = root.gridMode === "2+3" ? 5 : 4;
         for (var i = 0; i < count; i++) {
             var sym = symbolForCell(i);
             var tf = timeframeForCell(i);
-            requestChartFetch(sym, tf);
+            requestChartFetch(sym, tf, isForced);
         }
     }
 
@@ -218,6 +301,7 @@ FloatingWindow {
             updated[index] = sym;
             root.cellSymbols = updated;
         }
+        refreshQuotes();
         refreshAllCharts();
         saveGridState();
     }
@@ -293,6 +377,7 @@ FloatingWindow {
     }
 
     Component.onCompleted: {
+        refreshQuotes();
         refreshAllCharts();
         Qt.callLater(function () {
             var item = root.getActiveCellItem();
@@ -303,6 +388,8 @@ FloatingWindow {
 
     onVisibleChanged: {
         if (visible) {
+            refreshQuotes();
+            refreshAllCharts();
             Qt.callLater(function () {
                 var item = root.getActiveCellItem();
                 if (item)
@@ -319,8 +406,12 @@ FloatingWindow {
         });
     }
 
-    onMainSymbolChanged: refreshAllCharts()
+    onMainSymbolChanged: {
+        refreshQuotes();
+        refreshAllCharts();
+    }
     onGridModeChanged: {
+        refreshQuotes();
         refreshAllCharts();
         Qt.callLater(function () {
             var item = root.getActiveCellItem();
@@ -471,6 +562,7 @@ FloatingWindow {
                                                 root.cellTimeframes = Model.gridTimeframes(modelData);
                                             }
                                             root.gridExpanded = false;
+                                            root.refreshQuotes();
                                             root.refreshAllCharts();
                                             root.saveGridState();
                                         }
@@ -526,6 +618,7 @@ FloatingWindow {
                                         nextSymbols.push(currentSym);
                                     root.cellSymbols = nextSymbols;
                                 }
+                                root.refreshQuotes();
                                 root.refreshAllCharts();
                                 root.saveGridState();
                             }
