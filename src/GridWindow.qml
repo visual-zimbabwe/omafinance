@@ -41,7 +41,7 @@ FloatingWindow {
 
     signal stateSaveRequested(string mode, var sync, var symbols, var splits)
 
-    title: "Omafinance Grid"
+    title: root.mainSymbol ? "Omafinance Grid - " + root.mainSymbol : "Omafinance Grid"
     color: Color.background
     implicitWidth: Style.space(1200)
     implicitHeight: Style.space(750)
