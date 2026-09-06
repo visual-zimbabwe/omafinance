@@ -381,4 +381,19 @@ test("grid window provides dual-speed live updating timers and silent backoff", 
   assert.match(grid, /requestChartFetch\(sym,\s*tf,\s*isForced\)/)
 })
 
+test("grid cell provides live ticker search suggestions with debouncing and keyboard navigation", () => {
+  const gridCell = fs.readFileSync(source("GridCell.qml"), "utf8")
+
+  assert.match(gridCell, /id:\s*searchProc/)
+  assert.match(gridCell, /id:\s*searchDebounce[\s\S]*?interval:\s*100/)
+  assert.match(gridCell, /function cachedSearchResults\(query\)/)
+  assert.match(gridCell, /function cacheSearchResults\(query, results\)/)
+  assert.match(gridCell, /id:\s*suggestionsPopup/)
+  assert.match(gridCell, /model:\s*root\.suggestions/)
+  assert.match(gridCell, /Model\.suggestionMeta\(modelData\)/)
+  assert.match(gridCell, /Qt\.Key_Down[\s\S]*?root\.suggestionIndex/)
+  assert.match(gridCell, /Qt\.Key_Up[\s\S]*?root\.suggestionIndex/)
+})
+
+
 

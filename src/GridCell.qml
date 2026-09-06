@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
@@ -27,6 +28,13 @@ Item {
     property string searchQuery: ""
     property var suggestions: []
     property int suggestionIndex: 0
+    property string searchPendingQuery: ""
+    property string searchActiveQuery: ""
+    property string searchError: ""
+    property var searchCache: ({})
+    property var searchCacheOrder: []
+    readonly property int searchCacheTtlMs: 300000
+    readonly property int searchCacheLimit: 32
     property bool tfExpanded: false
     property bool changingInterval: false
     property string intervalQuery: ""
@@ -74,6 +82,9 @@ Item {
         root.tfExpanded = false;
         root.searching = true;
         root.searchQuery = "";
+        root.searchPendingQuery = "";
+        root.searchActiveQuery = "";
+        root.searchError = "";
         root.suggestions = [];
         root.suggestionIndex = 0;
         searchInput.text = "";
@@ -82,8 +93,14 @@ Item {
     }
 
     function dismissSearch() {
+        searchDebounce.stop();
+        if (searchProc.running)
+            searchProc.running = false;
         root.searching = false;
         root.searchQuery = "";
+        root.searchPendingQuery = "";
+        root.searchActiveQuery = "";
+        root.searchError = "";
         root.suggestions = [];
         root.forceActiveFocus();
     }
@@ -101,6 +118,77 @@ Item {
             }
         }
         dismissSearch();
+    }
+
+    function requestSearch() {
+        var query = searchInput.text.replace(/^\s+|\s+$/g, "");
+        searchQuery = query;
+        if (query.length < 1) {
+            suggestions = [];
+            searchPendingQuery = "";
+            searchError = "";
+            return;
+        }
+        var cached = cachedSearchResults(query);
+        if (cached !== null) {
+            suggestions = cached;
+            suggestionIndex = 0;
+            searchPendingQuery = "";
+            searchError = "";
+            return;
+        }
+        searchError = "";
+        searchPendingQuery = query;
+        if (!searchProc.running)
+            startSearchFetch();
+    }
+
+    function searchCacheKey(query) {
+        return String(query || "").replace(/^\s+|\s+$/g, "").toUpperCase();
+    }
+
+    function cachedSearchResults(query) {
+        var key = searchCacheKey(query);
+        var entry = searchCache[key];
+        if (!entry || Date.now() - entry.storedAt > searchCacheTtlMs)
+            return null;
+        return entry.results;
+    }
+
+    function cacheSearchResults(query, results) {
+        var key = searchCacheKey(query);
+        if (!key)
+            return;
+        var nextCache = {};
+        var nextOrder = [];
+        for (var i = 0; i < searchCacheOrder.length; i++) {
+            var existingKey = searchCacheOrder[i];
+            if (existingKey !== key && searchCache[existingKey]) {
+                nextCache[existingKey] = searchCache[existingKey];
+                nextOrder.push(existingKey);
+            }
+        }
+        nextCache[key] = {
+            storedAt: Date.now(),
+            results: results
+        };
+        nextOrder.push(key);
+        while (nextOrder.length > searchCacheLimit)
+            delete nextCache[nextOrder.shift()];
+        searchCache = nextCache;
+        searchCacheOrder = nextOrder;
+    }
+
+    function startSearchFetch() {
+        if (!searching || !searchPendingQuery)
+            return;
+        searchActiveQuery = searchPendingQuery;
+        searchProc.command = ["curl", "-fsS", "--max-time", "5", "-A", "Mozilla/5.0", Model.searchUrl(searchActiveQuery)];
+        searchProc.running = true;
+    }
+
+    function scheduleSearch() {
+        searchDebounce.restart();
     }
 
     function startIntervalInput(initialChar) {
@@ -356,7 +444,40 @@ Item {
         }
     }
 
-    // Floating Type-to-Search Input (Zero-Chrome)
+    Process {
+        id: searchProc
+        onExited: function (exitCode) {
+            var results = [];
+            if (exitCode === 0) {
+                results = Model.parseSearch(searchStdout.text);
+                root.cacheSearchResults(root.searchActiveQuery, results);
+            }
+            if (root.searching && root.searchActiveQuery === root.searchQuery) {
+                if (exitCode === 0) {
+                    root.suggestions = results;
+                    root.searchError = "";
+                } else {
+                    root.suggestions = [];
+                    root.searchError = "Search unavailable";
+                }
+                root.suggestionIndex = 0;
+            }
+            if (root.searching && root.searchPendingQuery && root.searchPendingQuery !== root.searchActiveQuery)
+                Qt.callLater(root.startSearchFetch);
+        }
+        stdout: StdioCollector {
+            id: searchStdout
+            waitForEnd: true
+        }
+    }
+
+    Timer {
+        id: searchDebounce
+        interval: 100
+        onTriggered: root.requestSearch()
+    }
+
+    // Floating Type-to-Search Input & Suggestions Dropdown (Zero-Chrome)
     Item {
         id: searchOverlay
         visible: root.searching
@@ -364,12 +485,13 @@ Item {
         anchors.left: parent.left
         anchors.leftMargin: Style.space(8)
         anchors.topMargin: Style.space(4)
-        width: Style.space(220)
-        height: Style.space(28)
+        width: Style.space(260)
         z: 200
 
         Rectangle {
-            anchors.fill: parent
+            id: searchBox
+            width: parent.width
+            height: Style.space(28)
             color: Color.popups.background
             border.width: 1
             border.color: root.foreground
@@ -385,14 +507,131 @@ Item {
 
                 onTextChanged: {
                     root.searchQuery = text;
+                    if (root.searching)
+                        root.scheduleSearch();
                 }
 
-                Keys.onReturnPressed: {
-                    root.commitSearch();
+                Keys.onPressed: function (event) {
+                    if (event.key === Qt.Key_Down) {
+                        if (root.suggestions.length > 0) {
+                            root.suggestionIndex = (root.suggestionIndex + 1) % root.suggestions.length;
+                            event.accepted = true;
+                        }
+                    } else if (event.key === Qt.Key_Up) {
+                        if (root.suggestions.length > 0) {
+                            root.suggestionIndex = (root.suggestionIndex - 1 + root.suggestions.length) % root.suggestions.length;
+                            event.accepted = true;
+                        }
+                    } else if (event.key === Qt.Key_Tab) {
+                        if (root.suggestions.length > 0) {
+                            root.suggestionIndex = (root.suggestionIndex + 1) % root.suggestions.length;
+                            event.accepted = true;
+                        }
+                    } else if (event.key === Qt.Key_Backtab) {
+                        if (root.suggestions.length > 0) {
+                            root.suggestionIndex = (root.suggestionIndex - 1 + root.suggestions.length) % root.suggestions.length;
+                            event.accepted = true;
+                        }
+                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        root.commitSearch();
+                        event.accepted = true;
+                    } else if (event.key === Qt.Key_Escape) {
+                        root.dismissSearch();
+                        event.accepted = true;
+                    }
+                }
+            }
+        }
+
+        // Suggestions Dropdown Popup
+        Rectangle {
+            id: suggestionsPopup
+            visible: root.suggestions.length > 0 || (root.searchError !== "" && root.searchQuery.length > 0)
+            anchors.top: searchBox.bottom
+            anchors.topMargin: Style.space(4)
+            width: parent.width
+            implicitHeight: suggestionsColumn.implicitHeight + Style.space(8)
+            color: Color.popups.background
+            border.width: 1
+            border.color: root.dim
+            clip: true
+
+            Column {
+                id: suggestionsColumn
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.topMargin: Style.space(4)
+                spacing: Style.space(2)
+
+                Repeater {
+                    model: root.suggestions
+
+                    Item {
+                        required property int index
+                        required property var modelData
+                        width: suggestionsColumn.width
+                        height: Style.space(38)
+
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.margins: 1
+                            color: (index === root.suggestionIndex) ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15) : "transparent"
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onEntered: {
+                                root.suggestionIndex = index;
+                            }
+                            onClicked: {
+                                root.symbolChangedManually(root.cellIndex, modelData.symbol);
+                                root.dismissSearch();
+                            }
+                        }
+
+                        Column {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.leftMargin: Style.space(8)
+                            anchors.rightMargin: Style.space(8)
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 1
+
+                            Text {
+                                textFormat: Text.PlainText
+                                text: modelData.symbol
+                                color: root.foreground
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.bodySmall
+                                font.bold: true
+                            }
+
+                            Text {
+                                textFormat: Text.PlainText
+                                text: modelData.name + (Model.suggestionMeta(modelData) ? "  " + Model.suggestionMeta(modelData) : "")
+                                color: root.dim
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.bodySmall * 0.88
+                                elide: Text.ElideRight
+                                width: parent.width
+                            }
+                        }
+                    }
                 }
 
-                Keys.onEscapePressed: {
-                    root.dismissSearch();
+                Text {
+                    visible: root.searchError !== "" && root.suggestions.length === 0
+                    textFormat: Text.PlainText
+                    text: root.searchError
+                    color: Color.urgent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    topPadding: Style.space(4)
+                    bottomPadding: Style.space(4)
                 }
             }
         }
