@@ -367,4 +367,18 @@ test("candlestick chart renders bottom time scale and crosshair date badge", () 
   assert.match(chart, /id:\s*verticalCrosshair[\s\S]*?showTimeScale/)
 })
 
+test("grid window provides dual-speed live updating timers and silent backoff", () => {
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
+
+  assert.match(grid, /readonly property int liveRefreshMs:\s*Model\.backoffDelay\(2000,\s*quoteFailureCount,\s*60000\)/)
+  assert.match(grid, /readonly property int chartRefreshMs:\s*Model\.backoffDelay\(15000,\s*chartFailureCount,\s*120000\)/)
+  assert.match(grid, /id:\s*liveTimer[\s\S]*?interval:\s*root\.liveRefreshMs[\s\S]*?running:\s*root\.visible[\s\S]*?refreshQuotes/)
+  assert.match(grid, /id:\s*chartLiveTimer[\s\S]*?interval:\s*root\.chartRefreshMs[\s\S]*?running:\s*root\.visible[\s\S]*?refreshAllCharts\(true\)/)
+  assert.match(grid, /function activeSymbols\(\)/)
+  assert.match(grid, /function refreshQuotes\(\)/)
+  assert.match(grid, /id:\s*quoteProc/)
+  assert.match(grid, /Model\.sparkUrl\(syms\)/)
+  assert.match(grid, /requestChartFetch\(sym,\s*tf,\s*isForced\)/)
+})
+
 
