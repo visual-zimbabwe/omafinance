@@ -343,3 +343,28 @@ test("grid keyboard focus manages active cell across layouts and clicks", () => 
   assert.match(grid, /onGridModeChanged:[\s\S]*?item\.forceActiveFocus\(\)/)
   assert.match(grid, /Qt\.Key_Tab[\s\S]*?activeItem\.forceActiveFocus\(\)/)
 })
+
+test("grid cell displays strat scenario next to OHLC values and is always visible", () => {
+  const gridCell = fs.readFileSync(source("GridCell.qml"), "utf8")
+
+  assert.match(gridCell, /readonly property var currentBar:/)
+  assert.match(gridCell, /readonly property var activeCandle:\s*root\.activeHoverCandle !== null \? root\.activeHoverCandle : root\.currentBar/)
+  assert.match(gridCell, /visible:\s*root\.activeCandle !== null/)
+  assert.match(gridCell, /visible:\s*root\.activeCandle && root\.activeCandle\.strat && root\.activeCandle\.strat !== "-"/)
+  assert.match(gridCell, /text:\s*\(root\.activeCandle && root\.activeCandle\.strat && root\.activeCandle\.strat !== "-"\) \? String\(root\.activeCandle\.strat\)\.toUpperCase\(\) : ""/)
+  assert.match(gridCell, /color:\s*\(root\.activeCandle && root\.activeCandle\.close >= root\.activeCandle\.open\) \? root\.upColor : root\.downColor/)
+  assert.match(gridCell, /font\.bold:\s*true/)
+})
+
+test("candlestick chart renders bottom time scale and crosshair date badge", () => {
+  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+
+  assert.match(chart, /property bool showTimeScale:\s*true/)
+  assert.match(chart, /readonly property int timeScaleHeight:\s*showTimeScale \? Style\.space\(18\) : 0/)
+  assert.match(chart, /id:\s*axisDateBadge/)
+  assert.match(chart, /Model\.formatTimeAxisLabel/)
+  assert.match(chart, /Model\.formatCandleTime\(root\.hoverCandle\.timestamp,\s*root\.rangeKey\)/)
+  assert.match(chart, /id:\s*verticalCrosshair[\s\S]*?showTimeScale/)
+})
+
+

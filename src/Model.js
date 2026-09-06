@@ -1035,10 +1035,36 @@ function formatCandleTime(timestamp, rangeKey) {
   var mStr = (minutes < 10 ? "0" : "") + minutes
   var timeStr = h12 + ":" + mStr + " " + ampm
 
-  if (range === "60") return mon + " " + day + " " + timeStr
+  if (range === "60") return mon + " " + day + ", " + year + " " + timeStr
   if (range === "1Y") return String(year)
   if (range === "1M" || range === "All") return mon + " " + year
   return mon + " " + day + ", " + year
+}
+
+function formatTimeAxisLabel(timestamp, rangeKey, prevTimestamp) {
+  var t = Number(timestamp)
+  if (!isFinite(t) || t <= 0) return ""
+  var d = new Date(t * 1000)
+  var prevD = (prevTimestamp && Number(prevTimestamp) > 0) ? new Date(Number(prevTimestamp) * 1000) : null
+  var range = String(rangeKey || "1D")
+  var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  var mon = months[d.getMonth()]
+  var day = d.getDate()
+  var year = d.getFullYear()
+  var hours = d.getHours()
+  var minutes = d.getMinutes()
+  var ampm = hours >= 12 ? "PM" : "AM"
+  var h12 = hours % 12 || 12
+  var mStr = (minutes < 10 ? "0" : "") + minutes
+
+  if (range === "60") {
+    var isNewDay = !prevD || d.getDate() !== prevD.getDate() || d.getMonth() !== prevD.getMonth() || d.getFullYear() !== prevD.getFullYear()
+    if (isNewDay) return mon + " " + day
+    return h12 + ":" + mStr + " " + ampm
+  }
+  if (range === "1Y") return String(year)
+  if (range === "1M") return mon + " '" + String(year).slice(-2)
+  return mon + " " + day
 }
 
 function stratScenario(current, prev) {
@@ -1225,6 +1251,7 @@ if (typeof module !== "undefined") {
     isInsightsResponse: isInsightsResponse,
     formatIsoDate: formatIsoDate,
     formatCandleTime: formatCandleTime,
+    formatTimeAxisLabel: formatTimeAxisLabel,
     stratScenario: stratScenario,
     extractFTFC: extractFTFC,
     timeframeColor: timeframeColor,

@@ -25,6 +25,8 @@ Item {
 
     property bool showPriceScale: true
     readonly property int scaleGutterWidth: showPriceScale ? Style.space(52) : 0
+    property bool showTimeScale: true
+    readonly property int timeScaleHeight: showTimeScale ? Style.space(18) : 0
 
     signal crosshairMoved(real timestamp, real price, var candle)
     signal crosshairCleared
@@ -128,7 +130,7 @@ Item {
         var w = width;
         var h = height;
         var topPad = root.pad + Style.space(16);
-        var botPad = root.pad + Style.space(4);
+        var botPad = root.pad + (root.showTimeScale ? Style.space(18) : Style.space(4));
         var scaleGutter = root.showPriceScale ? Style.space(52) : 0;
         var left = root.pad;
         var right = Math.max(left + 1, w - root.pad - scaleGutter);
@@ -156,6 +158,7 @@ Item {
             vCount: 0,
             totalCandles: 0,
             ticks: [],
+            timeTicks: [],
             xs: [],
             yOpens: [],
             yHighs: [],
@@ -264,7 +267,9 @@ Item {
                     }
                 }
 
-                candidates.sort(function (a, b) { return a - b; });
+                candidates.sort(function (a, b) {
+                    return a - b;
+                });
                 var lastY = -99999;
                 for (var ci = 0; ci < candidates.length; ci++) {
                     var cp = candidates[ci];
@@ -313,6 +318,30 @@ Item {
             }
         }
 
+        // Bottom Time Scale Axis Ticks
+        var timeTicks = [];
+        if (root.showTimeScale && list.length > 0 && innerW > 0) {
+            var minTimeSpacing = root.rangeKey === "60" ? Style.space(68) : Style.space(55);
+            var maxTimeTicks = Math.max(2, Math.floor(innerW / minTimeSpacing));
+            var stepT = Math.max(1, Math.ceil(list.length / maxTimeTicks));
+            var lastTx = -99999;
+            var prevTs = null;
+            for (var ti = 0; ti < list.length; ti += stepT) {
+                var tx = xs[ti];
+                if (tx >= left + Style.space(16) && tx <= right - Style.space(16)) {
+                    if (Math.abs(tx - lastTx) >= minTimeSpacing) {
+                        timeTicks.push({
+                            timestamp: list[ti].timestamp,
+                            x: tx,
+                            label: Model.formatTimeAxisLabel(list[ti].timestamp, root.rangeKey, prevTs)
+                        });
+                        lastTx = tx;
+                        prevTs = list[ti].timestamp;
+                    }
+                }
+            }
+        }
+
         return {
             candles: list,
             strats: strats,
@@ -335,6 +364,7 @@ Item {
             vCount: vCount,
             totalCandles: total,
             ticks: ticks,
+            timeTicks: timeTicks,
             xs: xs,
             yOpens: yOpens,
             yHighs: yHighs,
@@ -569,6 +599,19 @@ Item {
                 ctx.textBaseline = "middle";
                 ctx.fillText(lastLabel, badgeX + badgeW / 2, badgeY + badgeH / 2);
             }
+
+            // Bottom Time Scale Axis Ticks
+            if (root.showTimeScale && g.timeTicks && g.timeTicks.length > 0) {
+                ctx.font = Style.font.bodySmall + "px " + root.fontFamily;
+                ctx.fillStyle = Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.45);
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                var tickY = Math.round(g.bot + Style.space(9));
+                for (var tti = 0; tti < g.timeTicks.length; tti++) {
+                    var tt = g.timeTicks[tti];
+                    ctx.fillText(tt.label, Math.round(tt.x), tickY);
+                }
+            }
         }
     }
 
@@ -579,6 +622,8 @@ Item {
     onUpColorChanged: canvas.requestPaint()
     onDownColorChanged: canvas.requestPaint()
     onGridColorChanged: canvas.requestPaint()
+    onShowTimeScaleChanged: refreshGeometry()
+    onShowPriceScaleChanged: refreshGeometry()
     onPadChanged: refreshGeometry()
     onWidthChanged: refreshGeometry()
     onHeightChanged: refreshGeometry()
@@ -738,7 +783,7 @@ Item {
             startY: root.cachedGeometry ? root.cachedGeometry.top : 0
             PathLine {
                 x: Math.round(root.hoverX) + 0.5
-                y: root.cachedGeometry ? root.cachedGeometry.bot : parent.height
+                y: root.cachedGeometry ? (root.showTimeScale ? (root.cachedGeometry.bot + Style.space(16)) : root.cachedGeometry.bot) : parent.height
             }
         }
     }
@@ -800,6 +845,33 @@ Item {
         }
     }
 
+    // Crosshair Date Axis Badge on Bottom Scale
+    Rectangle {
+        id: axisDateBadge
+        visible: root.showTimeScale && root.interactive && root.hovering && root.hoverCandle !== null && !root.hoveringScale
+        readonly property int maxX: (root.cachedGeometry ? root.cachedGeometry.right : (parent.width - root.scaleGutterWidth)) - width
+        readonly property int minX: root.cachedGeometry ? root.cachedGeometry.left : root.pad
+        x: Math.max(minX, Math.min(maxX, Math.round(root.hoverX - width / 2)))
+        y: root.cachedGeometry ? (root.cachedGeometry.bot + Style.space(2)) : (parent.height - height - root.pad)
+        implicitWidth: dateBadgeText.implicitWidth + Style.space(12)
+        height: Style.space(16)
+        color: Color.popups.background
+        border.width: 1
+        border.color: root.crosshairColor
+        z: 15
+
+        Text {
+            id: dateBadgeText
+            anchors.centerIn: parent
+            textFormat: Text.PlainText
+            text: root.hoverCandle ? Model.formatCandleTime(root.hoverCandle.timestamp, root.rangeKey) : ""
+            color: Color.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+        }
+    }
+
     // Floating Tooltip / Status Readout Header
     Item {
         anchors.top: parent.top
@@ -828,7 +900,7 @@ Item {
             Text {
                 visible: root.hoverCandle && root.hoverCandle.strat && root.hoverCandle.strat !== "-"
                 textFormat: Text.PlainText
-                text: root.hoverCandle && root.hoverCandle.strat ? root.hoverCandle.strat : ""
+                text: (root.hoverCandle && root.hoverCandle.strat && root.hoverCandle.strat !== "-") ? String(root.hoverCandle.strat).toUpperCase() : ""
                 color: root.hoverCandle && root.hoverCandle.close >= root.hoverCandle.open ? root.upColor : root.downColor
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall

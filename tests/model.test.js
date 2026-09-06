@@ -212,13 +212,39 @@ test("parseCandles extracts and sanitizes OHLCV candle structures", () => {
 })
 
 test("formatCandleTime formats timestamps per timeframe range", () => {
-  const ts = 1725548400 // specific unix timestamp
-  assert.ok(Model.formatCandleTime(ts, "60").length > 0)
+  const ts = 1725548400 // specific unix timestamp (Fri Sep 5 2024 / 2026)
+  const dt = new Date(ts * 1000)
+  assert.ok(Model.formatCandleTime(ts, "60").includes(String(dt.getFullYear())))
+  assert.ok(Model.formatCandleTime(ts, "60").includes("M")) // AM or PM
   assert.ok(Model.formatCandleTime(ts, "1D").length > 0)
   assert.ok(Model.formatCandleTime(ts, "1W").length > 0)
   assert.ok(Model.formatCandleTime(ts, "1M").length > 0)
   assert.ok(Model.formatCandleTime(ts, "1Y").length > 0)
   assert.equal(Model.formatCandleTime(null, "60"), "")
+})
+
+test("formatTimeAxisLabel formats compact date labels for bottom time scale", () => {
+  const tsDay1Hour1 = 1725548400 // Day 1 15:00
+  const tsDay1Hour2 = 1725548400 + 3600 // Day 1 16:00
+  const tsDay2Hour1 = 1725548400 + 86400 // Day 2 15:00
+
+  // 60m intraday: first tick of session shows day/date
+  const day1Label = Model.formatTimeAxisLabel(tsDay1Hour1, "60", null)
+  assert.ok(day1Label.length > 0)
+
+  // 60m intraday: subsequent tick on same day shows time
+  const hour2Label = Model.formatTimeAxisLabel(tsDay1Hour2, "60", tsDay1Hour1)
+  assert.ok(hour2Label.includes(":") || hour2Label.includes("M"))
+
+  // 60m intraday: tick on new day shows day/date
+  const day2Label = Model.formatTimeAxisLabel(tsDay2Hour1, "60", tsDay1Hour2)
+  assert.notEqual(day2Label, hour2Label)
+
+  assert.ok(Model.formatTimeAxisLabel(tsDay1Hour1, "1D").length > 0)
+  assert.ok(Model.formatTimeAxisLabel(tsDay1Hour1, "1W").length > 0)
+  assert.ok(Model.formatTimeAxisLabel(tsDay1Hour1, "1M").length > 0)
+  assert.ok(Model.formatTimeAxisLabel(tsDay1Hour1, "1Y").length > 0)
+  assert.equal(Model.formatTimeAxisLabel(null, "1D"), "")
 })
 
 test("stratScenario accurately identifies 1, 2u, 2d, and 3 scenarios", () => {

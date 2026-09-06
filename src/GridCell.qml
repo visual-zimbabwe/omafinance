@@ -39,6 +39,26 @@ Item {
     signal crosshairCleared
 
     readonly property var activeHoverCandle: chart.hoverCandle
+    readonly property var currentBar: {
+        var src = root.candles || [];
+        if (src.length === 0)
+            return null;
+        var last = src[src.length - 1];
+        if (!last)
+            return null;
+        var prev = src.length > 1 ? src[src.length - 2] : null;
+        var st = Model.stratScenario(last, prev);
+        return {
+            timestamp: last.timestamp,
+            open: Number(last.open),
+            high: Number(last.high),
+            low: Number(last.low),
+            close: Number(last.close),
+            volume: last.volume || 0,
+            strat: st
+        };
+    }
+    readonly property var activeCandle: root.activeHoverCandle !== null ? root.activeHoverCandle : root.currentBar
 
     function syncToTimestamp(ts) {
         chart.syncToTimestamp(ts);
@@ -271,7 +291,7 @@ Item {
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-                visible: root.activeHoverCandle !== null
+                visible: root.activeCandle !== null
 
                 Row {
                     anchors.right: parent.right
@@ -279,9 +299,10 @@ Item {
                     spacing: Style.space(6)
 
                     Text {
+                        visible: root.activeCandle && root.activeCandle.strat && root.activeCandle.strat !== "-"
                         textFormat: Text.PlainText
-                        text: root.activeHoverCandle ? Model.formatCandleTime(root.activeHoverCandle.timestamp, root.timeframe) : ""
-                        color: root.foreground
+                        text: (root.activeCandle && root.activeCandle.strat && root.activeCandle.strat !== "-") ? String(root.activeCandle.strat).toUpperCase() : ""
+                        color: (root.activeCandle && root.activeCandle.close >= root.activeCandle.open) ? root.upColor : root.downColor
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.bodySmall
                         font.bold: true
@@ -290,9 +311,9 @@ Item {
                     Text {
                         textFormat: Text.PlainText
                         text: {
-                            if (!root.activeHoverCandle)
+                            if (!root.activeCandle)
                                 return "";
-                            var c = root.activeHoverCandle;
+                            var c = root.activeCandle;
                             var cur = root.quote ? root.quote.currency : "USD";
                             var h = root.quote ? root.quote.priceHint : 2;
                             return "O:" + Model.formatPrice(c.open, cur, h) + " H:" + Model.formatPrice(c.high, cur, h) + " L:" + Model.formatPrice(c.low, cur, h) + " C:" + Model.formatPrice(c.close, cur, h);
