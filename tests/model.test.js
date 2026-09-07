@@ -179,20 +179,21 @@ test("state parsing normalizes symbols and removes invalid pins", () => {
   })
 })
 
-test("parseCandles extracts and sanitizes OHLCV candle structures", () => {
-  const timestamps = [1700000000, 1700000300, 1700000600]
+test("parseCandles extracts and sanitizes OHLCV candle structures and forward-fills nulls", () => {
+  const timestamps = [1699999700, 1700000000, 1700000300, 1700000600]
   const indicators = {
     quote: [{
-      open: [150.0, null, 153.0],
-      high: [155.0, 154.0, null],
-      low: [149.0, 150.0, 151.0],
-      close: [152.0, 151.0, null],
-      volume: [1000, null, 2000]
+      open: [null, 150.0, null, null],
+      high: [null, 155.0, 154.0, null],
+      low: [null, 149.0, 150.0, null],
+      close: [null, 152.0, 151.0, null],
+      volume: [null, 1000, null, 2000]
     }]
   }
 
   const candles = Model.parseCandles(timestamps, indicators)
-  assert.equal(candles.length, 2)
+  // Leading null bar at 1699999700 is dropped, remaining 3 bars are kept (bar 3 is forward-filled)
+  assert.equal(candles.length, 3)
   assert.deepEqual(candles[0], {
     timestamp: 1700000000,
     open: 150.0,
@@ -208,6 +209,14 @@ test("parseCandles extracts and sanitizes OHLCV candle structures", () => {
     low: 150.0,
     close: 151.0,
     volume: 0
+  })
+  assert.deepEqual(candles[2], {
+    timestamp: 1700000600,
+    open: 151.0,
+    high: 151.0,
+    low: 151.0,
+    close: 151.0,
+    volume: 2000
   })
 })
 
@@ -486,6 +495,82 @@ test("parseInterval parses TradingView-style interval keystrokes and shorthands"
   assert.equal(Model.parseInterval(null), null)
 })
 
+test("isCryptoSymbol detects cryptocurrency pairs", () => {
+  assert.equal(Model.isCryptoSymbol("BTC-USD"), true)
+  assert.equal(Model.isCryptoSymbol("ETH-USD"), true)
+  assert.equal(Model.isCryptoSymbol("SOL-USDT"), true)
+  assert.equal(Model.isCryptoSymbol("AAPL"), false)
+  assert.equal(Model.isCryptoSymbol("MSFT"), false)
+  assert.equal(Model.isCryptoSymbol("NVDA"), false)
+})
 
+test("chartUrl routes crypto 60 and 1D to Coinbase exchange and equities to Yahoo", () => {
+  assert.ok(Model.chartUrl("BTC-USD", "60").includes("api.exchange.coinbase.com"))
+  assert.ok(Model.chartUrl("BTC-USD", "60").includes("granularity=3600"))
+  assert.ok(Model.chartUrl("BTC-USD", "1D").includes("api.exchange.coinbase.com"))
+  assert.ok(Model.chartUrl("BTC-USD", "1D").includes("granularity=86400"))
+  assert.ok(Model.chartUrl("BTC-USD", "1W").includes("finance.yahoo.com"))
+  assert.ok(Model.chartUrl("AAPL", "60").includes("finance.yahoo.com"))
+  assert.ok(Model.chartUrl("AAPL", "1D").includes("finance.yahoo.com"))
+})
 
+test("parseChart parses Coinbase candles array and generates valid quote and FTFC", () => {
+  // [ time, low, high, open, close, volume ]
+  const mockCb = [
+    [1788739200, 80050, 80462, 80339, 80195, 150],
+    [1788735600, 80010, 80564, 80048, 80339, 120],
+    [1788732000, 79632, 80092, 79945, 80048, 110]
+  ]
+  const parsed = Model.parseChart(mockCb, "60", "BTC-USD")
+  assert.ok(parsed)
+  assert.equal(parsed.symbol, "BTC-USD")
+  assert.equal(parsed.price, 80195)
+  assert.equal(parsed.candles.length, 3)
+  assert.deepEqual(parsed.candles[2], {
+    timestamp: 1788739200,
+    open: 80339,
+    high: 80462,
+    low: 80050,
+    close: 80195,
+    volume: 150
+  })
+})
+
+test("chartCommand routes Hyperliquid tokens to Hyperliquid API and Coinbase/Yahoo appropriately", () => {
+  const hlCmd60 = Model.chartCommand("HYPE32196-USD", "60")
+  assert.ok(hlCmd60.some(arg => arg.includes("api.hyperliquid.xyz")))
+  assert.ok(hlCmd60.some(arg => arg.includes("HYPE")))
+  assert.ok(hlCmd60.some(arg => arg.includes("1h")))
+
+  const hlCmd1D = Model.chartCommand("HYPE32196-USD", "1D")
+  assert.ok(hlCmd1D.some(arg => arg.includes("api.hyperliquid.xyz")))
+  assert.ok(hlCmd1D.some(arg => arg.includes("1d")))
+
+  const btcCmd60 = Model.chartCommand("BTC-USD", "60")
+  assert.ok(btcCmd60.some(arg => arg.includes("api.exchange.coinbase.com")))
+
+  const aaplCmd = Model.chartCommand("AAPL", "1D")
+  assert.ok(aaplCmd.some(arg => arg.includes("finance.yahoo.com")))
+})
+
+test("parseChart parses Hyperliquid candles array and generates valid quote and candles", () => {
+  const mockHl = [
+    { t: 1788732000000, o: "87.74", c: "87.36", h: "87.82", l: "86.52", v: "304626" },
+    { t: 1788735600000, o: "87.36", c: "87.94", h: "88.03", l: "87.26", v: "129525" },
+    { t: 1788739200000, o: "87.95", c: "87.77", h: "88.06", l: "87.60", v: "33955" }
+  ]
+  const parsed = Model.parseChart(mockHl, "60", "HYPE32196-USD")
+  assert.ok(parsed)
+  assert.equal(parsed.symbol, "HYPE32196-USD")
+  assert.equal(parsed.price, 87.77)
+  assert.equal(parsed.candles.length, 3)
+  assert.deepEqual(parsed.candles[2], {
+    timestamp: 1788739200,
+    open: 87.95,
+    high: 88.06,
+    low: 87.60,
+    close: 87.77,
+    volume: 33955
+  })
+})
 

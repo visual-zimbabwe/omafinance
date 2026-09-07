@@ -633,6 +633,8 @@ Panel {
         startChartFetch();
     }
 
+    property bool chartRetryingYahoo: false
+
     function startChartFetch() {
         if (!detailSymbol)
             return;
@@ -640,8 +642,9 @@ Panel {
             return;
         chartFetchSymbol = detailSymbol;
         chartFetchRange = detailRange;
+        chartRetryingYahoo = false;
         chartError = "";
-        chartProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.chartUrl(chartFetchSymbol, chartFetchRange)];
+        chartProc.command = Model.chartCommand(chartFetchSymbol, chartFetchRange);
         chartProc.running = true;
     }
 
@@ -1044,7 +1047,14 @@ Panel {
         onExited: function (exitCode) {
             var currentFetch = root.chartFetchSymbol === root.detailSymbol && root.chartFetchRange === root.detailRange;
             if (currentFetch) {
-                var parsed = exitCode === 0 ? Model.parseChart(chartStdout.text, root.chartFetchRange) : null;
+                var parsed = exitCode === 0 ? Model.parseChart(chartStdout.text, root.chartFetchRange, root.chartFetchSymbol || root.detailSymbol) : null;
+                if (!parsed && !root.chartRetryingYahoo && Model.isCryptoSymbol(root.chartFetchSymbol)) {
+                    root.chartRetryingYahoo = true;
+                    chartProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.yahooChartUrl(root.chartFetchSymbol, root.chartFetchRange)];
+                    chartProc.running = true;
+                    return;
+                }
+                root.chartRetryingYahoo = false;
                 var expected = Model.chartSpec(root.detailRange).range;
                 var valid = parsed && parsed.symbol === root.detailSymbol && (!parsed.yahooRange || parsed.yahooRange === expected);
                 if (valid) {

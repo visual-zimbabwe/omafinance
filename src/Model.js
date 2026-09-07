@@ -252,14 +252,76 @@ function rangeChangePercent(quote, rangeKey) {
   return ((last - first) / first) * 100
 }
 
-function chartUrl(symbol, rangeKey) {
+function isCryptoSymbol(symbol) {
+  var s = normalizeSymbol(symbol)
+  return s.endsWith("-USD") || s.endsWith("-USDT") || s.endsWith("-EUR") || s.endsWith("-GBP")
+}
+
+function cryptoBaseSymbol(symbol) {
+  var s = normalizeSymbol(symbol)
+  var base = s.replace(/-(USD|USDT|EUR|GBP|CAD)$/, "")
+  base = base.replace(/[0-9]{3,}$/, "")
+  return base
+}
+
+function isHyperliquidCryptoSymbol(symbol) {
+  var base = cryptoBaseSymbol(symbol)
+  return base === "HYPE"
+}
+
+function isCoinbaseCryptoSymbol(symbol) {
+  var s = normalizeSymbol(symbol)
+  // Yahoo uses CoinMarketCap numeric IDs for collision tickers (e.g. HYPE32196-USD, PEPE24478-USD)
+  if (/[0-9]{3,}-USD$/i.test(s)) return false
+  return s.endsWith("-USD") || s.endsWith("-USDT") || s.endsWith("-EUR") || s.endsWith("-GBP")
+}
+
+function yahooChartUrl(symbol, rangeKey) {
+  var sym = normalizeSymbol(symbol)
   var spec = chartSpec(rangeKey)
   var prepost = "false"
   return "https://query1.finance.yahoo.com/v8/finance/chart/"
-    + encodeURIComponent(normalizeSymbol(symbol))
+    + encodeURIComponent(sym)
     + "?range=" + spec.range
     + "&interval=" + spec.interval
     + "&includePrePost=" + prepost
+}
+
+function chartUrl(symbol, rangeKey) {
+  var sym = normalizeSymbol(symbol)
+  var rk = String(rangeKey || "1D")
+  if (isCoinbaseCryptoSymbol(sym) && (rk === "60" || rk === "1D")) {
+    var gran = (rk === "60") ? "3600" : "86400"
+    return "https://api.exchange.coinbase.com/products/" + encodeURIComponent(sym) + "/candles?granularity=" + gran
+  }
+  return yahooChartUrl(sym, rk)
+}
+
+function chartCommand(symbol, rangeKey) {
+  var sym = normalizeSymbol(symbol)
+  var rk = String(rangeKey || "1D")
+  if (isHyperliquidCryptoSymbol(sym) && (rk === "60" || rk === "1D")) {
+    var coin = cryptoBaseSymbol(sym)
+    var interval = (rk === "60") ? "1h" : "1d"
+    var lookbackDays = (rk === "60") ? 30 : 365
+    var startTime = Date.now() - (lookbackDays * 86400000)
+    var payload = JSON.stringify({
+      type: "candleSnapshot",
+      req: {
+        coin: coin,
+        interval: interval,
+        startTime: startTime
+      }
+    })
+    return [
+      "curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0",
+      "-X", "POST",
+      "-H", "Content-Type: application/json",
+      "-d", payload,
+      "https://api.hyperliquid.xyz/info"
+    ]
+  }
+  return ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", chartUrl(sym, rk)]
 }
 
 function collectPeriods(value) {
@@ -469,12 +531,15 @@ function parseCandles(timestamps, indicators) {
   var len = closes.length
   for (var i = 0; i < len; i++) {
     var c = finiteOrNull(closes[i])
-    if (c === null) continue
+    var t = i < ts.length ? finiteOrNull(ts[i]) : null
+    if (c === null) {
+      if (out.length === 0 || t === null) continue
+      c = out[out.length - 1].close
+    }
     var o = finiteOrNull(opens[i])
     var h = finiteOrNull(highs[i])
     var l = finiteOrNull(lows[i])
     var v = finiteOrNull(volumes[i])
-    var t = i < ts.length ? finiteOrNull(ts[i]) : null
     if (o === null) o = c
     if (h === null) h = Math.max(o, c)
     if (l === null) l = Math.min(o, c)
@@ -694,11 +759,242 @@ function parseSpark(raw) {
   }
 }
 
-function parseChart(raw, rangeKey) {
+function extractFTFCFromCandles(hourlyCandles, price) {
+  var N = hourlyCandles ? hourlyCandles.length : 0
+  var p = finiteOrNull(price)
+  var fallback = { "60": "flat", "D": "flat", "W": "flat", "M": "flat" }
+  if (!N || p === null) return fallback
+
+  var lastCandle = hourlyCandles[N - 1]
+  var lastDate = new Date(lastCandle.timestamp * 1000)
+
+  // 60m: open of current 60m bar
+  var open60 = lastCandle.open != null ? lastCandle.open : (N >= 2 ? hourlyCandles[N - 2].close : lastCandle.close)
+
+  // D (Daily): first bar of current UTC day
+  var dayOpen = null
+  for (var i = 0; i < N; i++) {
+    var d = new Date(hourlyCandles[i].timestamp * 1000)
+    if (d.getUTCFullYear() === lastDate.getUTCFullYear() &&
+        d.getUTCMonth() === lastDate.getUTCMonth() &&
+        d.getUTCDate() === lastDate.getUTCDate()) {
+      dayOpen = hourlyCandles[i].open != null ? hourlyCandles[i].open : hourlyCandles[i].close
+      break
+    }
+  }
+  if (dayOpen === null) dayOpen = hourlyCandles[0].close
+
+  // W (Weekly): Monday open of current week
+  var dayOfWeek = lastDate.getUTCDay()
+  var diffToMon = lastDate.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1)
+  var mondayUtc = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), diffToMon, 0, 0, 0) / 1000
+  var weekOpen = null
+  for (var w = 0; w < N; w++) {
+    if (hourlyCandles[w].timestamp >= mondayUtc) {
+      weekOpen = hourlyCandles[w].open != null ? hourlyCandles[w].open : hourlyCandles[w].close
+      break
+    }
+  }
+  if (weekOpen === null) weekOpen = hourlyCandles[0].close
+
+  // M (Monthly): 1st of current month
+  var monthUtc = Date.UTC(lastDate.getUTCFullYear(), lastDate.getUTCMonth(), 1, 0, 0, 0) / 1000
+  var monthOpen = null
+  for (var m = 0; m < N; m++) {
+    if (hourlyCandles[m].timestamp >= monthUtc) {
+      monthOpen = hourlyCandles[m].open != null ? hourlyCandles[m].open : hourlyCandles[m].close
+      break
+    }
+  }
+  if (monthOpen === null) monthOpen = hourlyCandles[0].close
+
+  function tone(curr, ref) {
+    if (curr === null || ref === null) return "flat"
+    return curr >= ref ? "up" : "down"
+  }
+
+  return {
+    "60": tone(p, open60),
+    "D": tone(p, dayOpen),
+    "W": tone(p, weekOpen),
+    "M": tone(p, monthOpen)
+  }
+}
+
+function parseCoinbaseChart(raw, fallbackSymbol, rangeKey) {
   try {
-    var data = JSON.parse(String(raw || "{}"))
+    var data = typeof raw === "string" ? JSON.parse(raw) : raw
+    if (!Array.isArray(data) || data.length === 0) return null
+    var symbol = normalizeSymbol(fallbackSymbol)
+    var rawCandles = []
+    for (var i = data.length - 1; i >= 0; i--) {
+      var b = data[i]
+      if (!Array.isArray(b) || b.length < 5) continue
+      var t = finiteOrNull(b[0])
+      var l = finiteOrNull(b[1])
+      var h = finiteOrNull(b[2])
+      var o = finiteOrNull(b[3])
+      var c = finiteOrNull(b[4])
+      var v = finiteOrNull(b[5])
+      if (t === null || c === null) continue
+      if (o === null) o = c
+      if (h === null) h = Math.max(o, c)
+      if (l === null) l = Math.min(o, c)
+      rawCandles.push({
+        timestamp: t,
+        open: o,
+        high: h,
+        low: l,
+        close: c,
+        volume: v != null ? v : 0
+      })
+    }
+    if (rawCandles.length === 0) return null
+    var rk = String(rangeKey || "1D")
+    var candles = mergePeriodCandles(rawCandles, rk)
+    var closes = []
+    for (var k = 0; k < candles.length; k++) {
+      closes.push(candles[k].close)
+    }
+    var last = candles[candles.length - 1]
+    var prev = candles.length > 1 ? candles[candles.length - 2] : null
+    var prevClose = prev ? prev.close : last.open
+    var change = last.close - prevClose
+    var changePercent = (prevClose !== 0) ? (change / prevClose) * 100 : 0
+    var ftfc = (rk === "60") ? extractFTFCFromCandles(candles, last.close) : null
+
+    return {
+      symbol: symbol,
+      name: symbol,
+      currency: "USD",
+      price: last.close,
+      previousClose: prevClose,
+      change: change,
+      changePercent: changePercent,
+      regularPrice: last.close,
+      regularChangePercent: changePercent,
+      extendedPrice: null,
+      extendedChangePercent: null,
+      hasExtended: false,
+      session: "live",
+      dayHigh: last.high,
+      dayLow: last.low,
+      volume: last.volume,
+      open: last.open,
+      fiftyTwoWeekHigh: null,
+      fiftyTwoWeekLow: null,
+      priceHint: 2,
+      yahooRange: "",
+      closes: closes,
+      candles: candles,
+      ftfc: ftfc
+    }
+  } catch (e) {
+    return null
+  }
+}
+
+function parseHyperliquidChart(raw, fallbackSymbol, rangeKey) {
+  try {
+    var data = typeof raw === "string" ? JSON.parse(raw) : raw
+    if (!Array.isArray(data) || data.length === 0 || !data[0] || data[0].t === undefined) return null
+    var symbol = normalizeSymbol(fallbackSymbol)
+    var rawCandles = []
+    for (var i = 0; i < data.length; i++) {
+      var b = data[i]
+      if (!b || b.t === undefined) continue
+      var t = Math.floor(Number(b.t) / 1000)
+      var o = finiteOrNull(b.o)
+      var h = finiteOrNull(b.h)
+      var l = finiteOrNull(b.l)
+      var c = finiteOrNull(b.c)
+      var v = finiteOrNull(b.v)
+      if (!isFinite(t) || c === null) continue
+      if (o === null) o = c
+      if (h === null) h = Math.max(o, c)
+      if (l === null) l = Math.min(o, c)
+      rawCandles.push({
+        timestamp: t,
+        open: o,
+        high: h,
+        low: l,
+        close: c,
+        volume: v != null ? v : 0
+      })
+    }
+    if (rawCandles.length === 0) return null
+    var rk = String(rangeKey || "1D")
+    var candles = mergePeriodCandles(rawCandles, rk)
+    var closes = []
+    for (var k = 0; k < candles.length; k++) {
+      closes.push(candles[k].close)
+    }
+    var last = candles[candles.length - 1]
+    var prev = candles.length > 1 ? candles[candles.length - 2] : null
+    var prevClose = prev ? prev.close : last.open
+    var change = last.close - prevClose
+    var changePercent = (prevClose !== 0) ? (change / prevClose) * 100 : 0
+    var ftfc = (rk === "60") ? extractFTFCFromCandles(candles, last.close) : null
+
+    return {
+      symbol: symbol,
+      name: symbol,
+      currency: "USD",
+      price: last.close,
+      previousClose: prevClose,
+      change: change,
+      changePercent: changePercent,
+      regularPrice: last.close,
+      regularChangePercent: changePercent,
+      extendedPrice: null,
+      extendedChangePercent: null,
+      hasExtended: false,
+      session: "live",
+      dayHigh: last.high,
+      dayLow: last.low,
+      volume: last.volume,
+      open: last.open,
+      fiftyTwoWeekHigh: null,
+      fiftyTwoWeekLow: null,
+      priceHint: priceDecimals(last.close, 2),
+      yahooRange: "",
+      closes: closes,
+      candles: candles,
+      ftfc: ftfc
+    }
+  } catch (e) {
+    return null
+  }
+}
+
+function parseChart(raw, rangeKey, fallbackSymbol) {
+  try {
+    if (Array.isArray(raw)) {
+      if (raw.length > 0 && raw[0] && raw[0].t !== undefined) {
+        return parseHyperliquidChart(raw, fallbackSymbol, rangeKey)
+      }
+      return parseCoinbaseChart(raw, fallbackSymbol, rangeKey)
+    }
+    if (raw && typeof raw === "object" && raw.chart && raw.chart.result) {
+      return quoteFromChart(raw.chart.result[0], fallbackSymbol || "", rangeKey)
+    }
+    var str = String(raw || "").trim()
+    if (str.charAt(0) === "[") {
+      var parsedArr = JSON.parse(str)
+      if (Array.isArray(parsedArr) && parsedArr.length > 0 && parsedArr[0] && parsedArr[0].t !== undefined) {
+        return parseHyperliquidChart(parsedArr, fallbackSymbol, rangeKey)
+      }
+      return parseCoinbaseChart(parsedArr, fallbackSymbol, rangeKey)
+    }
+    var data = JSON.parse(str || "{}")
+    if (Array.isArray(data)) {
+      if (data.length > 0 && data[0] && data[0].t !== undefined) {
+        return parseHyperliquidChart(data, fallbackSymbol, rangeKey)
+      }
+      return parseCoinbaseChart(data, fallbackSymbol, rangeKey)
+    }
     var result = data.chart && data.chart.result && data.chart.result[0] ? data.chart.result[0] : null
-    return quoteFromChart(result, "", rangeKey)
+    return quoteFromChart(result, fallbackSymbol || "", rangeKey)
   } catch (e) {
     return null
   }
@@ -1260,7 +1556,16 @@ if (typeof module !== "undefined") {
     defaultGridSync: defaultGridSync,
     defaultGridSplits: defaultGridSplits,
     gridTimeframes: gridTimeframes,
-    parseInterval: parseInterval
+    parseInterval: parseInterval,
+    isCryptoSymbol: isCryptoSymbol,
+    isCoinbaseCryptoSymbol: isCoinbaseCryptoSymbol,
+    isHyperliquidCryptoSymbol: isHyperliquidCryptoSymbol,
+    cryptoBaseSymbol: cryptoBaseSymbol,
+    yahooChartUrl: yahooChartUrl,
+    chartCommand: chartCommand,
+    parseCoinbaseChart: parseCoinbaseChart,
+    parseHyperliquidChart: parseHyperliquidChart,
+    extractFTFCFromCandles: extractFTFCFromCandles
   }
 }
 
