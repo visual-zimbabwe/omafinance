@@ -504,14 +504,16 @@ test("isCryptoSymbol detects cryptocurrency pairs", () => {
   assert.equal(Model.isCryptoSymbol("NVDA"), false)
 })
 
-test("chartUrl routes crypto 60 and 1D to Coinbase exchange and equities to Yahoo", () => {
+test("chartUrl routes crypto 60, 1D, and 1W to Coinbase exchange and equities to Yahoo", () => {
   assert.ok(Model.chartUrl("BTC-USD", "60").includes("api.exchange.coinbase.com"))
   assert.ok(Model.chartUrl("BTC-USD", "60").includes("granularity=3600"))
   assert.ok(Model.chartUrl("BTC-USD", "1D").includes("api.exchange.coinbase.com"))
   assert.ok(Model.chartUrl("BTC-USD", "1D").includes("granularity=86400"))
-  assert.ok(Model.chartUrl("BTC-USD", "1W").includes("finance.yahoo.com"))
+  assert.ok(Model.chartUrl("BTC-USD", "1W").includes("api.exchange.coinbase.com"))
+  assert.ok(Model.chartUrl("BTC-USD", "1W").includes("granularity=86400"))
   assert.ok(Model.chartUrl("AAPL", "60").includes("finance.yahoo.com"))
   assert.ok(Model.chartUrl("AAPL", "1D").includes("finance.yahoo.com"))
+  assert.ok(Model.chartUrl("AAPL", "1W").includes("finance.yahoo.com"))
 })
 
 test("parseChart parses Coinbase candles array and generates valid quote and FTFC", () => {
@@ -545,6 +547,10 @@ test("chartCommand routes Hyperliquid tokens to Hyperliquid API and Coinbase/Yah
   const hlCmd1D = Model.chartCommand("HYPE32196-USD", "1D")
   assert.ok(hlCmd1D.some(arg => arg.includes("api.hyperliquid.xyz")))
   assert.ok(hlCmd1D.some(arg => arg.includes("1d")))
+
+  const hlCmd1W = Model.chartCommand("HYPE32196-USD", "1W")
+  assert.ok(hlCmd1W.some(arg => arg.includes("api.hyperliquid.xyz")))
+  assert.ok(hlCmd1W.some(arg => arg.includes("1d")))
 
   const btcCmd60 = Model.chartCommand("BTC-USD", "60")
   assert.ok(btcCmd60.some(arg => arg.includes("api.exchange.coinbase.com")))

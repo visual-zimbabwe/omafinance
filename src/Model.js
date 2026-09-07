@@ -290,7 +290,7 @@ function yahooChartUrl(symbol, rangeKey) {
 function chartUrl(symbol, rangeKey) {
   var sym = normalizeSymbol(symbol)
   var rk = String(rangeKey || "1D")
-  if (isCoinbaseCryptoSymbol(sym) && (rk === "60" || rk === "1D")) {
+  if (isCoinbaseCryptoSymbol(sym) && (rk === "60" || rk === "1D" || rk === "1W")) {
     var gran = (rk === "60") ? "3600" : "86400"
     return "https://api.exchange.coinbase.com/products/" + encodeURIComponent(sym) + "/candles?granularity=" + gran
   }
@@ -300,10 +300,10 @@ function chartUrl(symbol, rangeKey) {
 function chartCommand(symbol, rangeKey) {
   var sym = normalizeSymbol(symbol)
   var rk = String(rangeKey || "1D")
-  if (isHyperliquidCryptoSymbol(sym) && (rk === "60" || rk === "1D")) {
+  if (isHyperliquidCryptoSymbol(sym) && (rk === "60" || rk === "1D" || rk === "1W")) {
     var coin = cryptoBaseSymbol(sym)
     var interval = (rk === "60") ? "1h" : "1d"
-    var lookbackDays = (rk === "60") ? 30 : 365
+    var lookbackDays = (rk === "60") ? 30 : 400
     var startTime = Date.now() - (lookbackDays * 86400000)
     var payload = JSON.stringify({
       type: "candleSnapshot",
