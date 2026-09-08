@@ -426,10 +426,11 @@ function aggregateYearlyCandles(candles) {
   for (var i = 0; i < candles.length; i++) {
     var c = candles[i]
     if (!c || !c.timestamp) continue
-    var yr = new Date(c.timestamp * 1000).getFullYear()
+    var d = new Date(c.timestamp * 1000)
+    var yr = d.getUTCFullYear()
     if (!map[yr]) {
       map[yr] = {
-        timestamp: c.timestamp,
+        timestamp: Math.floor(Date.UTC(yr, 0, 1, 0, 0, 0) / 1000),
         open: c.open,
         high: c.high,
         low: c.low,
@@ -453,8 +454,12 @@ function aggregateYearlyCandles(candles) {
 }
 
 function mergePeriodCandles(candles, rangeKey) {
-  if (!candles || candles.length <= 1) return candles || []
+  if (!candles || candles.length === 0) return []
   var range = String(rangeKey || "1D")
+  if (range === "1Y") {
+    return aggregateYearlyCandles(candles)
+  }
+  if (candles.length <= 1) return candles.slice()
   var out = []
 
   function isSamePeriod(c1, c2) {
@@ -488,7 +493,15 @@ function mergePeriodCandles(candles, rangeKey) {
     }
 
     if (range === "60") {
-      return Math.abs(t2 - t1) < 3600
+      var d1h = new Date(t1 * 1000)
+      var d2h = new Date(t2 * 1000)
+      if (d1h.getUTCFullYear() !== d2h.getUTCFullYear() ||
+          d1h.getUTCMonth() !== d2h.getUTCMonth() ||
+          d1h.getUTCDate() !== d2h.getUTCDate()) {
+        return false
+      }
+      var offsetSec = t1 % 3600
+      return Math.floor((t1 - offsetSec) / 3600) === Math.floor((t2 - offsetSec) / 3600)
     }
 
     return false
@@ -704,6 +717,31 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
   } else {
     candles = mergePeriodCandles(candles, rangeKey)
   }
+
+  if (candles.length > 0 && latest !== null) {
+    var lastCandle = candles[candles.length - 1]
+    lastCandle.close = latest
+    if (lastCandle.high !== null) {
+      lastCandle.high = Math.max(lastCandle.high, latest)
+    } else {
+      lastCandle.high = latest
+    }
+    if (lastCandle.low !== null) {
+      lastCandle.low = Math.min(lastCandle.low, latest)
+    } else {
+      lastCandle.low = latest
+    }
+    if (lastCandle.open === null) {
+      lastCandle.open = latest
+    }
+    if (rangeKey === "1D") {
+      var dHigh = finiteOrNull(meta.regularMarketDayHigh)
+      var dLow = finiteOrNull(meta.regularMarketDayLow)
+      if (dHigh !== null) lastCandle.high = Math.max(lastCandle.high, dHigh)
+      if (dLow !== null) lastCandle.low = Math.min(lastCandle.low, dLow)
+    }
+  }
+
   var closes = []
   for (var k = 0; k < candles.length; k++) {
     closes.push(candles[k].close)
@@ -1321,9 +1359,6 @@ function formatCandleTime(timestamp, rangeKey) {
   var d = new Date(t * 1000)
   var range = String(rangeKey || "1D")
   var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-  var mon = months[d.getMonth()]
-  var day = d.getDate()
-  var year = d.getFullYear()
   var hours = d.getHours()
   var minutes = d.getMinutes()
   var ampm = hours >= 12 ? "PM" : "AM"
@@ -1331,10 +1366,15 @@ function formatCandleTime(timestamp, rangeKey) {
   var mStr = (minutes < 10 ? "0" : "") + minutes
   var timeStr = h12 + ":" + mStr + " " + ampm
 
-  if (range === "60") return mon + " " + day + ", " + year + " " + timeStr
-  if (range === "1Y") return String(year)
-  if (range === "1M" || range === "All") return mon + " " + year
-  return mon + " " + day + ", " + year
+  if (range === "60") {
+    var mon60 = months[d.getMonth()]
+    var day60 = d.getDate()
+    var year60 = d.getFullYear()
+    return mon60 + " " + day60 + ", " + year60 + " " + timeStr
+  }
+  if (range === "1Y") return String(d.getUTCFullYear())
+  if (range === "1M" || range === "All") return months[d.getUTCMonth()] + " " + d.getUTCFullYear()
+  return months[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + d.getUTCFullYear()
 }
 
 function formatTimeAxisLabel(timestamp, rangeKey, prevTimestamp) {
@@ -1344,9 +1384,6 @@ function formatTimeAxisLabel(timestamp, rangeKey, prevTimestamp) {
   var prevD = (prevTimestamp && Number(prevTimestamp) > 0) ? new Date(Number(prevTimestamp) * 1000) : null
   var range = String(rangeKey || "1D")
   var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-  var mon = months[d.getMonth()]
-  var day = d.getDate()
-  var year = d.getFullYear()
   var hours = d.getHours()
   var minutes = d.getMinutes()
   var ampm = hours >= 12 ? "PM" : "AM"
@@ -1355,12 +1392,12 @@ function formatTimeAxisLabel(timestamp, rangeKey, prevTimestamp) {
 
   if (range === "60") {
     var isNewDay = !prevD || d.getDate() !== prevD.getDate() || d.getMonth() !== prevD.getMonth() || d.getFullYear() !== prevD.getFullYear()
-    if (isNewDay) return mon + " " + day
+    if (isNewDay) return months[d.getMonth()] + " " + d.getDate()
     return h12 + ":" + mStr + " " + ampm
   }
-  if (range === "1Y") return String(year)
-  if (range === "1M") return mon + " '" + String(year).slice(-2)
-  return mon + " " + day
+  if (range === "1Y") return String(d.getUTCFullYear())
+  if (range === "1M") return months[d.getUTCMonth()] + " '" + String(d.getUTCFullYear()).slice(-2)
+  return months[d.getUTCMonth()] + " " + d.getUTCDate()
 }
 
 function stratScenario(current, prev) {
@@ -1565,7 +1602,8 @@ if (typeof module !== "undefined") {
     chartCommand: chartCommand,
     parseCoinbaseChart: parseCoinbaseChart,
     parseHyperliquidChart: parseHyperliquidChart,
-    extractFTFCFromCandles: extractFTFCFromCandles
+    extractFTFCFromCandles: extractFTFCFromCandles,
+    quoteFromChart: quoteFromChart
   }
 }
 

@@ -580,3 +580,155 @@ test("parseChart parses Hyperliquid candles array and generates valid quote and 
   })
 })
 
+test("aggregateYearlyCandles groups monthly/daily candles by UTC year with correct OHLCV", () => {
+  // 2024 monthly candles (Jan, Jun, Dec) and 2025 monthly candle (Jan)
+  const jan2024Ts = Math.floor(Date.UTC(2024, 0, 1) / 1000)
+  const jun2024Ts = Math.floor(Date.UTC(2024, 5, 1) / 1000)
+  const dec2024Ts = Math.floor(Date.UTC(2024, 11, 1) / 1000)
+  const jan2025Ts = Math.floor(Date.UTC(2025, 0, 1) / 1000)
+
+  const inputCandles = [
+    { timestamp: jan2024Ts, open: 100, high: 120, low: 95, close: 110, volume: 10000 },
+    { timestamp: jun2024Ts, open: 110, high: 140, low: 105, close: 135, volume: 15000 },
+    { timestamp: dec2024Ts, open: 135, high: 138, low: 125, close: 130, volume: 12000 },
+    { timestamp: jan2025Ts, open: 130, high: 150, low: 128, close: 145, volume: 8000 }
+  ]
+
+  const yearly = Model.aggregateYearlyCandles(inputCandles)
+  assert.equal(yearly.length, 2)
+
+  // 2024 aggregated candle
+  assert.deepEqual(yearly[0], {
+    timestamp: jan2024Ts,
+    open: 100,
+    high: 140, // max(120, 140, 138)
+    low: 95,   // min(95, 105, 125)
+    close: 130, // latest close in 2024
+    volume: 37000 // 10000 + 15000 + 12000
+  })
+
+  // 2025 aggregated candle
+  assert.deepEqual(yearly[1], {
+    timestamp: jan2025Ts,
+    open: 130,
+    high: 150,
+    low: 128,
+    close: 145,
+    volume: 8000
+  })
+
+  // Also verify mergePeriodCandles with "1Y" delegates properly
+  const merged1Y = Model.mergePeriodCandles(inputCandles, "1Y")
+  assert.deepEqual(merged1Y, yearly)
+})
+
+test("mergePeriodCandles for 60m enforces RTH session-relative alignment and does not bleed across days", () => {
+  // Fri Sep 4 2026 EDT (UTC-4):
+  // 09:30 EDT = 13:30 UTC = 1788530400
+  // 10:30 EDT = 14:30 UTC = 1788534000
+  // 11:30 EDT = 15:30 UTC = 1788537600
+  // 14:30 EDT = 18:30 UTC = 1788546600
+  // 15:00 EDT (tick within 14:30 bar) = 19:00 UTC = 1788548400
+  // 15:30 EDT = 19:30 UTC = 1788550200
+  // 16:00 EDT (market close tick) = 20:00 UTC = 1788552000
+  // Mon Sep 7 2026 EDT 09:30 EDT = 13:30 UTC = 1788789000
+
+  const candles = [
+    { timestamp: 1788530400, open: 100, high: 102, low: 99, close: 101, volume: 1000 },
+    { timestamp: 1788534000, open: 101, high: 103, low: 100, close: 102, volume: 1200 },
+    { timestamp: 1788537600, open: 102, high: 104, low: 101, close: 103, volume: 1100 },
+    { timestamp: 1788546600, open: 103, high: 105, low: 102, close: 104, volume: 1500 },
+    { timestamp: 1788548400, open: 104, high: 106, low: 103.5, close: 105, volume: 500 }, // Intraday tick -> merges into 14:30 bar
+    { timestamp: 1788550200, open: 105, high: 107, low: 104.5, close: 106, volume: 2000 },
+    { timestamp: 1788552000, open: 106, high: 106.5, low: 105.8, close: 106.2, volume: 300 }, // 16:00 close tick -> merges into 15:30 bar
+    { timestamp: 1788789000, open: 106.5, high: 108, low: 106, close: 107.5, volume: 1800 } // Next session
+  ]
+
+  const merged = Model.mergePeriodCandles(candles, "60")
+  assert.equal(merged.length, 6)
+
+  // Bar 1: 09:30
+  assert.equal(merged[0].timestamp, 1788530400)
+  assert.equal(merged[0].close, 101)
+
+  // Bar 2: 10:30
+  assert.equal(merged[1].timestamp, 1788534000)
+  assert.equal(merged[1].close, 102)
+
+  // Bar 3: 11:30
+  assert.equal(merged[2].timestamp, 1788537600)
+  assert.equal(merged[2].close, 103)
+
+  // Bar 4: 14:30 merged with 15:00 tick
+  assert.equal(merged[3].timestamp, 1788546600)
+  assert.equal(merged[3].open, 103)
+  assert.equal(merged[3].high, 106)
+  assert.equal(merged[3].low, 102)
+  assert.equal(merged[3].close, 105)
+  assert.equal(merged[3].volume, 2000)
+
+  // Bar 5: 15:30 (30m bar) merged with 16:00 close snapshot
+  assert.equal(merged[4].timestamp, 1788550200)
+  assert.equal(merged[4].open, 105)
+  assert.equal(merged[4].high, 107)
+  assert.equal(merged[4].low, 104.5)
+  assert.equal(merged[4].close, 106.2)
+  assert.equal(merged[4].volume, 2300)
+
+  // Bar 6: Next session 09:30
+  assert.equal(merged[5].timestamp, 1788789000)
+  assert.equal(merged[5].close, 107.5)
+})
+
+test("quoteFromChart updates developing candle High, Low, and Close with latest price tick and day high/low", () => {
+  const mockChartPayload = {
+    meta: {
+      symbol: "NVDA",
+      regularMarketPrice: 125.50,
+      regularMarketDayHigh: 126.00,
+      regularMarketDayLow: 122.00,
+      regularMarketOpen: 123.00,
+      previousClose: 121.00
+    },
+    timestamp: [1788530400, 1788534000],
+    indicators: {
+      quote: [{
+        open: [123.00, 124.00],
+        high: [124.50, 125.00],
+        low: [122.50, 123.50],
+        close: [124.00, 124.80],
+        volume: [50000, 45000]
+      }]
+    }
+  }
+
+  // 1D test: developing candle expands to dayHigh/dayLow and latest price
+  const quote1D = Model.quoteFromChart(mockChartPayload, "NVDA", "1D")
+  assert.ok(quote1D)
+  assert.equal(quote1D.price, 125.50)
+  const last1D = quote1D.candles[quote1D.candles.length - 1]
+  assert.equal(last1D.close, 125.50)
+  assert.equal(last1D.high, 126.00) // Expanded to meta.regularMarketDayHigh
+  assert.equal(last1D.low, 122.00)  // Expanded to meta.regularMarketDayLow
+
+  // 60m test: developing candle updates close and expands high with real-time price tick
+  const quote60 = Model.quoteFromChart(mockChartPayload, "NVDA", "60")
+  assert.ok(quote60)
+  const last60 = quote60.candles[quote60.candles.length - 1]
+  assert.equal(last60.close, 125.50)
+  assert.equal(last60.high, 125.50) // max(125.00, 125.50)
+  assert.equal(last60.low, 123.50)  // min(123.50, 125.50)
+})
+
+test("formatCandleTime and formatTimeAxisLabel are resilient to UTC timezone boundaries", () => {
+  const tsJan1 = Math.floor(Date.UTC(2025, 0, 1, 0, 0, 0) / 1000)
+  assert.equal(Model.formatCandleTime(tsJan1, "1Y"), "2025")
+  assert.equal(Model.formatCandleTime(tsJan1, "1M"), "Jan 2025")
+  assert.equal(Model.formatCandleTime(tsJan1, "1D"), "Jan 1, 2025")
+
+  assert.equal(Model.formatTimeAxisLabel(tsJan1, "1Y"), "2025")
+  assert.equal(Model.formatTimeAxisLabel(tsJan1, "1M"), "Jan '25")
+  assert.equal(Model.formatTimeAxisLabel(tsJan1, "1D"), "Jan 1")
+})
+
+
