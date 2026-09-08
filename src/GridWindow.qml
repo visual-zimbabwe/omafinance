@@ -133,18 +133,20 @@ FloatingWindow {
             processNextFetch();
     }
 
+    property string currentFetchSymbol: ""
+    property string currentFetchRange: ""
+    property bool isRetryingYahoo: false
+
     function processNextFetch() {
         if (root.pendingFetches.length === 0)
             return;
         var next = root.pendingFetches.shift();
         currentFetchSymbol = next.symbol;
         currentFetchRange = next.rangeKey;
-        chartFetchProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.chartUrl(next.symbol, next.rangeKey)];
+        isRetryingYahoo = false;
+        chartFetchProc.command = Model.chartCommand(next.symbol, next.rangeKey);
         chartFetchProc.running = true;
     }
-
-    property string currentFetchSymbol: ""
-    property string currentFetchRange: ""
 
     Process {
         id: quoteProc
@@ -169,23 +171,27 @@ FloatingWindow {
     Process {
         id: chartFetchProc
         onExited: function (exitCode) {
-            if (exitCode === 0 && chartFetchStdout.text) {
-                var parsed = Model.parseChart(chartFetchStdout.text, root.currentFetchRange);
-                if (parsed && parsed.candles) {
-                    var key = root.cacheKey(root.currentFetchSymbol, root.currentFetchRange);
-                    var nextCache = Object.assign({}, root.chartCache);
-                    nextCache[key] = parsed.candles;
-                    root.chartCache = nextCache;
+            var raw = chartFetchStdout.text;
+            var parsed = (exitCode === 0 && raw) ? Model.parseChart(raw, root.currentFetchRange, root.currentFetchSymbol) : null;
+            if (!parsed && !root.isRetryingYahoo && Model.isCryptoSymbol(root.currentFetchSymbol)) {
+                root.isRetryingYahoo = true;
+                chartFetchProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.yahooChartUrl(root.currentFetchSymbol, root.currentFetchRange)];
+                chartFetchProc.running = true;
+                return;
+            }
+            root.isRetryingYahoo = false;
+            if (parsed && parsed.candles) {
+                var key = root.cacheKey(root.currentFetchSymbol, root.currentFetchRange);
+                var nextCache = Object.assign({}, root.chartCache);
+                nextCache[key] = parsed.candles;
+                root.chartCache = nextCache;
 
-                    if (parsed.quote) {
-                        var nextQuotes = Object.assign({}, root.quotes);
-                        nextQuotes[root.currentFetchSymbol] = parsed.quote;
-                        root.quotes = nextQuotes;
-                    }
-                    root.chartFailureCount = 0;
-                } else {
-                    root.chartFailureCount = Math.min(10, root.chartFailureCount + 1);
+                if (parsed.quote) {
+                    var nextQuotes = Object.assign({}, root.quotes);
+                    nextQuotes[root.currentFetchSymbol] = parsed.quote;
+                    root.quotes = nextQuotes;
                 }
+                root.chartFailureCount = 0;
             } else {
                 root.chartFailureCount = Math.min(10, root.chartFailureCount + 1);
             }
