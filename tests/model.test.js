@@ -731,4 +731,49 @@ test("formatCandleTime and formatTimeAxisLabel are resilient to UTC timezone bou
   assert.equal(Model.formatTimeAxisLabel(tsJan1, "1D"), "Jan 1")
 })
 
+test("quoteFromChart preserves pure RTH candles when extended hours (pre/post market) price is present", () => {
+  const nowSec = Math.floor(Date.now() / 1000)
+  const mockExtendedPayload = {
+    meta: {
+      symbol: "GOOGL",
+      regularMarketPrice: 338.36,
+      regularMarketDayHigh: 340.00,
+      regularMarketDayLow: 335.00,
+      regularMarketOpen: 336.00,
+      previousClose: 335.00,
+      fulldayPrice: 325.00, // Significant pre-market drop
+      fulldayChangePercent: -3.95,
+      hasPrePostMarketData: true,
+      currentTradingPeriod: {
+        pre: { start: nowSec - 300, end: nowSec + 300 },
+        regular: { start: nowSec + 300, end: nowSec + 20000 },
+        post: { start: nowSec + 20000, end: nowSec + 30000 }
+      }
+    },
+    timestamp: [nowSec - 86400, nowSec - 43200],
+    indicators: {
+      quote: [{
+        open: [336.00, 337.00],
+        high: [338.00, 339.00],
+        low: [335.00, 336.50],
+        close: [337.50, 338.36],
+        volume: [10000, 15000]
+      }]
+    }
+  }
+
+  const quote = Model.quoteFromChart(mockExtendedPayload, "GOOGL", "60")
+  assert.ok(quote)
+  // quote.price reflects extended market price for quote header / badges
+  assert.equal(quote.price, 325.00)
+  assert.equal(quote.regularPrice, 338.36)
+  assert.equal(quote.extendedPrice, 325.00)
+
+  // But chart candles MUST remain pure RTH data and not distorted by 325.00
+  const lastCandle = quote.candles[quote.candles.length - 1]
+  assert.equal(lastCandle.close, 338.36)
+  assert.equal(lastCandle.low, 336.50)
+  assert.equal(lastCandle.high, 339.00)
+})
+
 
