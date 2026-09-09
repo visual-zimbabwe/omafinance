@@ -718,21 +718,22 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
     candles = mergePeriodCandles(candles, rangeKey)
   }
 
-  if (candles.length > 0 && latest !== null) {
+  var candlePrice = regularPrice != null ? regularPrice : latest
+  if (candles.length > 0 && candlePrice !== null) {
     var lastCandle = candles[candles.length - 1]
-    lastCandle.close = latest
+    lastCandle.close = candlePrice
     if (lastCandle.high !== null) {
-      lastCandle.high = Math.max(lastCandle.high, latest)
+      lastCandle.high = Math.max(lastCandle.high, candlePrice)
     } else {
-      lastCandle.high = latest
+      lastCandle.high = candlePrice
     }
     if (lastCandle.low !== null) {
-      lastCandle.low = Math.min(lastCandle.low, latest)
+      lastCandle.low = Math.min(lastCandle.low, candlePrice)
     } else {
-      lastCandle.low = latest
+      lastCandle.low = candlePrice
     }
     if (lastCandle.open === null) {
-      lastCandle.open = latest
+      lastCandle.open = candlePrice
     }
     if (rangeKey === "1D") {
       var dHigh = finiteOrNull(meta.regularMarketDayHigh)
