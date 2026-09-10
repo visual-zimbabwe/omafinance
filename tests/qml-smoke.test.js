@@ -344,7 +344,7 @@ test("grid keyboard focus manages active cell across layouts and clicks", () => 
   assert.match(grid, /Qt\.Key_Tab[\s\S]*?activeItem\.forceActiveFocus\(\)/)
 })
 
-test("grid cell displays strat scenario next to OHLC values and is always visible", () => {
+test("grid cell displays strat scenario always visible and OHLC values on hover", () => {
   const gridCell = fs.readFileSync(source("GridCell.qml"), "utf8")
 
   assert.match(gridCell, /readonly property var currentBar:/)
@@ -354,6 +354,7 @@ test("grid cell displays strat scenario next to OHLC values and is always visibl
   assert.match(gridCell, /text:\s*\(root\.activeCandle && root\.activeCandle\.strat && root\.activeCandle\.strat !== "-"\) \? String\(root\.activeCandle\.strat\)\.toUpperCase\(\) : ""/)
   assert.match(gridCell, /color:\s*\(root\.activeCandle && root\.activeCandle\.close >= root\.activeCandle\.open\) \? root\.upColor : root\.downColor/)
   assert.match(gridCell, /font\.bold:\s*true/)
+  assert.match(gridCell, /visible:\s*root\.activeHoverCandle !== null/)
 })
 
 test("candlestick chart renders bottom time scale and crosshair date badge", () => {

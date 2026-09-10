@@ -397,11 +397,12 @@ Item {
                     }
 
                     Text {
+                        visible: root.activeHoverCandle !== null
                         textFormat: Text.PlainText
                         text: {
-                            if (!root.activeCandle)
+                            if (!root.activeHoverCandle)
                                 return "";
-                            var c = root.activeCandle;
+                            var c = root.activeHoverCandle;
                             var cur = root.quote ? root.quote.currency : "USD";
                             var h = root.quote ? root.quote.priceHint : 2;
                             return "O:" + Model.formatPrice(c.open, cur, h) + " H:" + Model.formatPrice(c.high, cur, h) + " L:" + Model.formatPrice(c.low, cur, h) + " C:" + Model.formatPrice(c.close, cur, h);
