@@ -36,6 +36,9 @@ Panel {
     property var gridSymbols: []
     property var gridSplits: ({})
     property var activeGridWindows: []
+    property var layouts: ({})
+    property string activeLayoutName: ""
+    property string layoutActionStatus: ""
     property bool gridOpened: false
     property string chartFetchSymbol: ""
     property string chartFetchRange: ""
@@ -280,8 +283,11 @@ Panel {
     }
 
     function setCenterHoverRevealSuppressed(value) {
-        if (root.bar && "centerHoverRevealSuppressed" in root.bar)
-            root.bar.centerHoverRevealSuppressed = value;
+        if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
+            root.bar.setCenterHoverRevealSuppressed(value);
+        else if (root.bar && "centerHoverRevealSuppressed" in root.bar) {
+            try { root.bar.centerHoverRevealSuppressed = value; } catch (e) {}
+        }
     }
 
     function toneColor(pct) {
@@ -338,7 +344,7 @@ Panel {
     }
 
     function persist() {
-        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits));
+        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts));
     }
 
     function persistSettings(values) {
@@ -425,6 +431,12 @@ Panel {
         root.view = "settings";
     }
 
+    function openLayouts() {
+        root.clearSearch();
+        root.layoutActionStatus = "";
+        root.view = "layouts";
+    }
+
     function applyState(raw) {
         var state = Model.parseState(raw);
         var before = (watchlist || []).join("\n");
@@ -441,6 +453,10 @@ Panel {
             gridSymbols = state.gridSymbols;
         if (state.gridSplits)
             gridSplits = state.gridSplits;
+        if (state.layouts)
+            layouts = state.layouts;
+        else
+            layouts = ({});
         clampSelected();
         if (before !== after && (opened || showBarQuote))
             Qt.callLater(refresh);
@@ -1352,12 +1368,187 @@ Panel {
                         visible: root.view === "settings"
                     }
 
+                    FinanceLayoutsView {
+                        width: parent.width
+                        controller: root
+                        visible: root.view === "layouts"
+                    }
+
                     FinanceDetailView {
                         id: detailView
                         width: parent.width
                         controller: root
                         visible: root.view === "detail"
                     }
+                }
+            }
+        }
+    }
+
+    function closeAllGrids() {
+        var list = root.activeGridWindows ? root.activeGridWindows.slice() : [];
+        root.activeGridWindows = [];
+        for (var i = 0; i < list.length; i++) {
+            if (list[i]) {
+                list[i].visible = false;
+                if (typeof list[i].destroy === "function")
+                    list[i].destroy();
+            }
+        }
+    }
+
+    Timer {
+        id: layoutSpawnTimer
+        interval: 150
+        repeat: true
+        property var pendingSymbols: []
+        property int currentIndex: 0
+        onTriggered: {
+            if (currentIndex < pendingSymbols.length) {
+                root.openGrid(pendingSymbols[currentIndex]);
+                currentIndex++;
+            } else {
+                running = false;
+                pendingSymbols = [];
+                currentIndex = 0;
+            }
+        }
+    }
+
+    Process {
+        id: hyprctlWorkspaceProc
+    }
+
+    Process {
+        id: hyprctlClientsProc
+        command: ["hyprctl", "clients", "-j"]
+        property string pendingSaveName: ""
+        onExited: function (exitCode) {
+            var raw = String(hyprctlClientsStdout.text || "").trim();
+            var parsed = [];
+            try {
+                if (exitCode === 0 && raw) {
+                    var clients = JSON.parse(raw);
+                    if (Array.isArray(clients)) {
+                        for (var i = 0; i < clients.length; i++) {
+                            var c = clients[i];
+                            var title = String(c.title || c.initialTitle || "");
+                            if (title.indexOf("Omafinance Grid - ") === 0) {
+                                var sym = title.substring("Omafinance Grid - ".length).trim();
+                                if (sym) {
+                                    var ws = (c.workspace && c.workspace.id !== undefined) ? c.workspace.id : 2;
+                                    var at = (Array.isArray(c.at) && c.at.length === 2) ? c.at : [0, 0];
+                                    parsed.push({
+                                        symbol: sym,
+                                        workspace: ws,
+                                        x: at[0],
+                                        y: at[1]
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+            }
+
+            parsed.sort(function (a, b) {
+                if (Math.abs(a.y - b.y) > 50)
+                    return a.y - b.y;
+                return a.x - b.x;
+            });
+
+            var windowsList = [];
+            var targetWs = 2;
+            if (parsed.length > 0) {
+                targetWs = parsed[0].workspace;
+                for (var j = 0; j < parsed.length; j++) {
+                    windowsList.push({
+                        symbol: parsed[j].symbol,
+                        workspace: parsed[j].workspace
+                    });
+                }
+            } else if (root.activeGridWindows && root.activeGridWindows.length > 0) {
+                for (var k = 0; k < root.activeGridWindows.length; k++) {
+                    var w = root.activeGridWindows[k];
+                    if (w && w.visible && w.mainSymbol) {
+                        windowsList.push({
+                            symbol: w.mainSymbol,
+                            workspace: targetWs
+                        });
+                    }
+                }
+            }
+
+            if (windowsList.length > 0 && pendingSaveName) {
+                root.layouts = Model.saveLayout(root.layouts, pendingSaveName, windowsList, targetWs);
+                root.activeLayoutName = pendingSaveName;
+                root.persist();
+                root.updateActiveGridsLayouts();
+                root.layoutActionStatus = "Layout '" + pendingSaveName + "' saved (" + windowsList.length + " charts).";
+            } else {
+                root.layoutActionStatus = "No active chart grids found to save.";
+            }
+            pendingSaveName = "";
+        }
+        stdout: StdioCollector {
+            id: hyprctlClientsStdout
+            waitForEnd: true
+        }
+    }
+
+    function snapshotCurrentLayout(name) {
+        var trimmed = String(name || "").trim();
+        if (!trimmed)
+            return;
+        hyprctlClientsProc.pendingSaveName = trimmed;
+        if (!hyprctlClientsProc.running)
+            hyprctlClientsProc.running = true;
+    }
+
+    function loadLayout(name) {
+        if (!root.layouts || !root.layouts[name])
+            return;
+        var layout = root.layouts[name];
+        var windows = layout.windows || [];
+        if (windows.length === 0)
+            return;
+
+        root.activeLayoutName = name;
+        root.closeAllGrids();
+
+        var ws = layout.workspace || 2;
+        hyprctlWorkspaceProc.command = ["hyprctl", "dispatch", "workspace", String(ws)];
+        hyprctlWorkspaceProc.running = true;
+
+        var syms = [];
+        for (var i = 0; i < windows.length; i++) {
+            var sym = typeof windows[i] === "string" ? windows[i] : (windows[i] ? windows[i].symbol : "");
+            if (sym)
+                syms.push(sym);
+        }
+
+        layoutSpawnTimer.stop();
+        layoutSpawnTimer.pendingSymbols = syms;
+        layoutSpawnTimer.currentIndex = 0;
+        layoutSpawnTimer.restart();
+    }
+
+    function deleteLayout(name) {
+        root.layouts = Model.deleteLayout(root.layouts, name);
+        if (root.activeLayoutName === name)
+            root.activeLayoutName = "";
+        root.persist();
+        root.updateActiveGridsLayouts();
+    }
+
+    function updateActiveGridsLayouts() {
+        if (root.activeGridWindows) {
+            for (var i = 0; i < root.activeGridWindows.length; i++) {
+                var w = root.activeGridWindows[i];
+                if (w && w.visible) {
+                    w.layouts = root.layouts;
+                    w.activeLayoutName = root.activeLayoutName;
                 }
             }
         }
