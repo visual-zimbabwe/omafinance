@@ -26,7 +26,7 @@ function defaultGridSplits() {
 }
 
 function defaultState() {
-  return { watchlist: defaultWatchlist().slice(), pinned: defaultPinned(), detailRange: defaultDetailRange() }
+  return { watchlist: defaultWatchlist().slice(), pinned: defaultPinned(), detailRange: defaultDetailRange(), layouts: {} }
 }
 
 function normalizeSymbol(value) {
@@ -38,6 +38,83 @@ function finiteOrNull(value) {
   if (typeof value === "string" && value.replace(/^\s+|\s+$/g, "") === "") return null
   var n = Number(value)
   return isFinite(n) ? n : null
+}
+
+function parseLayouts(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+  var out = {}
+  for (var name in raw) {
+    if (!name || typeof name !== "string") continue
+    var item = raw[name]
+    if (!item || typeof item !== "object") continue
+    var ws = (item.workspace !== undefined && item.workspace !== null) ? item.workspace : 2
+    var windows = []
+    if (Array.isArray(item.windows)) {
+      for (var i = 0; i < item.windows.length; i++) {
+        var w = item.windows[i]
+        if (typeof w === "string") {
+          var sym = normalizeSymbol(w)
+          if (sym) windows.push({ symbol: sym, workspace: ws })
+        } else if (w && typeof w === "object") {
+          var s = normalizeSymbol(w.symbol)
+          if (s) {
+            windows.push({
+              symbol: s,
+              workspace: (w.workspace !== undefined && w.workspace !== null) ? w.workspace : ws
+            })
+          }
+        }
+      }
+    }
+    if (windows.length > 0) {
+      out[name] = {
+        workspace: ws,
+        windows: windows
+      }
+    }
+  }
+  return out
+}
+
+function saveLayout(layouts, name, windows, defaultWorkspace) {
+  var current = parseLayouts(layouts)
+  var trimmedName = String(name || "").replace(/^\s+|\s+$/g, "")
+  if (!trimmedName) return current
+  var ws = (defaultWorkspace !== undefined && defaultWorkspace !== null) ? defaultWorkspace : 2
+  var list = []
+  if (Array.isArray(windows)) {
+    for (var i = 0; i < windows.length; i++) {
+      var w = windows[i]
+      if (typeof w === "string") {
+        var sym = normalizeSymbol(w)
+        if (sym) list.push({ symbol: sym, workspace: ws })
+      } else if (w && typeof w === "object") {
+        var s = normalizeSymbol(w.symbol)
+        if (s) {
+          list.push({
+            symbol: s,
+            workspace: (w.workspace !== undefined && w.workspace !== null) ? w.workspace : ws
+          })
+        }
+      }
+    }
+  }
+  if (list.length > 0) {
+    current[trimmedName] = {
+      workspace: ws,
+      windows: list
+    }
+  }
+  return current
+}
+
+function deleteLayout(layouts, name) {
+  var current = parseLayouts(layouts)
+  var trimmedName = String(name || "").replace(/^\s+|\s+$/g, "")
+  if (trimmedName && current[trimmedName]) {
+    delete current[trimmedName]
+  }
+  return current
 }
 
 function parseState(raw) {
@@ -77,13 +154,14 @@ function parseState(raw) {
       res.gridSymbols = gSymbols
     }
     if (data.gridSplits !== undefined && typeof data.gridSplits === "object") res.gridSplits = data.gridSplits
+    if (data.layouts !== undefined && typeof data.layouts === "object") res.layouts = parseLayouts(data.layouts)
     return res
   } catch (e) {
     return fallback
   }
 }
 
-function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits) {
+function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts) {
   var list = Array.isArray(watchlist) ? watchlist.slice() : []
   var obj = {
     watchlist: list,
@@ -94,6 +172,7 @@ function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, grid
   if (gridSync !== undefined) obj.gridSync = gridSync
   if (gridSymbols !== undefined) obj.gridSymbols = gridSymbols
   if (gridSplits !== undefined) obj.gridSplits = gridSplits
+  if (layouts !== undefined && layouts !== null && Object.keys(layouts).length > 0) obj.layouts = parseLayouts(layouts)
   return JSON.stringify(obj, null, 2) + "\n"
 }
 
@@ -1604,7 +1683,10 @@ if (typeof module !== "undefined") {
     parseCoinbaseChart: parseCoinbaseChart,
     parseHyperliquidChart: parseHyperliquidChart,
     extractFTFCFromCandles: extractFTFCFromCandles,
-    quoteFromChart: quoteFromChart
+    quoteFromChart: quoteFromChart,
+    parseLayouts: parseLayouts,
+    saveLayout: saveLayout,
+    deleteLayout: deleteLayout
   }
 }
 

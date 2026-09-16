@@ -776,4 +776,45 @@ test("quoteFromChart preserves pure RTH candles when extended hours (pre/post ma
   assert.equal(lastCandle.high, 339.00)
 })
 
+test("layout management: saveLayout, deleteLayout, and state persistence with layouts", () => {
+  const initialLayouts = {}
+  const saved1 = Model.saveLayout(initialLayouts, "Morning 6-Pack", [
+    { symbol: "SPY", workspace: 2 },
+    { symbol: "QQQ", workspace: 2 },
+    { symbol: "DIA", workspace: 2 },
+    { symbol: "IWM", workspace: 2 },
+    { symbol: "XLC", workspace: 2 },
+    { symbol: "GOOGL", workspace: 2 }
+  ], 2)
+
+  assert.ok(saved1["Morning 6-Pack"])
+  assert.equal(saved1["Morning 6-Pack"].workspace, 2)
+  assert.equal(saved1["Morning 6-Pack"].windows.length, 6)
+  assert.equal(saved1["Morning 6-Pack"].windows[0].symbol, "SPY")
+
+  const saved2 = Model.saveLayout(saved1, "Tech 2", ["AAPL", "MSFT"], 3)
+  assert.equal(saved2["Tech 2"].workspace, 3)
+  assert.equal(saved2["Tech 2"].windows.length, 2)
+
+  const serialized = Model.serializeState(["SPY"], ["SPY"], "1D", "2x2", {}, [], {}, saved2)
+  const parsed = Model.parseState(serialized)
+
+  assert.ok(parsed.layouts)
+  assert.equal(Object.keys(parsed.layouts).length, 2)
+  assert.deepEqual(parsed.layouts["Morning 6-Pack"].windows, [
+    { symbol: "SPY", workspace: 2 },
+    { symbol: "QQQ", workspace: 2 },
+    { symbol: "DIA", workspace: 2 },
+    { symbol: "IWM", workspace: 2 },
+    { symbol: "XLC", workspace: 2 },
+    { symbol: "GOOGL", workspace: 2 }
+  ])
+
+  const deleted = Model.deleteLayout(parsed.layouts, "Tech 2")
+  assert.equal(Object.keys(deleted).length, 1)
+  assert.equal(deleted["Tech 2"], undefined)
+  assert.ok(deleted["Morning 6-Pack"])
+})
+
+
 

@@ -18,7 +18,7 @@ Column {
         TextField {
             id: searchField
             anchors.left: parent.left
-            anchors.right: gearBtn.left
+            anchors.right: headerActions.left
             anchors.rightMargin: Style.space(8)
             placeholderText: "Search tickers…"
             hasCursor: controller.listChrome === "search" && !activeFocus
@@ -55,17 +55,33 @@ Column {
             }
         }
 
-        PanelActionButton {
-            id: gearBtn
+        Row {
+            id: headerActions
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            iconText: "\uf013"
-            tooltipText: "Settings"
-            foreground: controller.dim
-            fontFamily: controller.contentFontFamily
-            hasCursor: controller.listChrome === "gear"
-            bordered: controller.listChrome === "gear"
-            onClicked: controller.openSettings()
+            spacing: Style.space(4)
+
+            PanelActionButton {
+                id: layoutBtn
+                iconText: "\uf009"
+                tooltipText: "Chart Layouts"
+                foreground: controller.dim
+                fontFamily: controller.contentFontFamily
+                hasCursor: controller.listChrome === "layout"
+                bordered: controller.listChrome === "layout"
+                onClicked: controller.openLayouts()
+            }
+
+            PanelActionButton {
+                id: gearBtn
+                iconText: "\uf013"
+                tooltipText: "Settings"
+                foreground: controller.dim
+                fontFamily: controller.contentFontFamily
+                hasCursor: controller.listChrome === "gear"
+                bordered: controller.listChrome === "gear"
+                onClicked: controller.openSettings()
+            }
         }
     }
 
