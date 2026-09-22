@@ -10,8 +10,8 @@ Item {
     property var candles: []
     property color upColor: Color.foreground
     property color downColor: Color.foreground
-    property color gridColor: Qt.rgba(Color.popups.text.r, Color.popups.text.g, Color.popups.text.b, 0.08)
-    property color crosshairColor: Qt.rgba(Color.popups.text.r, Color.popups.text.g, Color.popups.text.b, 0.35)
+    property color gridColor: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.08)
+    property color crosshairColor: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.35)
     property color labelColor: Color.muted
     property string currency: "USD"
     property var priceHint: 2

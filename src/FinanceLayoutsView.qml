@@ -104,7 +104,7 @@ Column {
                     width: saveBtnText.implicitWidth + Style.space(20)
                     height: layoutNameField.implicitHeight
                     radius: Style.space(6)
-                    color: layoutsViewRoot.confirmOverwrite ? Qt.rgba(0.8, 0.4, 0.1, 0.9) : Qt.rgba(controller.foreground.r, controller.foreground.g, controller.foreground.b, 0.15)
+                    color: layoutsViewRoot.confirmOverwrite ? Qt.rgba(0.8, 0.4, 0.1, 0.9) : Qt.rgba(controller.contentForeground.r, controller.contentForeground.g, controller.contentForeground.b, 0.15)
                     border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.3)
                     border.width: 1
 

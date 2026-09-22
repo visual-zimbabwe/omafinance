@@ -17,7 +17,8 @@ const qmlFiles = [
   "PriceRoll.qml",
   "GridSplitter.qml",
   "GridCell.qml",
-  "GridWindow.qml"
+  "GridWindow.qml",
+  "SectorBreadthWindow.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
@@ -395,6 +396,65 @@ test("grid cell provides live ticker search suggestions with debouncing and keyb
   assert.match(gridCell, /Qt\.Key_Down[\s\S]*?root\.suggestionIndex/)
   assert.match(gridCell, /Qt\.Key_Up[\s\S]*?root\.suggestionIndex/)
 })
+
+test("list view provides sector strat breadth entry point button next to layouts", () => {
+  const list = fs.readFileSync(source("FinanceListView.qml"), "utf8")
+
+  assert.match(list, /id:\s*breadthBtn/)
+  assert.match(list, /iconText:\s*"\\uf080"/)
+  assert.match(list, /tooltipText:\s*"Sector Strat Breadth"/)
+  assert.match(list, /onClicked:\s*controller\.openSectorBreadth\(\)/)
+  assert.match(list, /id:\s*breadthBtn[\s\S]*?id:\s*layoutBtn/)
+})
+
+test("panel configures and opens SectorBreadthWindow with state persistence", () => {
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+
+  assert.match(panel, /property string breadthWeightMode:\s*"equal"/)
+  assert.match(panel, /property string breadthSortTimeframe:\s*"1Y"/)
+  assert.match(panel, /property bool breadthSortAsc:\s*false/)
+  assert.match(panel, /property var activeBreadthWindow:\s*null/)
+  assert.match(panel, /function openSectorBreadth\(\)/)
+  assert.match(panel, /id:\s*sectorBreadthWindowComponent/)
+  assert.match(panel, /SectorBreadthWindow\s*\{/)
+  assert.match(panel, /root\.breadthWeightMode = weightMode/)
+  assert.match(panel, /root\.breadthSortTimeframe = sortTimeframe/)
+  assert.match(panel, /root\.breadthSortAsc = sortAsc/)
+})
+
+test("sector breadth window renders matrix, weighting toggles, sorting, and hover tooltip", () => {
+  const breadth = fs.readFileSync(source("SectorBreadthWindow.qml"), "utf8")
+
+  assert.match(breadth, /FloatingWindow\s*\{/)
+  assert.match(breadth, /property string weightMode:\s*"equal"/)
+  assert.match(breadth, /property string sortTimeframe:\s*"1Y"/)
+  assert.match(breadth, /property bool sortAsc:\s*false/)
+  assert.match(breadth, /function startFullRefresh\(\)/)
+  assert.match(breadth, /function recalculateMetrics\(\)/)
+  assert.match(breadth, /Model\.computeAllSectorsBreadth/)
+  assert.match(breadth, /Model\.sortSectorBreadth/)
+  assert.match(breadth, /id:\s*runnerProc/)
+  assert.match(breadth, /id:\s*holdingsFetchProc/)
+  assert.match(breadth, /id:\s*dailySparkProc/)
+  assert.match(breadth, /id:\s*hourlySparkProc/)
+  assert.match(breadth, /text:\s*"Equal Weight"/)
+  assert.match(breadth, /text:\s*"Cap Weight"/)
+  assert.match(breadth, /id:\s*tooltipOverlay/)
+  assert.match(breadth, /▲ 2U \(Buyers\):/)
+  assert.match(breadth, /▼ 2D \(Sellers\):/)
+  assert.match(breadth, /Net Directional Delta:/)
+  assert.match(breadth, /root\.controller\.openDetail\(sectorRow\.modelData\.symbol\)/)
+})
+
+test("fetch-breadth script exists and executes successfully", () => {
+  const scriptPath = path.join(__dirname, "..", "scripts", "fetch-breadth.js")
+  assert.ok(fs.existsSync(scriptPath))
+  const scriptContent = fs.readFileSync(scriptPath, "utf8")
+  assert.match(scriptContent, /Model\.allSpdrSectorsList/)
+  assert.match(scriptContent, /Model\.holdingsUrl/)
+  assert.match(scriptContent, /Model\.sparkCandlesUrl/)
+})
+
 
 
 

@@ -965,5 +965,143 @@ test("parseNportXml handles dual-class shares (NWSA vs NWS) and delisted tickers
   assert.equal(nws.delisted, false)
 })
 
+test("allSpdrSectorsList returns all 11 GICS sector ETFs", () => {
+  const sectors = Model.allSpdrSectorsList()
+  assert.equal(sectors.length, 11)
+  const symbols = sectors.map(s => s.symbol)
+  assert.ok(symbols.includes("XLC"))
+  assert.ok(symbols.includes("XLY"))
+  assert.ok(symbols.includes("XLP"))
+  assert.ok(symbols.includes("XLE"))
+  assert.ok(symbols.includes("XLF"))
+  assert.ok(symbols.includes("XLV"))
+  assert.ok(symbols.includes("XLI"))
+  assert.ok(symbols.includes("XLB"))
+  assert.ok(symbols.includes("XLK"))
+  assert.ok(symbols.includes("XLU"))
+  assert.ok(symbols.includes("XLRE"))
+})
+
+test("sparkCandlesUrl generates valid URLs and filters duplicates", () => {
+  const url1 = Model.sparkCandlesUrl(["AAPL", "msft", "AAPL"], "1d", "2y")
+  assert.equal(url1, "https://query1.finance.yahoo.com/v7/finance/spark?symbols=AAPL,MSFT&range=2y&interval=1d&includePrePost=false")
+
+  const url2 = Model.sparkCandlesUrl("NVDA", "60m", "1mo")
+  assert.equal(url2, "https://query1.finance.yahoo.com/v7/finance/spark?symbols=NVDA&range=1mo&interval=60m&includePrePost=false")
+})
+
+test("computeSectorBreadthMetrics computes equal weight and cap weight strat breadth", () => {
+  const holdings = [
+    { symbol: "SYM1", pctVal: 50.0, delisted: false }, // 2u
+    { symbol: "SYM2", pctVal: 30.0, delisted: false }, // 2d
+    { symbol: "SYM3", pctVal: 20.0, delisted: false }, // 1 (inside)
+    { symbol: "EA", pctVal: 10.0, delisted: true }      // delisted -> skipped
+  ]
+
+  // Daily candles:
+  // SYM1: prev [100, 90], curr [105, 95] -> 2u
+  // SYM2: prev [100, 90], curr [95, 85] -> 2d
+  // SYM3: prev [100, 90], curr [98, 92] -> 1
+  const dailyMap = {
+    "SYM1": [
+      { timestamp: 1704067200, open: 95, high: 100, low: 90, close: 98, volume: 100 },
+      { timestamp: 1704153600, open: 98, high: 105, low: 95, close: 102, volume: 100 }
+    ],
+    "SYM2": [
+      { timestamp: 1704067200, open: 95, high: 100, low: 90, close: 98, volume: 100 },
+      { timestamp: 1704153600, open: 90, high: 95, low: 85, close: 88, volume: 100 }
+    ],
+    "SYM3": [
+      { timestamp: 1704067200, open: 95, high: 100, low: 90, close: 98, volume: 100 },
+      { timestamp: 1704153600, open: 94, high: 98, low: 92, close: 96, volume: 100 }
+    ]
+  }
+
+  // Equal Weight
+  const eq = Model.computeSectorBreadthMetrics(holdings, {}, dailyMap, "equal")
+  assert.ok(eq["1D"])
+  assert.equal(eq["1D"].totalCount, 3)
+  assert.equal(eq["1D"].count2u, 1)
+  assert.equal(eq["1D"].count2d, 1)
+  assert.equal(eq["1D"].countOther, 1)
+  assert.equal(Math.round(eq["1D"].pct2u), 33)
+  assert.equal(Math.round(eq["1D"].pct2d), 33)
+  assert.equal(Math.round(eq["1D"].netDelta), 0)
+
+  // Cap Weight (Total weight = 50 + 30 + 20 = 100)
+  const cap = Model.computeSectorBreadthMetrics(holdings, {}, dailyMap, "cap")
+  assert.ok(cap["1D"])
+  assert.equal(cap["1D"].pct2u, 50)
+  assert.equal(cap["1D"].pct2d, 30)
+  assert.equal(cap["1D"].pctOther, 20)
+  assert.equal(cap["1D"].netDelta, 20)
+})
+
+test("sortSectorBreadth sorts sectors by timeframe net buyer strength", () => {
+  const sectors = [
+    {
+      symbol: "XLF",
+      timeframes: {
+        "1Y": { netDelta: 10.0 },
+        "1D": { netDelta: -20.0 }
+      }
+    },
+    {
+      symbol: "XLK",
+      timeframes: {
+        "1Y": { netDelta: 45.0 },
+        "1D": { netDelta: 15.0 }
+      }
+    },
+    {
+      symbol: "XLE",
+      timeframes: {
+        "1Y": { netDelta: -15.0 },
+        "1D": { netDelta: 30.0 }
+      }
+    }
+  ]
+
+  // Default 1Y descending: XLK (45) -> XLF (10) -> XLE (-15)
+  const sorted1YDesc = Model.sortSectorBreadth(sectors, "1Y", false)
+  assert.deepEqual(sorted1YDesc.map(s => s.symbol), ["XLK", "XLF", "XLE"])
+
+  // 1Y ascending: XLE (-15) -> XLF (10) -> XLK (45)
+  const sorted1YAsc = Model.sortSectorBreadth(sectors, "1Y", true)
+  assert.deepEqual(sorted1YAsc.map(s => s.symbol), ["XLE", "XLF", "XLK"])
+
+  // 1D descending: XLE (30) -> XLK (15) -> XLF (-20)
+  const sorted1DDesc = Model.sortSectorBreadth(sectors, "1D", false)
+  assert.deepEqual(sorted1DDesc.map(s => s.symbol), ["XLE", "XLK", "XLF"])
+})
+
+test("formatNetDelta formats signed percent strings", () => {
+  assert.equal(Model.formatNetDelta(25.46), "+25.5%")
+  assert.equal(Model.formatNetDelta(-12.34), "-12.3%")
+  assert.equal(Model.formatNetDelta(0), "0.0%")
+  assert.equal(Model.formatNetDelta(null), "0.0%")
+})
+
+test("state persistence preserves breadth settings", () => {
+  const serialized = Model.serializeState(
+    ["AAPL"],
+    [],
+    "1D",
+    "2x2",
+    {},
+    [],
+    {},
+    {},
+    "cap",
+    "1W",
+    true
+  )
+
+  const parsed = Model.parseState(serialized)
+  assert.equal(parsed.breadthWeightMode, "cap")
+  assert.equal(parsed.breadthSortTimeframe, "1W")
+  assert.equal(parsed.breadthSortAsc, true)
+})
+
 
 
