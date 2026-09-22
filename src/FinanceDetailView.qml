@@ -13,6 +13,13 @@ Column {
     property double detailsLoadStartedAt: 0
     readonly property int detailsSpinnerDelayMs: Model.delayedLoaderDelayMs()
     readonly property string detailsPendingKey: visible && controller.detailDataLoading ? String(controller.detailSymbol) : ""
+    property bool showAllHoldings: false
+    property string holdingsSortKey: "weight"
+    property bool holdingsSortAsc: false
+    readonly property var rawHoldings: (controller.detailHoldings && controller.detailHoldings.holdings) ? controller.detailHoldings.holdings : []
+    readonly property var sortedHoldings: Model.sortHoldings(rawHoldings, holdingsSortKey, holdingsSortAsc)
+    readonly property var displayedHoldings: showAllHoldings ? sortedHoldings : sortedHoldings.slice(0, 10)
+    readonly property string holdingsReportDate: (controller.detailHoldings && controller.detailHoldings.reportDate) ? controller.detailHoldings.reportDate : ""
 
     function armDetailsSpinner() {
         detailsSpinnerDelay.stop();
@@ -51,7 +58,7 @@ Column {
             id: backLabel
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            text: "‹ Watchlist"
+            text: controller.detailHistory && controller.detailHistory.length > 0 ? "‹ " + controller.detailHistory[controller.detailHistory.length - 1] : "‹ Watchlist"
             color: controller.dim
             font.family: controller.contentFontFamily
             font.pixelSize: Style.font.body
@@ -536,6 +543,228 @@ Column {
                     wrapMode: Text.WordWrap
                     width: parent.width
                 }
+            }
+        }
+    }
+
+    Column {
+        id: holdingsSection
+        visible: controller.detailHoldings && controller.detailHoldings.holdings && controller.detailHoldings.holdings.length > 0
+        width: parent.width
+        spacing: Style.space(8)
+
+        Item {
+            width: parent.width
+            height: Math.max(holdingsHeaderLeft.implicitHeight, holdingsHeaderRight.implicitHeight)
+
+            Row {
+                id: holdingsHeaderLeft
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(6)
+
+                Text {
+                    text: "HOLDINGS"
+                    color: controller.dim
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.letterSpacing: 1
+                    font.bold: true
+                }
+
+                Text {
+                    id: holdingsDateTooltip
+                    text: holdingsHeaderMouseArea.containsMouse && detailViewRoot.holdingsReportDate !== "" ? "· As of " + detailViewRoot.holdingsReportDate : ""
+                    color: controller.dim
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                }
+            }
+
+            MouseArea {
+                id: holdingsHeaderMouseArea
+                anchors.fill: holdingsHeaderLeft
+                hoverEnabled: true
+            }
+
+            Row {
+                id: holdingsHeaderRight
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(8)
+
+                Text {
+                    text: "TICKER" + (detailViewRoot.holdingsSortKey === "ticker" ? (detailViewRoot.holdingsSortAsc ? " ↑" : " ↓") : "")
+                    color: detailViewRoot.holdingsSortKey === "ticker" ? controller.contentForeground : controller.dim
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: detailViewRoot.holdingsSortKey === "ticker"
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (detailViewRoot.holdingsSortKey === "ticker") {
+                                detailViewRoot.holdingsSortAsc = !detailViewRoot.holdingsSortAsc;
+                            } else {
+                                detailViewRoot.holdingsSortKey = "ticker";
+                                detailViewRoot.holdingsSortAsc = true;
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: "WEIGHT" + (detailViewRoot.holdingsSortKey === "weight" ? (detailViewRoot.holdingsSortAsc ? " ↑" : " ↓") : "")
+                    color: detailViewRoot.holdingsSortKey === "weight" ? controller.contentForeground : controller.dim
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: detailViewRoot.holdingsSortKey === "weight"
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (detailViewRoot.holdingsSortKey === "weight") {
+                                detailViewRoot.holdingsSortAsc = !detailViewRoot.holdingsSortAsc;
+                            } else {
+                                detailViewRoot.holdingsSortKey = "weight";
+                                detailViewRoot.holdingsSortAsc = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Column {
+            width: parent.width
+            spacing: Style.space(4)
+
+            Repeater {
+                model: detailViewRoot.displayedHoldings
+
+                Rectangle {
+                    id: holdingRow
+                    required property var modelData
+                    required property int index
+                    readonly property bool isDelisted: holdingRow.modelData.delisted === true
+                    width: parent.width
+                    height: Style.space(38)
+                    radius: Style.space(6)
+                    color: rowMouseArea.containsMouse && !holdingRow.isDelisted ? Style.hoverFillFor(controller.contentForeground, Color.accent) : "transparent"
+
+                    MouseArea {
+                        id: rowMouseArea
+                        anchors.fill: parent
+                        hoverEnabled: !holdingRow.isDelisted
+                        cursorShape: holdingRow.isDelisted ? Qt.ArrowCursor : Qt.PointingHandCursor
+                        onClicked: {
+                            if (!holdingRow.isDelisted)
+                                controller.openDetailWithHistory(holdingRow.modelData.symbol)
+                        }
+                    }
+
+                    Column {
+                        anchors.fill: parent
+                        anchors.leftMargin: Style.space(6)
+                        anchors.rightMargin: Style.space(6)
+                        anchors.topMargin: Style.space(4)
+                        anchors.bottomMargin: Style.space(4)
+                        spacing: Style.space(4)
+
+                        Item {
+                            width: parent.width
+                            height: Math.max(leftInfo.implicitHeight, weightText.implicitHeight)
+
+                            Row {
+                                id: leftInfo
+                                anchors.left: parent.left
+                                anchors.right: weightText.left
+                                anchors.rightMargin: Style.space(8)
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Style.space(6)
+
+                                Text {
+                                    textFormat: Text.PlainText
+                                    text: holdingRow.modelData.symbol
+                                    color: holdingRow.isDelisted ? controller.dim : controller.contentForeground
+                                    font.family: controller.contentFontFamily
+                                    font.pixelSize: Style.font.body
+                                    font.bold: true
+                                }
+
+                                Text {
+                                    visible: holdingRow.isDelisted
+                                    textFormat: Text.PlainText
+                                    text: "· Delisted"
+                                    color: controller.dim
+                                    font.family: controller.contentFontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    font.italic: true
+                                }
+
+                                Text {
+                                    textFormat: Text.PlainText
+                                    text: holdingRow.modelData.name
+                                    color: controller.dim
+                                    font.family: controller.contentFontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    elide: Text.ElideRight
+                                    width: Math.min(implicitWidth, leftInfo.width - Style.space(holdingRow.isDelisted ? 130 : 70))
+                                }
+                            }
+
+                            Text {
+                                id: weightText
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                textFormat: Text.PlainText
+                                text: holdingRow.modelData.pctVal ? holdingRow.modelData.pctVal.toFixed(2) + "%" : "-"
+                                color: holdingRow.isDelisted ? controller.dim : controller.contentForeground
+                                font.family: controller.contentFontFamily
+                                font.pixelSize: Style.font.body
+                                font.bold: true
+                            }
+                        }
+
+                        Item {
+                            width: parent.width
+                            height: Style.space(3)
+
+                            Rectangle {
+                                anchors.fill: parent
+                                radius: Style.space(1.5)
+                                color: Qt.rgba(1, 1, 1, 0.08)
+                            }
+
+                            Rectangle {
+                                width: Math.max(Style.space(2), parent.width * Math.min(1, Math.max(0, holdingRow.modelData.relativeRatio || 0)))
+                                height: parent.height
+                                radius: Style.space(1.5)
+                                color: holdingRow.isDelisted ? controller.dim : controller.upColor
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Item {
+            visible: detailViewRoot.rawHoldings.length > 10
+            width: parent.width
+            height: toggleBtn.implicitHeight + Style.space(4)
+
+            Button {
+                id: toggleBtn
+                anchors.centerIn: parent
+                text: detailViewRoot.showAllHoldings ? "Collapse holdings" : "Show all (" + detailViewRoot.rawHoldings.length + ") holdings"
+                foreground: controller.dim
+                fontFamily: controller.contentFontFamily
+                fontSize: Style.font.bodySmall
+                horizontalPadding: Style.space(12)
+                verticalPadding: Style.space(4)
+                onClicked: detailViewRoot.showAllHoldings = !detailViewRoot.showAllHoldings
             }
         }
     }

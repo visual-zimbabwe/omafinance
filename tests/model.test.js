@@ -816,5 +816,154 @@ test("layout management: saveLayout, deleteLayout, and state persistence with la
   assert.ok(deleted["Morning 6-Pack"])
 })
 
+test("isSpdrSector accurately identifies all 11 GICS sector ETFs", () => {
+  const sectors = ["XLC", "XLY", "XLP", "XLE", "XLF", "XLV", "XLI", "XLB", "XLRE", "XLK", "XLU"]
+  for (const sym of sectors) {
+    assert.equal(Model.isSpdrSector(sym), true)
+    assert.equal(Model.isSpdrSector(sym.toLowerCase()), true)
+    const info = Model.spdrSectorInfo(sym)
+    assert.ok(info)
+    assert.ok(info.seriesId.startsWith("S0000"))
+    assert.equal(info.cik, "0001064641")
+    assert.ok(Model.holdingsUrl(sym).includes("sec.gov/Archives/edgar/data/1064641/"))
+  }
+  assert.equal(Model.isSpdrSector("AAPL"), false)
+  assert.equal(Model.isSpdrSector("SPY"), false)
+  assert.equal(Model.isSpdrSector("BTC-USD"), false)
+  assert.equal(Model.isSpdrSector(null), false)
+  assert.equal(Model.isSpdrSector(""), false)
+})
+
+test("parseNportXml extracts equities, computes relative bar scales, and filters non-ticker holdings", () => {
+  const sampleXml = `
+<nportSubmission xmlns="http://www.sec.gov/edgar/nport">
+  <formData>
+    <genInfo>
+      <repPdEnd>2026-06-30</repPdEnd>
+    </genInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>Meta Platforms Inc</name>
+        <cusip>30303M102</cusip>
+        <valUSD>2000000000.00</valUSD>
+        <pctVal>20.0</pctVal>
+        <assetCat>EC</assetCat>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Alphabet Inc</name>
+        <cusip>02079K305</cusip>
+        <valUSD>1000000000.00</valUSD>
+        <pctVal>10.0</pctVal>
+        <assetCat>EC</assetCat>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Cash Collateral / Repo Sweep</name>
+        <cusip>000000000</cusip>
+        <valUSD>50000000.00</valUSD>
+        <pctVal>0.5</pctVal>
+        <assetCat>CR</assetCat>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Unmapped Private Derivative</name>
+        <cusip>999999999</cusip>
+        <valUSD>20000000.00</valUSD>
+        <pctVal>0.2</pctVal>
+        <assetCat>EC</assetCat>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</nportSubmission>`
+
+  const parsed = Model.parseNportXml(sampleXml, "XLC")
+  assert.ok(parsed)
+  assert.equal(parsed.symbol, "XLC")
+  assert.equal(parsed.reportDate, "2026-06-30")
+  assert.equal(parsed.holdings.length, 2) // Cash sweep and unmapped non-ticker excluded
+  assert.equal(parsed.holdings[0].symbol, "META")
+  assert.equal(parsed.holdings[0].pctVal, 20.0)
+  assert.equal(parsed.holdings[0].relativeRatio, 1.0) // Top holding fills 100%
+
+  assert.equal(parsed.holdings[1].symbol, "GOOGL")
+  assert.equal(parsed.holdings[1].pctVal, 10.0)
+  assert.equal(parsed.holdings[1].relativeRatio, 0.5) // 10% / 20% = 0.5
+})
+
+test("parseNportXml handles empty or invalid xml gracefully", () => {
+  assert.equal(Model.parseNportXml("", "XLC"), null)
+  assert.equal(Model.parseNportXml(null, "XLC"), null)
+  assert.equal(Model.parseNportXml("<invalid></invalid>", "XLC"), null)
+})
+
+test("sortHoldings correctly sorts holdings by weight, ticker, and name", () => {
+  const holdings = [
+    { symbol: "GOOGL", name: "Alphabet Inc", pctVal: 10.0 },
+    { symbol: "META", name: "Meta Platforms Inc", pctVal: 20.0 },
+    { symbol: "AAPL", name: "Apple Inc", pctVal: 15.0 }
+  ]
+
+  const byWeightDesc = Model.sortHoldings(holdings, "weight", false)
+  assert.deepEqual(byWeightDesc.map(h => h.symbol), ["META", "AAPL", "GOOGL"])
+
+  const byWeightAsc = Model.sortHoldings(holdings, "weight", true)
+  assert.deepEqual(byWeightAsc.map(h => h.symbol), ["GOOGL", "AAPL", "META"])
+
+  const byTickerAsc = Model.sortHoldings(holdings, "ticker", true)
+  assert.deepEqual(byTickerAsc.map(h => h.symbol), ["AAPL", "GOOGL", "META"])
+
+  const byTickerDesc = Model.sortHoldings(holdings, "ticker", false)
+  assert.deepEqual(byTickerDesc.map(h => h.symbol), ["META", "GOOGL", "AAPL"])
+})
+
+test("parseNportXml handles dual-class shares (NWSA vs NWS) and delisted tickers (EA)", () => {
+  const sampleXml = `
+<nportSubmission xmlns="http://www.sec.gov/edgar/nport">
+  <formData>
+    <genInfo>
+      <repPdEnd>2026-06-30</repPdEnd>
+    </genInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>News Corp Class A</name>
+        <cusip>65249B109</cusip>
+        <valUSD>1000000.00</valUSD>
+        <pctVal>1.0</pctVal>
+        <assetCat>EC</assetCat>
+      </invstOrSec>
+      <invstOrSec>
+        <name>News Corp Class B</name>
+        <cusip>65249B208</cusip>
+        <valUSD>500000.00</valUSD>
+        <pctVal>0.5</pctVal>
+        <assetCat>EC</assetCat>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Electronic Arts Inc</name>
+        <cusip>285512109</cusip>
+        <valUSD>4000000.00</valUSD>
+        <pctVal>4.0</pctVal>
+        <assetCat>EC</assetCat>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</nportSubmission>`
+
+  const parsed = Model.parseNportXml(sampleXml, "XLC")
+  assert.ok(parsed)
+  assert.equal(parsed.holdings.length, 3)
+
+  const ea = parsed.holdings.find(h => h.symbol === "EA")
+  assert.ok(ea)
+  assert.equal(ea.delisted, true)
+  assert.equal(ea.symbol, "EA")
+
+  const nwsa = parsed.holdings.find(h => h.symbol === "NWSA")
+  assert.ok(nwsa)
+  assert.equal(nwsa.delisted, false)
+
+  const nws = parsed.holdings.find(h => h.symbol === "NWS")
+  assert.ok(nws)
+  assert.equal(nws.delisted, false)
+})
+
 
 
