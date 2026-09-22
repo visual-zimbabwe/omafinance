@@ -62,6 +62,17 @@ Column {
             spacing: Style.space(4)
 
             PanelActionButton {
+                id: breadthBtn
+                iconText: "\uf080"
+                tooltipText: "Sector Strat Breadth"
+                foreground: controller.dim
+                fontFamily: controller.contentFontFamily
+                hasCursor: controller.listChrome === "breadth"
+                bordered: controller.listChrome === "breadth"
+                onClicked: controller.openSectorBreadth()
+            }
+
+            PanelActionButton {
                 id: layoutBtn
                 iconText: "\uf009"
                 tooltipText: "Chart Layouts"
