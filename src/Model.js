@@ -1610,6 +1610,654 @@ function parseInterval(query) {
   return null
 }
 
+
+var SPDR_SECTOR_MAP = {
+  "XLC": { seriesId: "S000062095", cik: "0001064641", accessionNumber: "0001410368-26-089424", name: "Communication Services" },
+  "XLY": { seriesId: "S000006408", cik: "0001064641", accessionNumber: "0001410368-26-089594", name: "Consumer Discretionary" },
+  "XLP": { seriesId: "S000006409", cik: "0001064641", accessionNumber: "0001410368-26-089214", name: "Consumer Staples" },
+  "XLE": { seriesId: "S000006410", cik: "0001064641", accessionNumber: "0001410368-26-089509", name: "Energy" },
+  "XLF": { seriesId: "S000006411", cik: "0001064641", accessionNumber: "0001410368-26-089671", name: "Financials" },
+  "XLV": { seriesId: "S000006412", cik: "0001064641", accessionNumber: "0001410368-26-089348", name: "Health Care" },
+  "XLI": { seriesId: "S000006413", cik: "0001064641", accessionNumber: "0001410368-26-089138", name: "Industrials" },
+  "XLB": { seriesId: "S000006414", cik: "0001064641", accessionNumber: "0001410368-26-089261", name: "Materials" },
+  "XLK": { seriesId: "S000006415", cik: "0001064641", accessionNumber: "0001410368-26-089672", name: "Technology" },
+  "XLU": { seriesId: "S000006416", cik: "0001064641", accessionNumber: "0001410368-26-089590", name: "Utilities" },
+  "XLRE": { seriesId: "S000051152", cik: "0001064641", accessionNumber: "0001410368-26-089191", name: "Real Estate" }
+}
+
+var SPDR_CUSIP_MAP = {
+  "00206R102": "T",
+  "02079K107": "GOOG",
+  "02079K305": "GOOGL",
+  "20030N101": "CMCSA",
+  "278768106": "ECHO",
+  "30303M102": "META",
+  "35137L105": "FOXA",
+  "35137L204": "FOX",
+  "538034109": "LYV",
+  "64110L106": "NFLX",
+  "65249B109": "NWSA",
+  "65249B208": "NWS",
+  "681919106": "OMC",
+  "69932A204": "PSKY",
+  "87256C101": "TKO",
+  "872590104": "TMUS",
+  "92343V104": "VZ",
+  "934423104": "WBD",
+  "009066101": "ABNB",
+  "053332102": "AZO",
+  "086516101": "BBY",
+  "09857L108": "BKNG",
+  "146869102": "CVNA",
+  "169656105": "CMG",
+  "237194105": "DRI",
+  "243537107": "DECK",
+  "25754A201": "DPZ",
+  "25809K105": "DASH",
+  "278642103": "EBAY",
+  "30212P303": "EXPE",
+  "345370860": "F",
+  "37045V100": "GM",
+  "372460105": "GPC",
+  "418056107": "HAS",
+  "43300A203": "HLT",
+  "517834107": "LVS",
+  "526057104": "LEN",
+  "550021109": "LULU",
+  "552953101": "MGM",
+  "580135101": "MCD",
+  "62944T105": "NVR",
+  "654106103": "NKE",
+  "751212101": "RL",
+  "778296103": "ROST",
+  "855244109": "SBUX",
+  "876030107": "TPR",
+  "88160R101": "TSLA",
+  "90384S303": "ULTA",
+  "983134107": "WYNN",
+  "988498101": "YUM",
+  "000000000": "FLEX",
+  "02209S103": "MO",
+  "039483102": "ADM",
+  "147528103": "CASY",
+  "21036P108": "STZ",
+  "22160K105": "COST",
+  "256677105": "DG",
+  "256746108": "DLTR",
+  "370334104": "GIS",
+  "49177J102": "KVUE",
+  "49271V100": "KDP",
+  "60871R209": "TAP",
+  "609207105": "MDLZ",
+  "61174X109": "MNST",
+  "713448108": "PEP",
+  "718172109": "PM",
+  "871829107": "SYY",
+  "87612E106": "TGT",
+  "902494103": "TSN",
+  "931142103": "WMT",
+  "03743Q108": "APA",
+  "05722G100": "BKR",
+  "165167735": "EXE",
+  "166764100": "CVX",
+  "20825C104": "COP",
+  "25278X109": "FANG",
+  "26875P101": "EOG",
+  "26884L109": "EQT",
+  "406216101": "HAL",
+  "49456B101": "KMI",
+  "56585A102": "MPC",
+  "682680103": "OKE",
+  "718546104": "PSX",
+  "87612G101": "TRGP",
+  "88262P102": "TPL",
+  "001055102": "AFL",
+  "025816109": "AXP",
+  "026874784": "AIG",
+  "03076C106": "AMP",
+  "03769M106": "APO",
+  "03990B101": "ARES",
+  "04621X108": "AIZ",
+  "084670702": "BRK-B",
+  "09260D107": "BX",
+  "09290D101": "BLK",
+  "115236101": "BRO",
+  "12503M108": "CBOE",
+  "12572Q105": "CME",
+  "14040H105": "COF",
+  "172062101": "CINF",
+  "172967424": "C",
+  "19260Q107": "COIN",
+  "219948106": "CPAY",
+  "29530P102": "ERIE",
+  "303075105": "FDS",
+  "31620M106": "FIS",
+  "316773100": "FITB",
+  "337738108": "FISV",
+  "363576109": "AJG",
+  "37940X102": "GPN",
+  "37959E102": "GL",
+  "426281101": "JKHY",
+  "45841N107": "IBKR",
+  "45866F104": "ICE",
+  "46625H100": "JPM",
+  "48251W104": "KKR",
+  "493267108": "KEY",
+  "540424108": "L",
+  "55261F104": "MTB",
+  "55354G100": "MSCI",
+  "57636Q104": "MA",
+  "59156R108": "MET",
+  "617446448": "MS",
+  "631103108": "NDAQ",
+  "665859104": "NTRS",
+  "70450Y103": "PYPL",
+  "74251V102": "PFG",
+  "744320102": "PRU",
+  "754730109": "RJF",
+  "7591EP100": "RF",
+  "770700102": "HOOD",
+  "78409V104": "SPGI",
+  "852234103": "XYZ",
+  "857477103": "STT",
+  "87165B103": "SYF",
+  "89832Q109": "TFC",
+  "92826C839": "V",
+  "002824100": "ABT",
+  "00287Y109": "ABBV",
+  "00846U101": "A",
+  "016255101": "ALGN",
+  "03073E105": "COR",
+  "031162100": "AMGN",
+  "036752103": "ELV",
+  "071813109": "BAX",
+  "075887109": "BDX",
+  "09062X103": "BIIB",
+  "09073M104": "TECH",
+  "101137107": "BSX",
+  "126650100": "CVS",
+  "14149Y108": "CAH",
+  "15135B101": "CNC",
+  "159864107": "CRL",
+  "23918K108": "DVA",
+  "252131107": "DXCM",
+  "28176E108": "EW",
+  "36266G107": "GEHC",
+  "375558103": "GILD",
+  "40412C101": "HCA",
+  "444859102": "HUM",
+  "45337C102": "INCY",
+  "45784P101": "PODD",
+  "46120E602": "ISRG",
+  "46266C105": "IQV",
+  "478160104": "JNJ",
+  "504922105": "LH",
+  "532457108": "LLY",
+  "58155Q103": "MCK",
+  "58933Y105": "MRK",
+  "60770K107": "MRNA",
+  "714046109": "RVTY",
+  "717081103": "PFE",
+  "74834L100": "DGX",
+  "75886F107": "REGN",
+  "761152107": "RMD",
+  "806407102": "HSIC",
+  "83444M101": "SOLV",
+  "863667101": "SYK",
+  "883556102": "TMO",
+  "91324P102": "UNH",
+  "913903100": "UHS",
+  "922475108": "VEEV",
+  "92556V106": "VTRS",
+  "955306105": "WST",
+  "98956P102": "ZBH",
+  "98978V103": "ZTS",
+  "031100100": "AME",
+  "053015103": "ADP",
+  "05464C101": "AXON",
+  "11133T103": "BR",
+  "12008R107": "BLDR",
+  "126408103": "CSX",
+  "14448C104": "CARR",
+  "149123101": "CAT",
+  "172908105": "CTAS",
+  "199908104": "FIX",
+  "217204106": "CPRT",
+  "231021106": "CMI",
+  "244199105": "DE",
+  "247361702": "DAL",
+  "260003108": "DOV",
+  "29084Q100": "EME",
+  "291011104": "EMR",
+  "294429105": "EFX",
+  "302130109": "EXPD",
+  "311900104": "FAST",
+  "31428X106": "FDX",
+  "314352105": "FDXF",
+  "34959J108": "FTV",
+  "36828A101": "GEV",
+  "368736104": "GNRC",
+  "369550108": "GD",
+  "369604301": "GE",
+  "384802104": "GWW",
+  "43849R105": "HONA",
+  "438516205": "HON",
+  "443201108": "HWM",
+  "443510607": "HUBB",
+  "446413106": "HII",
+  "452308109": "ITW",
+  "45687V106": "IR",
+  "46982L108": "J",
+  "525327102": "LDOS",
+  "526107107": "LII",
+  "539830109": "LMT",
+  "655663102": "NDSN",
+  "655844108": "NSC",
+  "679580100": "ODFL",
+  "68902V107": "OTIS",
+  "693718108": "PCAR",
+  "701094104": "PH",
+  "704326107": "PAYX",
+  "74762E102": "PWR",
+  "75513E101": "RTX",
+  "760759100": "RSG",
+  "773903109": "ROK",
+  "775711104": "ROL",
+  "833034101": "SNA",
+  "844741108": "LUV",
+  "854502101": "SWK",
+  "883203101": "TXT",
+  "88579Y101": "MMM",
+  "893641100": "TDG",
+  "90353T100": "UBER",
+  "907818108": "UNP",
+  "910047109": "UAL",
+  "911312106": "UPS",
+  "911363109": "URI",
+  "92338C103": "VLTO",
+  "92345Y106": "VRSK",
+  "92537N108": "VRT",
+  "929740108": "WAB",
+  "94106L109": "WM",
+  "012653101": "ALB",
+  "053611109": "AVY",
+  "058498106": "BALL",
+  "125269100": "CF",
+  "22052L104": "CTVA",
+  "260557103": "DOW",
+  "26614N201": "DD",
+  "278865100": "ECL",
+  "35671D857": "FCX",
+  "459506101": "IFF",
+  "460146103": "IP",
+  "573284106": "MLM",
+  "670346105": "NUE",
+  "693506107": "PPG",
+  "695156109": "PKG",
+  "858119100": "STLD",
+  "929160109": "VMC",
+  "00724F101": "ADBE",
+  "007903107": "AMD",
+  "00971T101": "AKAM",
+  "032654105": "ADI",
+  "037833100": "AAPL",
+  "03831W108": "APP",
+  "040413205": "ANET",
+  "052769106": "ADSK",
+  "11135F101": "AVGO",
+  "127387108": "CDNS",
+  "171779309": "CIEN",
+  "17275R102": "CSCO",
+  "192446102": "CTSH",
+  "19247G107": "COHR",
+  "22788C105": "CRWD",
+  "23804L103": "DDOG",
+  "24703L202": "DELL",
+  "303250104": "FICO",
+  "315616102": "FFIV",
+  "336433107": "FSLR",
+  "34959E109": "FTNT",
+  "366651107": "IT",
+  "380237107": "GDDY",
+  "40434L105": "HPQ",
+  "42824C109": "HPE",
+  "458140100": "INTC",
+  "459200101": "IBM",
+  "461202103": "INTU",
+  "466313103": "JBL",
+  "482480100": "KLAC",
+  "49338L103": "KEYS",
+  "512807306": "LRCX",
+  "55024U109": "LITE",
+  "573874104": "MRVL",
+  "594918104": "MSFT",
+  "595017104": "MCHP",
+  "595112103": "MU",
+  "609839105": "MPWR",
+  "620076307": "MSI",
+  "64110D104": "NTAP",
+  "668771108": "GEN",
+  "67066G104": "NVDA",
+  "682189105": "ON",
+  "68389X105": "ORCL",
+  "69370C100": "PTC",
+  "69608A108": "PLTR",
+  "697435105": "PANW",
+  "74743L100": "Q",
+  "776696106": "ROP",
+  "79466L302": "CRM",
+  "80004C200": "SNDK",
+  "81762P102": "NOW",
+  "83088M102": "SWKS",
+  "86800U302": "SMCI",
+  "871607107": "SNPS",
+  "879360105": "TDY",
+  "880770102": "TER",
+  "882508104": "TXN",
+  "896239100": "TRMB",
+  "902252105": "TYL",
+  "958102105": "WDC",
+  "98138H101": "WDAY",
+  "989207105": "ZBRA",
+  "018802108": "LNT",
+  "023608102": "AEE",
+  "025537101": "AEP",
+  "030420103": "AWK",
+  "049560105": "ATO",
+  "125896100": "CMS",
+  "15189T107": "CNP",
+  "209115104": "ED",
+  "21037T109": "CEG",
+  "233331107": "DTE",
+  "25746U109": "D",
+  "26441C204": "DUK",
+  "281020107": "EIX",
+  "30034W106": "EVRG",
+  "30040W108": "ES",
+  "30161N101": "EXC",
+  "337932107": "FE",
+  "629377508": "NRG",
+  "65339F101": "NEE",
+  "65473P105": "NI",
+  "69331C108": "PCG",
+  "69351T106": "PPL",
+  "723484101": "PNW",
+  "744573106": "PEG",
+  "816851109": "SRE",
+  "92840M102": "VST",
+  "92939U106": "WEC",
+  "98389B100": "XEL",
+  "015271109": "ARE",
+  "101121101": "BXP",
+  "12504L109": "CBRE",
+  "133131102": "CPT",
+  "22160N109": "CSGP",
+  "22822V101": "CCI",
+  "253868103": "DLR",
+  "29444U700": "EQIX",
+  "297178105": "ESS",
+  "30225T102": "EXR",
+  "313745101": "FRT",
+  "42250P103": "DOC",
+  "44107P104": "HST",
+  "46187W107": "INVH",
+  "46284V101": "IRM",
+  "49446R109": "KIM",
+  "74340W103": "PLD",
+  "74460D109": "PSA",
+  "756109104": "O",
+  "758849103": "REG",
+  "78410G104": "SBAC",
+  "828806109": "SPG",
+  "902653104": "UDR",
+  "92276F100": "VTR",
+  "925652109": "VICI",
+  "95040Q104": "WELL",
+  "962166104": "WY",
+  "254687106": "DIS",
+  "285512109": "EA",
+  "874054109": "TTWO",
+  "88339J105": "TTD",
+  "023135106": "AMZN",
+  "23331A109": "DHI",
+  "437076102": "HD",
+  "571903202": "MAR",
+  "67103H107": "ORLY",
+  "745867101": "PHM",
+  "892356106": "TSCO",
+  "969904101": "WSM",
+  "115637209": "BF-B",
+  "171340102": "CHD",
+  "189054109": "CLX",
+  "191216100": "KO",
+  "194162103": "CL",
+  "427866108": "HSY",
+  "440452100": "HRL",
+  "494368103": "KMB",
+  "500754106": "KHC",
+  "501044101": "KR",
+  "579780206": "MKC",
+  "742718109": "PG",
+  "832696405": "SJM",
+  "25179M103": "DVN",
+  "674599105": "OXY",
+  "806857108": "SLB",
+  "91913Y100": "VLO",
+  "020002101": "ALL",
+  "060505104": "BAC",
+  "064058100": "BNY",
+  "084423102": "WRB",
+  "174610105": "CFG",
+  "354613101": "BEN",
+  "38141G104": "GS",
+  "416515104": "HIG",
+  "446150104": "HBAN",
+  "615369105": "MCO",
+  "693475105": "PNC",
+  "74144T108": "TROW",
+  "743315103": "PGR",
+  "808513105": "SCHW",
+  "902973304": "USB",
+  "949746101": "WFC",
+  "110122108": "BMY",
+  "125523100": "CI",
+  "235851102": "DHR",
+  "45168D104": "IDXX",
+  "592688105": "MTD",
+  "92532F100": "VRTX",
+  "941848103": "WAT",
+  "097023105": "BA",
+  "12541W209": "CHRW",
+  "445658107": "JBHT",
+  "45167R104": "IDXX",
+  "502431109": "LHX",
+  "574599106": "MAS",
+  "666807102": "NOC",
+  "831865209": "AOS",
+  "98419M100": "XYL",
+  "009158106": "APD",
+  "61945C103": "MOS",
+  "651639106": "NEM",
+  "824348106": "SHW",
+  "032095101": "APH",
+  "038222105": "AMAT",
+  "12514G108": "CDW",
+  "219350105": "GLW",
+  "747525103": "QCOM",
+  "92343E102": "VRSN",
+  "00130H105": "AES",
+  "29364G103": "ETR",
+  "842587107": "SO",
+  "03027X100": "AMT",
+  "29476L107": "EQR",
+  "16119P108": "CHTR",
+  "548661107": "LOW",
+  "872540109": "TJX",
+  "518439104": "EL",
+  "30231G102": "XOM",
+  "969457100": "WMB",
+  "571748102": "MMC",
+  "89417E109": "TRV",
+  "216648501": "COO",
+  "053484101": "AVB",
+  "59522J103": "MAA",
+  "66987V109": "NWSA",
+  "66987V208": "NWS"
+}
+
+
+var DELISTED_TICKERS = {
+  "EA": { delisted: true, reason: "Private (Aug 2026)" }
+}
+
+function sanitizeTicker(symbol) {
+  if (!symbol || typeof symbol !== "string") return ""
+  var s = symbol.trim().toUpperCase()
+  // Clean multi-class share separators
+  s = s.replace(/\/([A-Z])/g, "-").replace(/\.([A-Z])$/g, "-")
+  // Discard foreign exchange suffixes (e.g. .MU, .SG, .DE, .L, .TO, .MI, .HA, .HM)
+  if (/\.[A-Z0-9]+$/i.test(s) && !/^BRK-|^BF-/.test(s)) {
+    s = s.replace(/\.[A-Z0-9]+$/i, "")
+  }
+  return s
+}
+
+function isSpdrSector(symbol) {
+  var s = normalizeSymbol(symbol)
+  return !!(s && SPDR_SECTOR_MAP[s])
+}
+
+function spdrSectorInfo(symbol) {
+  var s = normalizeSymbol(symbol)
+  return (s && SPDR_SECTOR_MAP[s]) ? SPDR_SECTOR_MAP[s] : null
+}
+
+function holdingsUrl(symbol) {
+  var info = spdrSectorInfo(symbol)
+  if (!info || !info.accessionNumber) return null
+  var accClean = info.accessionNumber.replace(/-/g, "")
+  return "https://www.sec.gov/Archives/edgar/data/1064641/" + accClean + "/primary_doc.xml"
+}
+
+function resolveCusipToTicker(cusip, name, customMap) {
+  if (cusip) {
+    var c = String(cusip).trim().toUpperCase()
+    if (customMap && customMap[c]) return customMap[c]
+    if (SPDR_CUSIP_MAP[c]) return SPDR_CUSIP_MAP[c]
+    var c8 = c.slice(0, 8)
+    if (customMap && customMap[c8]) return customMap[c8]
+    if (SPDR_CUSIP_MAP[c8]) return SPDR_CUSIP_MAP[c8]
+  }
+  return null
+}
+
+function parseNportXml(xml, targetSymbol, customMap) {
+  if (!xml || typeof xml !== "string") return null
+
+  var reportDate = ""
+  var rdateMatch = xml.match(/<(?:\w+:)?repPdEnd>([^<]+)<\/(?:\w+:)?repPdEnd>/i)
+  if (rdateMatch) {
+    reportDate = rdateMatch[1].trim()
+  } else {
+    var fdateMatch = xml.match(/<(?:\w+:)?filingDate>([^<]+)<\/(?:\w+:)?filingDate>/i)
+    if (fdateMatch) reportDate = fdateMatch[1].trim()
+  }
+
+  var holdings = []
+  var invstRegex = /<(?:\w+:)?invstOrSec>([\s\S]*?)<\/(?:\w+:)?invstOrSec>/gi
+  var match
+
+  while ((match = invstRegex.exec(xml)) !== null) {
+    var block = match[1]
+
+    var assetCatMatch = block.match(/<(?:\w+:)?assetCat>([^<]+)<\/(?:\w+:)?assetCat>/i)
+    var assetCat = assetCatMatch ? assetCatMatch[1].trim().toUpperCase() : ""
+    if (assetCat !== "EC") continue
+
+    var nameMatch = block.match(/<(?:\w+:)?name>([^<]+)<\/(?:\w+:)?name>/i)
+    var name = nameMatch ? nameMatch[1].trim() : ""
+
+    var cusipMatch = block.match(/<(?:\w+:)?cusip>([^<]+)<\/(?:\w+:)?cusip>/i)
+    var cusip = cusipMatch ? cusipMatch[1].trim().toUpperCase() : ""
+
+    var valMatch = block.match(/<(?:\w+:)?valUSD>([^<]+)<\/(?:\w+:)?valUSD>/i)
+    var valUSD = valMatch ? (parseFloat(valMatch[1]) || 0) : 0
+
+    var pctMatch = block.match(/<(?:\w+:)?pctVal>([^<]+)<\/(?:\w+:)?pctVal>/i)
+    var pctVal = pctMatch ? (parseFloat(pctMatch[1]) || 0) : 0
+
+    var symbol = resolveCusipToTicker(cusip, name, customMap)
+    if (!symbol) {
+      var tickerTagMatch = block.match(/<(?:\w+:)?ticker(?:\s+value="([^"]+)"|>([^<]+)<\/(?:\w+:)?ticker>)/i)
+      if (tickerTagMatch) {
+        symbol = (tickerTagMatch[1] || tickerTagMatch[2] || "").trim().toUpperCase()
+      }
+    }
+
+    if (!symbol) continue
+
+    symbol = sanitizeTicker(symbol)
+    if (!symbol) continue
+
+    var isDelisted = !!(DELISTED_TICKERS[symbol] && DELISTED_TICKERS[symbol].delisted)
+
+    holdings.push({
+      symbol: symbol,
+      name: name,
+      cusip: cusip,
+      valUSD: valUSD,
+      pctVal: pctVal,
+      delisted: isDelisted,
+      relativeRatio: 0
+    })
+  }
+
+  if (holdings.length === 0) return null
+
+  holdings.sort(function (a, b) {
+    return (b.pctVal - a.pctVal) || (b.valUSD - a.valUSD)
+  })
+
+  var maxPct = holdings[0].pctVal > 0 ? holdings[0].pctVal : 1
+  for (var i = 0; i < holdings.length; i++) {
+    holdings[i].relativeRatio = Math.max(0, Math.min(1, holdings[i].pctVal / maxPct))
+  }
+
+  return {
+    symbol: targetSymbol ? normalizeSymbol(targetSymbol) : "",
+    reportDate: reportDate,
+    holdings: holdings
+  }
+}
+
+function sortHoldings(holdings, sortKey, sortAsc) {
+  if (!Array.isArray(holdings)) return []
+  var list = holdings.slice()
+  var asc = !!sortAsc
+  if (sortKey === "ticker" || sortKey === "symbol") {
+    list.sort(function (a, b) {
+      var sa = String(a.symbol || "")
+      var sb = String(b.symbol || "")
+      var cmp = sa.localeCompare(sb)
+      return asc ? cmp : -cmp
+    })
+  } else if (sortKey === "name") {
+    list.sort(function (a, b) {
+      var na = String(a.name || "")
+      var nb = String(b.name || "")
+      var cmp = na.localeCompare(nb)
+      return asc ? cmp : -cmp
+    })
+  } else {
+    list.sort(function (a, b) {
+      var wa = Number(a.pctVal != null ? a.pctVal : a.valUSD) || 0
+      var wb = Number(b.pctVal != null ? b.pctVal : b.valUSD) || 0
+      return asc ? wa - wb : wb - wa
+    })
+  }
+  return list
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -1686,7 +2334,13 @@ if (typeof module !== "undefined") {
     quoteFromChart: quoteFromChart,
     parseLayouts: parseLayouts,
     saveLayout: saveLayout,
-    deleteLayout: deleteLayout
+    deleteLayout: deleteLayout,
+    isSpdrSector: isSpdrSector,
+    spdrSectorInfo: spdrSectorInfo,
+    holdingsUrl: holdingsUrl,
+    resolveCusipToTicker: resolveCusipToTicker,
+    parseNportXml: parseNportXml,
+    sortHoldings: sortHoldings
   }
 }
 

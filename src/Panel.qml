@@ -59,6 +59,12 @@ Panel {
     property bool quotePageLoaded: false
     property var detailPage: ({})
     property var detailInsights: ({})
+    property var detailHoldings: null
+    property string holdingsFetchSymbol: ""
+    property int holdingsFailureCount: 0
+    property string holdingsError: ""
+    property bool holdingsLoaded: false
+    property var detailHistory: []
     property var detailCache: ({})
     property var detailCacheOrder: []
     readonly property int detailCacheTtlMs: 300000
@@ -242,6 +248,7 @@ Panel {
         setCenterHoverRevealSuppressed(false);
         root.view = "list";
         root.clearSearch();
+        root.detailHistory = [];
         root.cursorActive = root.watchlist.length > 0;
         root.selectedIndex = 0;
         root.controller.show();
@@ -251,6 +258,8 @@ Panel {
     function openFromHotkey() {
         openedFromHotkey = true;
         root.view = "list";
+        root.clearSearch();
+        root.detailHistory = [];
         root.cursorActive = false;
         root.controller.show();
         root.startSearch("");
@@ -265,6 +274,7 @@ Panel {
         setCenterHoverRevealSuppressed(false);
         openRefreshTimer.stop();
         root.clearSearch();
+        root.detailHistory = [];
         root.view = "list";
         root.controller.hide();
     }
@@ -551,8 +561,12 @@ Panel {
         quotePageFailureCount = 0;
         quotePageError = "";
         quotePageLoaded = false;
+        holdingsFailureCount = 0;
+        holdingsError = "";
+        holdingsLoaded = false;
         detailPage = ({});
         detailInsights = ({});
+        detailHoldings = null;
         restoreDetailCache(next);
         fetchDetail();
         return true;
@@ -571,7 +585,9 @@ Panel {
             page: existing.page || ({}),
             pageStoredAt: existing.pageStoredAt || 0,
             insights: existing.insights || ({}),
-            insightsStoredAt: existing.insightsStoredAt || 0
+            insightsStoredAt: existing.insightsStoredAt || 0,
+            holdings: existing.holdings || null,
+            holdingsStoredAt: existing.holdingsStoredAt || 0
         };
         entry[field] = value;
         entry[field + "StoredAt"] = Date.now();
@@ -606,6 +622,10 @@ Panel {
             detailPage = entry.page;
             quotePageLoaded = true;
         }
+        if (entry.holdingsStoredAt > 0 && now - entry.holdingsStoredAt <= detailCacheTtlMs && entry.holdings) {
+            detailHoldings = entry.holdings;
+            holdingsLoaded = true;
+        }
     }
 
     function prefetchDetail(symbol) {
@@ -614,6 +634,7 @@ Panel {
         detailEnrichmentTimer.stop();
         fetchInsights();
         fetchQuotePage();
+        fetchHoldings();
     }
 
     function openDetail(symbol) {
@@ -625,14 +646,58 @@ Panel {
         detailActionIndex = 0;
     }
 
+    function openDetailWithHistory(symbol) {
+        var prev = (view === "detail" && detailSymbol) ? detailSymbol : "";
+        var next = Model.normalizeSymbol(symbol);
+        if (prev && next && prev !== next) {
+            var nextHistory = root.detailHistory.slice();
+            nextHistory.push(prev);
+            root.detailHistory = nextHistory;
+        }
+        openDetail(symbol);
+    }
+
     function closeDetail() {
+        if (root.detailHistory && root.detailHistory.length > 0) {
+            var nextHistory = root.detailHistory.slice();
+            var prevSymbol = nextHistory.pop();
+            root.detailHistory = nextHistory;
+            openDetail(prevSymbol, false);
+            return;
+        }
+        root.detailHistory = [];
         view = "list";
         detailSymbol = "";
         detailQuote = null;
+        detailHoldings = null;
         Qt.callLater(function () {
             if (keyCatcher)
                 keyCatcher.forceActiveFocus();
         });
+    }
+
+    function fetchHoldings() {
+        if (!detailSymbol || !Model.isSpdrSector(detailSymbol)) {
+            detailHoldings = null;
+            holdingsLoaded = false;
+            return;
+        }
+        var entry = detailCache[detailCacheKey(detailSymbol)];
+        var now = Date.now();
+        if (entry && entry.holdingsStoredAt > 0 && now - entry.holdingsStoredAt <= detailCacheTtlMs && entry.holdings) {
+            detailHoldings = entry.holdings;
+            holdingsLoaded = true;
+            return;
+        }
+        if (holdingsProc.running)
+            return;
+        var hUrl = Model.holdingsUrl(detailSymbol);
+        if (!hUrl)
+            return;
+        holdingsFetchSymbol = detailSymbol;
+        holdingsError = "";
+        holdingsProc.command = ["curl", "-fsS", "--max-time", "12", "-A", "Omafinance research@omafinance.org", hUrl];
+        holdingsProc.running = true;
     }
 
     function setDetailRange(range) {
@@ -1147,6 +1212,38 @@ Panel {
         }
     }
 
+    Process {
+        id: holdingsProc
+        onExited: function (exitCode) {
+            var currentFetch = root.holdingsFetchSymbol === root.detailSymbol;
+            if (currentFetch) {
+                var raw = String(holdingsStdout.text || "").trim();
+                if (exitCode === 0 && raw) {
+                    var parsed = Model.parseNportXml(raw, root.holdingsFetchSymbol);
+                    if (parsed && parsed.holdings && parsed.holdings.length > 0) {
+                        root.detailHoldings = parsed;
+                        root.cacheDetailData(root.holdingsFetchSymbol, "holdings", parsed);
+                        root.holdingsFailureCount = 0;
+                        root.holdingsError = "";
+                        root.holdingsLoaded = true;
+                    } else {
+                        root.detailHoldings = null;
+                        root.holdingsLoaded = false;
+                    }
+                } else {
+                    root.detailHoldings = null;
+                    root.holdingsLoaded = false;
+                }
+            }
+            if (root.detailSymbol && Model.isSpdrSector(root.detailSymbol) && root.holdingsFetchSymbol !== root.detailSymbol)
+                Qt.callLater(root.fetchHoldings);
+        }
+        stdout: StdioCollector {
+            id: holdingsStdout
+            waitForEnd: true
+        }
+    }
+
     Timer {
         id: searchDebounce
         interval: 100
@@ -1160,6 +1257,7 @@ Panel {
         onTriggered: {
             root.fetchInsights();
             root.fetchQuotePage();
+            root.fetchHoldings();
         }
     }
 
