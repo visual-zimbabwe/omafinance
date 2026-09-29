@@ -1503,6 +1503,93 @@ function stratScenario(current, prev) {
   return "1"
 }
 
+function computeStratDetails(candles, liveQuote) {
+  if (!candles || candles.length < 2) {
+    return {
+      bar: "-",
+      polarity: "neutral",
+      inForce: "-",
+      sequence: "-",
+      triggerHigh: null,
+      triggerLow: null,
+      open: null,
+      high: null,
+      low: null,
+      close: null
+    }
+  }
+  var n = candles.length
+  var current = candles[n - 1]
+  var prev = candles[n - 2]
+  var prev2 = n >= 3 ? candles[n - 3] : null
+  var prev3 = n >= 4 ? candles[n - 4] : null
+
+  var sc = stratScenario(current, prev)
+  var bar = (sc && sc !== "-") ? sc.toUpperCase() : "-"
+
+  var curOpen = Number(current.open)
+  var curHigh = Number(current.high)
+  var curLow = Number(current.low)
+  var curClose = Number(current.close)
+  if (liveQuote && isFinite(Number(liveQuote.price))) {
+    curClose = Number(liveQuote.price)
+    if (isFinite(Number(liveQuote.dayHigh)) && Number(liveQuote.dayHigh) > curHigh) curHigh = Number(liveQuote.dayHigh)
+    if (isFinite(Number(liveQuote.dayLow)) && Number(liveQuote.dayLow) < curLow) curLow = Number(liveQuote.dayLow)
+  }
+
+  var trigHigh = Number(prev.high)
+  var trigLow = Number(prev.low)
+
+  var polarity = "neutral"
+  if (isFinite(curClose) && isFinite(curOpen)) {
+    polarity = curClose >= curOpen ? "green" : "red"
+  }
+
+  var inForce = "-"
+  if (sc === "2u") {
+    inForce = (isFinite(curClose) && isFinite(trigHigh) && curClose >= trigHigh) ? "In-Force" : "Not In-Force"
+  } else if (sc === "2d") {
+    inForce = (isFinite(curClose) && isFinite(trigLow) && curClose <= trigLow) ? "In-Force" : "Not In-Force"
+  } else if (sc === "1") {
+    inForce = "Inside Bar"
+  } else if (sc === "3") {
+    if (isFinite(curClose) && isFinite(trigHigh) && curClose >= trigHigh) {
+      inForce = "3 (In-Force Up)"
+    } else if (isFinite(curClose) && isFinite(trigLow) && curClose <= trigLow) {
+      inForce = "3 (In-Force Down)"
+    } else {
+      inForce = "3 (Inside Range)"
+    }
+  }
+
+  var seqParts = []
+  if (prev3 && prev2) {
+    var b1 = stratScenario(prev2, prev3)
+    if (b1 !== "-") seqParts.push(b1.toUpperCase())
+  }
+  if (prev2 && prev) {
+    var b2 = stratScenario(prev, prev2)
+    if (b2 !== "-") seqParts.push(b2.toUpperCase())
+  }
+  if (sc !== "-") {
+    seqParts.push(sc.toUpperCase())
+  }
+  var sequence = seqParts.length > 0 ? seqParts.join("-") : "-"
+
+  return {
+    bar: bar,
+    polarity: polarity,
+    inForce: inForce,
+    sequence: sequence,
+    triggerHigh: isFinite(trigHigh) ? trigHigh : null,
+    triggerLow: isFinite(trigLow) ? trigLow : null,
+    open: isFinite(curOpen) ? curOpen : null,
+    high: isFinite(curHigh) ? curHigh : null,
+    low: isFinite(curLow) ? curLow : null,
+    close: isFinite(curClose) ? curClose : null
+  }
+}
+
 function buildDetailStats(quote, page, insights) {
   quote = quote || {}
   page = page || {}
@@ -2236,23 +2323,65 @@ function parseNportXml(xml, targetSymbol, customMap) {
   }
 }
 
-function sortHoldings(holdings, sortKey, sortAsc) {
+function sortHoldings(holdings, sortKey, sortAsc, stratMap) {
   if (!Array.isArray(holdings)) return []
   var list = holdings.slice()
   var asc = !!sortAsc
-  if (sortKey === "ticker" || sortKey === "symbol") {
+  var sk = String(sortKey || "weight").toLowerCase()
+
+  if (sk === "ticker" || sk === "symbol") {
     list.sort(function (a, b) {
       var sa = String(a.symbol || "")
       var sb = String(b.symbol || "")
       var cmp = sa.localeCompare(sb)
       return asc ? cmp : -cmp
     })
-  } else if (sortKey === "name") {
+  } else if (sk === "name") {
     list.sort(function (a, b) {
       var na = String(a.name || "")
       var nb = String(b.name || "")
       var cmp = na.localeCompare(nb)
       return asc ? cmp : -cmp
+    })
+  } else if (sk === "60" || sk === "1d" || sk === "d" || sk === "1w" || sk === "w" || sk === "1m" || sk === "m" || sk === "1y" || sk === "y") {
+    var tf = "1D"
+    if (sk === "60") tf = "60"
+    else if (sk === "1d" || sk === "d") tf = "1D"
+    else if (sk === "1w" || sk === "w") tf = "1W"
+    else if (sk === "1m" || sk === "m") tf = "1M"
+    else if (sk === "1y" || sk === "y") tf = "1Y"
+
+    function getStratScore(h) {
+      if (!h || h.delisted) return -1
+      var sym = normalizeSymbol(h.symbol)
+      var s = (stratMap && stratMap[sym]) ? (stratMap[sym][tf] || stratMap[sym][sk.toUpperCase()]) : null
+      if (!s || !s.bar || s.bar === "-") return -1
+      var barRank = 0
+      var b = String(s.bar).toUpperCase()
+      if (b === "3") barRank = 4
+      else if (b === "2U") barRank = 3
+      else if (b === "2D") barRank = 2
+      else if (b === "1") barRank = 1
+      if (barRank === 0) return -1
+      var polRank = (s.polarity === "green") ? 1 : 0
+      return barRank * 10 + polRank
+    }
+
+    list.sort(function (a, b) {
+      var scoreA = getStratScore(a)
+      var scoreB = getStratScore(b)
+      var wa = Number(a.pctVal != null ? a.pctVal : a.valUSD) || 0
+      var wb = Number(b.pctVal != null ? b.pctVal : b.valUSD) || 0
+
+      if (scoreA !== scoreB) {
+        if (scoreA === -1) return 1
+        if (scoreB === -1) return -1
+        return asc ? (scoreA - scoreB) : (scoreB - scoreA)
+      }
+      if (Math.abs(wa - wb) > 0.0001) {
+        return asc ? (wa - wb) : (wb - wa)
+      }
+      return String(a.symbol || "").localeCompare(String(b.symbol || ""))
     })
   } else {
     list.sort(function (a, b) {
@@ -2329,6 +2458,48 @@ function prepareConstituentCandles(dailyCandlesMap) {
     }
   }
   return prepared
+}
+
+function computeHoldingStratMatrix(symbol, preparedCandles, hourlyCandlesMap, liveQuote) {
+  var sym = normalizeSymbol(symbol)
+  var hourly = (hourlyCandlesMap && hourlyCandlesMap[sym]) ? hourlyCandlesMap[sym] : null
+  var p = (preparedCandles && preparedCandles[sym]) ? preparedCandles[sym] : null
+  var daily = p ? p["1D"] : null
+  var weekly = p ? p["1W"] : null
+  var monthly = p ? p["1M"] : null
+  var yearly = p ? p["1Y"] : null
+
+  var res60 = computeStratDetails(hourly, liveQuote)
+  var res1D = computeStratDetails(daily, liveQuote)
+  var res1W = computeStratDetails(weekly, liveQuote)
+  var res1M = computeStratDetails(monthly, liveQuote)
+  var res1Y = computeStratDetails(yearly, liveQuote)
+
+  return {
+    "60": res60,
+    "1D": res1D,
+    "D": res1D,
+    "1W": res1W,
+    "W": res1W,
+    "1M": res1M,
+    "M": res1M,
+    "1Y": res1Y,
+    "Y": res1Y
+  }
+}
+
+function computeHoldingsStratMap(holdings, hourlyCandlesMap, dailyCandlesMap, liveQuotesMap, preparedCandles) {
+  var prepared = preparedCandles || prepareConstituentCandles(dailyCandlesMap)
+  var list = Array.isArray(holdings) ? holdings : []
+  var map = {}
+  for (var i = 0; i < list.length; i++) {
+    var h = list[i]
+    var sym = normalizeSymbol(h && (h.symbol || h))
+    if (!sym) continue
+    var quote = (liveQuotesMap && liveQuotesMap[sym]) ? liveQuotesMap[sym] : null
+    map[sym] = computeHoldingStratMatrix(sym, prepared, hourlyCandlesMap, quote)
+  }
+  return map
 }
 
 function computeSectorBreadthMetrics(holdings, hourlyCandlesMap, dailyCandlesMap, weightMode, preparedCandles) {
@@ -2532,6 +2703,9 @@ if (typeof module !== "undefined") {
     formatCandleTime: formatCandleTime,
     formatTimeAxisLabel: formatTimeAxisLabel,
     stratScenario: stratScenario,
+    computeStratDetails: computeStratDetails,
+    computeHoldingStratMatrix: computeHoldingStratMatrix,
+    computeHoldingsStratMap: computeHoldingsStratMap,
     extractFTFC: extractFTFC,
     timeframeColor: timeframeColor,
     buildDetailStats: buildDetailStats,

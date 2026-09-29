@@ -455,6 +455,41 @@ test("fetch-breadth script exists and executes successfully", () => {
   assert.match(scriptContent, /Model\.sparkCandlesUrl/)
 })
 
+test("detail view holdings table renders Strat timeframe columns and hover tooltip", () => {
+  const detail = fs.readFileSync(source("FinanceDetailView.qml"), "utf8")
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+
+  // Check detail view properties and layout
+  assert.match(detail, /Model\.sortHoldings\(rawHoldings,\s*holdingsSortKey,\s*holdingsSortAsc,\s*controller\.detailHoldingsStratMap\)/)
+  assert.match(detail, /key:\s*"60"/)
+  assert.match(detail, /key:\s*"1D"/)
+  assert.match(detail, /key:\s*"1W"/)
+  assert.match(detail, /key:\s*"1M"/)
+  assert.match(detail, /key:\s*"1Y"/)
+  assert.match(panel, /id:\s*stratTooltipOverlay/)
+  assert.match(panel, /3-Bar Sequence:/)
+  assert.match(panel, /Status:/)
+  assert.match(panel, /Trig H:/)
+  assert.match(panel, /Trig L:/)
+
+  // Check panel holdings strat fetching
+  assert.match(panel, /property var detailHoldingsStratMap:\s*\(\{\}\)/)
+  assert.match(panel, /id:\s*holdingsStratProc/)
+  assert.match(panel, /function fetchHoldingsStrat\(symbol\)/)
+  assert.match(panel, /fetch-holdings-strat\.js/)
+})
+
+test("fetch-holdings-strat script exists and exports holdings strat pipeline", () => {
+  const scriptPath = path.join(__dirname, "..", "scripts", "fetch-holdings-strat.js")
+  assert.ok(fs.existsSync(scriptPath))
+  const scriptContent = fs.readFileSync(scriptPath, "utf8")
+  assert.match(scriptContent, /Model\.holdingsUrl/)
+  assert.match(scriptContent, /Model\.parseNportXml/)
+  assert.match(scriptContent, /query1\.finance\.yahoo\.com\/v8\/finance\/chart/)
+  assert.match(scriptContent, /Model\.computeHoldingsStratMap/)
+})
+
+
 
 
 
