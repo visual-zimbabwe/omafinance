@@ -68,10 +68,16 @@ Panel {
     property var detailPage: ({})
     property var detailInsights: ({})
     property var detailHoldings: null
+    property var detailHoldingsStratMap: ({})
+    property bool detailHoldingsStratLoading: false
     property string holdingsFetchSymbol: ""
+    property string holdingsStratFetchSymbol: ""
     property int holdingsFailureCount: 0
     property string holdingsError: ""
     property bool holdingsLoaded: false
+    property var hoveredStratInfo: null
+    property real hoveredStratGlobalX: 0
+    property real hoveredStratGlobalY: 0
     property var detailHistory: []
     property var detailCache: ({})
     property var detailCacheOrder: []
@@ -581,6 +587,7 @@ Panel {
         detailPage = ({});
         detailInsights = ({});
         detailHoldings = null;
+        detailHoldingsStratMap = ({});
         restoreDetailCache(next);
         fetchDetail();
         return true;
@@ -601,7 +608,9 @@ Panel {
             insights: existing.insights || ({}),
             insightsStoredAt: existing.insightsStoredAt || 0,
             holdings: existing.holdings || null,
-            holdingsStoredAt: existing.holdingsStoredAt || 0
+            holdingsStoredAt: existing.holdingsStoredAt || 0,
+            holdingsStrat: existing.holdingsStrat || ({}),
+            holdingsStratStoredAt: existing.holdingsStratStoredAt || 0
         };
         entry[field] = value;
         entry[field + "StoredAt"] = Date.now();
@@ -639,6 +648,9 @@ Panel {
         if (entry.holdingsStoredAt > 0 && now - entry.holdingsStoredAt <= detailCacheTtlMs && entry.holdings) {
             detailHoldings = entry.holdings;
             holdingsLoaded = true;
+        }
+        if (entry.holdingsStratStoredAt > 0 && now - entry.holdingsStratStoredAt <= detailCacheTtlMs && entry.holdingsStrat) {
+            detailHoldingsStratMap = entry.holdingsStrat;
         }
     }
 
@@ -693,6 +705,7 @@ Panel {
     function fetchHoldings() {
         if (!detailSymbol || !Model.isSpdrSector(detailSymbol)) {
             detailHoldings = null;
+            detailHoldingsStratMap = ({});
             holdingsLoaded = false;
             return;
         }
@@ -701,6 +714,7 @@ Panel {
         if (entry && entry.holdingsStoredAt > 0 && now - entry.holdingsStoredAt <= detailCacheTtlMs && entry.holdings) {
             detailHoldings = entry.holdings;
             holdingsLoaded = true;
+            fetchHoldingsStrat(detailSymbol);
             return;
         }
         if (holdingsProc.running)
@@ -712,6 +726,30 @@ Panel {
         holdingsError = "";
         holdingsProc.command = ["curl", "-fsS", "--max-time", "12", "-A", "Omafinance research@omafinance.org", hUrl];
         holdingsProc.running = true;
+    }
+
+    function fetchHoldingsStrat(symbol) {
+        var target = symbol || detailSymbol;
+        if (!target || !Model.isSpdrSector(target)) {
+            detailHoldingsStratMap = ({});
+            detailHoldingsStratLoading = false;
+            return;
+        }
+        var entry = detailCache[detailCacheKey(target)];
+        var now = Date.now();
+        if (entry && entry.holdingsStratStoredAt > 0 && now - entry.holdingsStratStoredAt <= detailCacheTtlMs && entry.holdingsStrat && Object.keys(entry.holdingsStrat).length > 0) {
+            detailHoldingsStratMap = entry.holdingsStrat;
+            detailHoldingsStratLoading = false;
+            return;
+        }
+        if (holdingsStratProc.running)
+            return;
+        root.holdingsStratFetchSymbol = target;
+        root.detailHoldingsStratLoading = true;
+        var home = Quickshell.env("HOME");
+        var scriptPath = home + "/.config/omarchy/plugins/mohamedmansour.finance/scripts/fetch-holdings-strat.js";
+        holdingsStratProc.command = ["node", scriptPath, target];
+        holdingsStratProc.running = true;
     }
 
     function setDetailRange(range) {
@@ -1240,6 +1278,7 @@ Panel {
                         root.holdingsFailureCount = 0;
                         root.holdingsError = "";
                         root.holdingsLoaded = true;
+                        root.fetchHoldingsStrat(root.holdingsFetchSymbol);
                     } else {
                         root.detailHoldings = null;
                         root.holdingsLoaded = false;
@@ -1254,6 +1293,34 @@ Panel {
         }
         stdout: StdioCollector {
             id: holdingsStdout
+            waitForEnd: true
+        }
+    }
+
+    Process {
+        id: holdingsStratProc
+        onExited: function (exitCode) {
+            var currentFetch = root.holdingsStratFetchSymbol === root.detailSymbol;
+            if (currentFetch) {
+                var raw = String(holdingsStratStdout.text || "").trim();
+                if (exitCode === 0 && raw) {
+                    try {
+                        var parsed = JSON.parse(raw);
+                        if (parsed && parsed.stratMap) {
+                            root.detailHoldingsStratMap = parsed.stratMap;
+                            root.cacheDetailData(root.holdingsStratFetchSymbol, "holdingsStrat", parsed.stratMap);
+                        }
+                    } catch (e) {
+                        console.log("[HoldingsStrat] parse error:", e);
+                    }
+                }
+                root.detailHoldingsStratLoading = false;
+            }
+            if (root.detailSymbol && Model.isSpdrSector(root.detailSymbol) && root.holdingsStratFetchSymbol !== root.detailSymbol)
+                Qt.callLater(function () { root.fetchHoldingsStrat(root.detailSymbol); });
+        }
+        stdout: StdioCollector {
+            id: holdingsStratStdout
             waitForEnd: true
         }
     }
@@ -1494,6 +1561,92 @@ Panel {
                         width: parent.width
                         controller: root
                         visible: root.view === "detail"
+                    }
+                }
+            }
+
+            Item {
+                id: stratTooltipOverlay
+                anchors.fill: parent
+                z: 9999
+                visible: root.hoveredStratInfo !== null
+
+                Rectangle {
+                    id: stratTooltipBox
+                    visible: root.hoveredStratInfo !== null
+                    width: tooltipCol.implicitWidth + Style.space(20)
+                    height: tooltipCol.implicitHeight + Style.space(16)
+                    radius: Style.space(6)
+                    color: Qt.rgba(0.06, 0.06, 0.08, 0.96)
+                    border.color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.25)
+                    border.width: 1
+
+                    x: Math.max(Style.space(8), Math.min(parent.width - width - Style.space(8), root.hoveredStratGlobalX - width / 2))
+                    y: root.hoveredStratGlobalY - height - Style.space(10) > Style.space(8) ? (root.hoveredStratGlobalY - height - Style.space(10)) : (root.hoveredStratGlobalY + Style.space(24))
+
+                    Column {
+                        id: tooltipCol
+                        anchors.centerIn: parent
+                        spacing: Style.space(3)
+
+                        Row {
+                            spacing: Style.space(6)
+                            Text {
+                                text: root.hoveredStratInfo ? (root.hoveredStratInfo.symbol + " · " + (root.hoveredStratInfo.timeframe === "60" ? "60 Min" : root.hoveredStratInfo.timeframe === "D" ? "Daily" : root.hoveredStratInfo.timeframe === "W" ? "Weekly" : root.hoveredStratInfo.timeframe === "M" ? "Monthly" : "Yearly")) : ""
+                                color: root.contentForeground
+                                font.family: root.contentFontFamily
+                                font.pixelSize: Style.font.bodySmall
+                                font.bold: true
+                            }
+                            Text {
+                                text: root.hoveredStratInfo && root.hoveredStratInfo.data && root.hoveredStratInfo.data.bar ? root.hoveredStratInfo.data.bar : ""
+                                color: root.hoveredStratInfo && root.hoveredStratInfo.data && root.hoveredStratInfo.data.polarity === "green" ? root.upColor : (root.hoveredStratInfo && root.hoveredStratInfo.data && root.hoveredStratInfo.data.polarity === "red" ? root.downColor : root.dim)
+                                font.family: root.contentFontFamily
+                                font.pixelSize: Style.font.bodySmall
+                                font.bold: true
+                            }
+                        }
+
+                        Text {
+                            visible: root.hoveredStratInfo && root.hoveredStratInfo.data && root.hoveredStratInfo.data.sequence && root.hoveredStratInfo.data.sequence !== "-"
+                            text: visible ? ("3-Bar Sequence: " + root.hoveredStratInfo.data.sequence) : ""
+                            color: root.contentForeground
+                            font.family: root.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall - 1
+                        }
+
+                        Text {
+                            visible: root.hoveredStratInfo && root.hoveredStratInfo.data && root.hoveredStratInfo.data.inForce && root.hoveredStratInfo.data.inForce !== "-"
+                            text: visible ? ("Status: " + root.hoveredStratInfo.data.inForce) : ""
+                            color: visible && root.hoveredStratInfo.data.inForce.indexOf("In-Force") !== -1 ? root.upColor : root.dim
+                            font.family: root.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall - 1
+                        }
+
+                        Row {
+                            visible: root.hoveredStratInfo && root.hoveredStratInfo.data && (root.hoveredStratInfo.data.triggerHigh !== null || root.hoveredStratInfo.data.triggerLow !== null)
+                            spacing: Style.space(8)
+                            Text {
+                                text: (root.hoveredStratInfo && root.hoveredStratInfo.data && root.hoveredStratInfo.data.triggerHigh !== null) ? ("Trig H: " + Model.formatPrice(root.hoveredStratInfo.data.triggerHigh, "USD", 2)) : ""
+                                color: root.dim
+                                font.family: root.contentFontFamily
+                                font.pixelSize: Style.font.bodySmall - 1
+                            }
+                            Text {
+                                text: (root.hoveredStratInfo && root.hoveredStratInfo.data && root.hoveredStratInfo.data.triggerLow !== null) ? ("Trig L: " + Model.formatPrice(root.hoveredStratInfo.data.triggerLow, "USD", 2)) : ""
+                                color: root.dim
+                                font.family: root.contentFontFamily
+                                font.pixelSize: Style.font.bodySmall - 1
+                            }
+                        }
+
+                        Text {
+                            visible: root.hoveredStratInfo && root.hoveredStratInfo.data && root.hoveredStratInfo.data.open !== null
+                            text: visible ? ("O: " + Model.formatPrice(root.hoveredStratInfo.data.open, "USD", 2) + "  H: " + Model.formatPrice(root.hoveredStratInfo.data.high, "USD", 2) + "  L: " + Model.formatPrice(root.hoveredStratInfo.data.low, "USD", 2) + "  C: " + Model.formatPrice(root.hoveredStratInfo.data.close, "USD", 2)) : ""
+                            color: root.dim
+                            font.family: root.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall - 2
+                        }
                     }
                 }
             }

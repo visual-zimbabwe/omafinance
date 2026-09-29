@@ -17,7 +17,7 @@ Column {
     property string holdingsSortKey: "weight"
     property bool holdingsSortAsc: false
     readonly property var rawHoldings: (controller.detailHoldings && controller.detailHoldings.holdings) ? controller.detailHoldings.holdings : []
-    readonly property var sortedHoldings: Model.sortHoldings(rawHoldings, holdingsSortKey, holdingsSortAsc)
+    readonly property var sortedHoldings: Model.sortHoldings(rawHoldings, holdingsSortKey, holdingsSortAsc, controller.detailHoldingsStratMap)
     readonly property var displayedHoldings: showAllHoldings ? sortedHoldings : sortedHoldings.slice(0, 10)
     readonly property string holdingsReportDate: (controller.detailHoldings && controller.detailHoldings.reportDate) ? controller.detailHoldings.reportDate : ""
 
@@ -591,7 +591,7 @@ Column {
                 id: holdingsHeaderRight
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(8)
+                spacing: Style.space(6)
 
                 Text {
                     text: "TICKER" + (detailViewRoot.holdingsSortKey === "ticker" ? (detailViewRoot.holdingsSortAsc ? " ↑" : " ↓") : "")
@@ -615,6 +615,8 @@ Column {
                 }
 
                 Text {
+                    width: Style.space(46)
+                    horizontalAlignment: Text.AlignRight
                     text: "WEIGHT" + (detailViewRoot.holdingsSortKey === "weight" ? (detailViewRoot.holdingsSortAsc ? " ↑" : " ↓") : "")
                     color: detailViewRoot.holdingsSortKey === "weight" ? controller.contentForeground : controller.dim
                     font.family: controller.contentFontFamily
@@ -634,6 +636,40 @@ Column {
                         }
                     }
                 }
+
+                Repeater {
+                    model: [
+                        { label: "60", key: "60", colWidth: Style.space(22) },
+                        { label: "D", key: "1D", colWidth: Style.space(18) },
+                        { label: "W", key: "1W", colWidth: Style.space(18) },
+                        { label: "M", key: "1M", colWidth: Style.space(18) },
+                        { label: "Y", key: "1Y", colWidth: Style.space(18) }
+                    ]
+
+                    Text {
+                        required property var modelData
+                        width: modelData.colWidth
+                        horizontalAlignment: Text.AlignHCenter
+                        text: modelData.label + ((detailViewRoot.holdingsSortKey === modelData.key || detailViewRoot.holdingsSortKey === modelData.label) ? (detailViewRoot.holdingsSortAsc ? "↑" : "↓") : "")
+                        color: (detailViewRoot.holdingsSortKey === modelData.key || detailViewRoot.holdingsSortKey === modelData.label) ? controller.contentForeground : controller.dim
+                        font.family: controller.contentFontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: (detailViewRoot.holdingsSortKey === modelData.key || detailViewRoot.holdingsSortKey === modelData.label)
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (detailViewRoot.holdingsSortKey === modelData.key || detailViewRoot.holdingsSortKey === modelData.label) {
+                                    detailViewRoot.holdingsSortAsc = !detailViewRoot.holdingsSortAsc;
+                                } else {
+                                    detailViewRoot.holdingsSortKey = modelData.key;
+                                    detailViewRoot.holdingsSortAsc = false;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -649,6 +685,7 @@ Column {
                     required property var modelData
                     required property int index
                     readonly property bool isDelisted: holdingRow.modelData.delisted === true
+                    readonly property var stratInfo: (controller.detailHoldingsStratMap && controller.detailHoldingsStratMap[holdingRow.modelData.symbol]) ? controller.detailHoldingsStratMap[holdingRow.modelData.symbol] : null
                     width: parent.width
                     height: Style.space(38)
                     radius: Style.space(6)
@@ -675,12 +712,12 @@ Column {
 
                         Item {
                             width: parent.width
-                            height: Math.max(leftInfo.implicitHeight, weightText.implicitHeight)
+                            height: Math.max(leftInfo.implicitHeight, rightInfo.implicitHeight)
 
                             Row {
                                 id: leftInfo
                                 anchors.left: parent.left
-                                anchors.right: weightText.left
+                                anchors.right: rightInfo.left
                                 anchors.rightMargin: Style.space(8)
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: Style.space(6)
@@ -715,16 +752,82 @@ Column {
                                 }
                             }
 
-                            Text {
-                                id: weightText
+                            Row {
+                                id: rightInfo
                                 anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
-                                textFormat: Text.PlainText
-                                text: holdingRow.modelData.pctVal ? holdingRow.modelData.pctVal.toFixed(2) + "%" : "-"
-                                color: holdingRow.isDelisted ? controller.dim : controller.contentForeground
-                                font.family: controller.contentFontFamily
-                                font.pixelSize: Style.font.body
-                                font.bold: true
+                                spacing: Style.space(6)
+
+                                Text {
+                                    id: weightText
+                                    width: Style.space(46)
+                                    horizontalAlignment: Text.AlignRight
+                                    textFormat: Text.PlainText
+                                    text: holdingRow.modelData.pctVal ? holdingRow.modelData.pctVal.toFixed(2) + "%" : "-"
+                                    color: holdingRow.isDelisted ? controller.dim : controller.contentForeground
+                                    font.family: controller.contentFontFamily
+                                    font.pixelSize: Style.font.body
+                                    font.bold: true
+                                }
+
+                                Repeater {
+                                    model: [
+                                        { label: "60", key: "60", colWidth: Style.space(22) },
+                                        { label: "D", key: "1D", colWidth: Style.space(18) },
+                                        { label: "W", key: "1W", colWidth: Style.space(18) },
+                                        { label: "M", key: "1M", colWidth: Style.space(18) },
+                                        { label: "Y", key: "1Y", colWidth: Style.space(18) }
+                                    ]
+
+                                    Item {
+                                        id: tfCell
+                                        required property var modelData
+                                        width: modelData.colWidth
+                                        height: weightText.height
+                                        readonly property var tfData: holdingRow.stratInfo ? (holdingRow.stratInfo[modelData.key] || holdingRow.stratInfo[modelData.label]) : null
+                                        readonly property string barText: tfData && tfData.bar && tfData.bar !== "-" ? tfData.bar.toUpperCase() : "-"
+                                        readonly property color barColor: (!tfData || tfData.bar === "-" || tfData.polarity === "neutral" || holdingRow.isDelisted) ? controller.dim : (tfData.polarity === "green" ? controller.upColor : controller.downColor)
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            textFormat: Text.PlainText
+                                            text: tfCell.barText
+                                            color: tfCell.barColor
+                                            font.family: controller.contentFontFamily
+                                            font.pixelSize: Style.font.bodySmall
+                                            font.bold: true
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            hoverEnabled: !holdingRow.isDelisted
+                                            onEntered: {
+                                                var pos = mapToItem(controller, mouseX, mouseY);
+                                                controller.hoveredStratInfo = {
+                                                    symbol: holdingRow.modelData.symbol,
+                                                    name: holdingRow.modelData.name,
+                                                    timeframe: modelData.label,
+                                                    timeframeKey: modelData.key,
+                                                    data: tfCell.tfData
+                                                };
+                                                controller.hoveredStratGlobalX = pos.x;
+                                                controller.hoveredStratGlobalY = pos.y;
+                                            }
+                                            onPositionChanged: {
+                                                var pos = mapToItem(controller, mouseX, mouseY);
+                                                controller.hoveredStratGlobalX = pos.x;
+                                                controller.hoveredStratGlobalY = pos.y;
+                                            }
+                                            onExited: {
+                                                controller.hoveredStratInfo = null;
+                                            }
+                                            onClicked: {
+                                                if (!holdingRow.isDelisted)
+                                                    controller.openDetailWithHistory(holdingRow.modelData.symbol);
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
 

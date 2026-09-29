@@ -1103,5 +1103,78 @@ test("state persistence preserves breadth settings", () => {
   assert.equal(parsed.breadthSortAsc, true)
 })
 
+test("computeStratDetails computes bar, polarity, inForce, 3-bar sequence, and triggers", () => {
+  // Candles:
+  // c0: O:100 H:105 L:95 C:100
+  // c1: O:100 H:110 L:98 C:108 (2u vs c0)
+  // c2: O:108 H:109 L:99 C:105 (1 vs c1)
+  // c3: O:105 H:112 L:104 C:111 (2u vs c2, price >= 109 -> In-Force, price >= 105 -> green)
+  const candles = [
+    { open: 100, high: 105, low: 95, close: 100 },
+    { open: 100, high: 110, low: 98, close: 108 },
+    { open: 108, high: 109, low: 99, close: 105 },
+    { open: 105, high: 112, low: 104, close: 111 }
+  ]
+
+  const res = Model.computeStratDetails(candles)
+  assert.equal(res.bar, "2U")
+  assert.equal(res.polarity, "green")
+  assert.equal(res.inForce, "In-Force")
+  assert.equal(res.sequence, "2U-1-2U")
+  assert.equal(res.triggerHigh, 109)
+  assert.equal(res.triggerLow, 99)
+  assert.equal(res.open, 105)
+  assert.equal(res.high, 112)
+  assert.equal(res.low, 104)
+  assert.equal(res.close, 111)
+
+  // Test 2u not in-force (price dropped below prev high)
+  const res2 = Model.computeStratDetails(candles, { price: 107 })
+  assert.equal(res2.bar, "2U")
+  assert.equal(res2.polarity, "green") // 107 >= 105
+  assert.equal(res2.inForce, "Not In-Force") // 107 < 109
+  assert.equal(res2.close, 107)
+
+  // Test 2d in-force
+  const candles2d = [
+    { open: 100, high: 105, low: 95, close: 100 },
+    { open: 100, high: 96, low: 90, close: 92 }
+  ]
+  const res2d = Model.computeStratDetails(candles2d)
+  assert.equal(res2d.bar, "2D")
+  assert.equal(res2d.polarity, "red") // 92 < 100
+  assert.equal(res2d.inForce, "In-Force") // 92 <= 95
+  assert.equal(res2d.sequence, "2D")
+  assert.equal(res2d.triggerHigh, 105)
+  assert.equal(res2d.triggerLow, 95)
+})
+
+test("sortHoldings correctly sorts by timeframe Strat columns (Option B: 3 > 2U > 2D > 1, Green > Red)", () => {
+  const holdings = [
+    { symbol: "BAR1", pctVal: 10.0 }, // 1 Green
+    { symbol: "BAR2U_RED", pctVal: 20.0 }, // 2U Red
+    { symbol: "BAR3", pctVal: 15.0 }, // 3 Green
+    { symbol: "BAR2U_GREEN", pctVal: 5.0 }, // 2U Green
+    { symbol: "BAR2D", pctVal: 30.0 }  // 2D Red
+  ]
+
+  const stratMap = {
+    "BAR1": { "1D": { bar: "1", polarity: "green" } },
+    "BAR2U_RED": { "1D": { bar: "2U", polarity: "red" } },
+    "BAR3": { "1D": { bar: "3", polarity: "green" } },
+    "BAR2U_GREEN": { "1D": { bar: "2U", polarity: "green" } },
+    "BAR2D": { "1D": { bar: "2D", polarity: "red" } }
+  }
+
+  // Descending sort on "1D": 3 (BAR3) -> 2U Green (BAR2U_GREEN) -> 2U Red (BAR2U_RED) -> 2D (BAR2D) -> 1 (BAR1)
+  const desc = Model.sortHoldings(holdings, "1D", false, stratMap)
+  assert.deepEqual(desc.map(h => h.symbol), ["BAR3", "BAR2U_GREEN", "BAR2U_RED", "BAR2D", "BAR1"])
+
+  // Ascending sort on "D": 1 (BAR1) -> 2D (BAR2D) -> 2U Red (BAR2U_RED) -> 2U Green (BAR2U_GREEN) -> 3 (BAR3)
+  const asc = Model.sortHoldings(holdings, "D", true, stratMap)
+  assert.deepEqual(asc.map(h => h.symbol), ["BAR1", "BAR2D", "BAR2U_RED", "BAR2U_GREEN", "BAR3"])
+})
+
+
 
 
