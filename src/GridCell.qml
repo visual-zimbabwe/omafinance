@@ -28,7 +28,7 @@ Item {
             root.forceActiveFocus();
     }
     property color foreground: Color.foreground
-    property color dim: Qt.darker(foreground, 1.45)
+    property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.65)
     property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
     property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
     property string fontFamily: Style.font.family
@@ -751,10 +751,6 @@ Item {
     StratChecklistPopup {
         id: cellChecklistPopup
         checklistData: root.stratChecklist
-        foreground: root.foreground
-        dim: root.dim
-        upColor: root.upColor
-        downColor: root.downColor
         fontFamily: root.fontFamily
     }
 }
