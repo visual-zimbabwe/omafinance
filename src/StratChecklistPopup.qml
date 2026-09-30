@@ -10,10 +10,10 @@ Item {
     property bool open: false
     property real anchorX: 0
     property real anchorY: 0
-    property color foreground: Color.foreground
-    property color dim: Qt.darker(foreground, 1.45)
-    property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
-    property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
+    property color foreground: (Color.popups && Color.popups.text) ? Color.popups.text : Color.foreground
+    property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.70)
+    property color upColor: Qt.rgba(0.20, 0.80, 0.45, 1)
+    property color downColor: Qt.rgba(0.95, 0.35, 0.35, 1)
     property string fontFamily: Style.font.family
 
     property int hoveredRuleIndex: -1
@@ -32,11 +32,11 @@ Item {
 
     Rectangle {
         id: popupCard
-        width: Style.space(340)
+        width: Style.space(380)
         height: contentCol.implicitHeight + Style.space(24)
         radius: Style.space(8)
-        color: Color.background
-        border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+        color: (Color.popups && Color.popups.background) ? Color.popups.background : Color.background
+        border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
         border.width: 1
 
         x: Math.max(Style.space(8), Math.min(root.width - width - Style.space(8), root.anchorX - width / 2))
@@ -55,8 +55,8 @@ Item {
         Column {
             id: contentCol
             anchors.centerIn: parent
-            width: parent.width - Style.space(20)
-            spacing: Style.space(8)
+            width: parent.width - Style.space(24)
+            spacing: Style.space(10)
 
             // Header Row (Text & Color Only)
             Row {
@@ -110,7 +110,7 @@ Item {
                     return root.checklistData.direction === "SHORT" ? root.downColor : root.upColor;
                 }
                 font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall - 1
+                font.pixelSize: Style.font.bodySmall
                 font.bold: true
             }
 
@@ -118,13 +118,13 @@ Item {
             Rectangle {
                 width: parent.width
                 height: 1
-                color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.10)
+                color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12)
             }
 
             // 9 Rules List
             Column {
                 width: parent.width
-                spacing: Style.space(4)
+                spacing: Style.space(6)
 
                 Repeater {
                     model: root.checklistData ? root.checklistData.rules : []
@@ -139,7 +139,7 @@ Item {
                         Rectangle {
                             anchors.fill: parent
                             radius: Style.space(4)
-                            color: ruleItemHover.containsMouse ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.05) : "transparent"
+                            color: ruleItemHover.containsMouse ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08) : "transparent"
                         }
 
                         Row {
@@ -151,10 +151,11 @@ Item {
 
                             // Status Text (Text & Color only, no pill box)
                             Text {
+                                width: Style.space(38)
                                 text: ruleItem.modelData.passed ? "PASS" : "FAIL"
                                 color: ruleItem.modelData.passed ? root.upColor : root.downColor
                                 font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall - 2
+                                font.pixelSize: Style.font.bodySmall
                                 font.bold: true
                                 anchors.top: parent.top
                                 anchors.topMargin: 1
@@ -162,15 +163,15 @@ Item {
 
                             // Rule Title & Detail
                             Column {
-                                width: parent.width - Style.space(40)
-                                spacing: 1
+                                width: parent.width - Style.space(46)
+                                spacing: 2
 
                                 Text {
                                     width: parent.width
                                     text: ruleItem.modelData.shortTitle
                                     color: ruleItem.modelData.passed ? root.foreground : root.downColor
                                     font.family: root.fontFamily
-                                    font.pixelSize: Style.font.bodySmall - 1
+                                    font.pixelSize: Style.font.bodySmall
                                     font.bold: true
                                     elide: Text.ElideRight
                                 }
@@ -180,8 +181,8 @@ Item {
                                     text: ruleItem.modelData.detail
                                     color: root.dim
                                     font.family: root.fontFamily
-                                    font.pixelSize: Style.font.bodySmall - 2
-                                    elide: Text.ElideRight
+                                    font.pixelSize: Style.font.bodySmall
+                                    wrapMode: Text.WordWrap
                                 }
                             }
                         }
@@ -206,24 +207,24 @@ Item {
             // Hover Tooltip / Rationale Card
             Rectangle {
                 width: parent.width
-                height: rationaleCol.implicitHeight + Style.space(10)
-                radius: Style.space(4)
-                color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.04)
-                border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.10)
+                height: rationaleCol.implicitHeight + Style.space(12)
+                radius: Style.space(6)
+                color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.06)
+                border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.16)
                 border.width: 1
                 visible: root.hoveredRuleIndex >= 0 && root.checklistData && root.checklistData.rules && root.checklistData.rules[root.hoveredRuleIndex]
 
                 Column {
                     id: rationaleCol
                     anchors.centerIn: parent
-                    width: parent.width - Style.space(12)
-                    spacing: 2
+                    width: parent.width - Style.space(16)
+                    spacing: Style.space(3)
 
                     Text {
                         text: "STRAT RATIONALE"
                         color: Color.accent
                         font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall - 3
+                        font.pixelSize: Style.font.bodySmall - 1
                         font.bold: true
                     }
 
@@ -232,7 +233,7 @@ Item {
                         text: (root.hoveredRuleIndex >= 0 && root.checklistData && root.checklistData.rules && root.checklistData.rules[root.hoveredRuleIndex]) ? root.checklistData.rules[root.hoveredRuleIndex].rationale : ""
                         color: root.foreground
                         font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall - 2
+                        font.pixelSize: Style.font.bodySmall
                         wrapMode: Text.WordWrap
                     }
                 }
