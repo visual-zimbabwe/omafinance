@@ -1175,6 +1175,38 @@ test("sortHoldings correctly sorts by timeframe Strat columns (Option B: 3 > 2U 
   assert.deepEqual(asc.map(h => h.symbol), ["BAR1", "BAR2D", "BAR2U_RED", "BAR2U_GREEN", "BAR3"])
 })
 
+test("stratRuleRationales provides rationales for all 9 rules without emojis", () => {
+  const rat = Model.stratRuleRationales()
+  assert.equal(Object.keys(rat).length, 9)
+  for (let i = 1; i <= 9; i++) {
+    assert.ok(typeof rat[i] === "string" && rat[i].length > 10)
+    // Verify no emojis
+    assert.ok(!/[\u{1F300}-\u{1F9FF}]/u.test(rat[i]))
+  }
+})
+
+test("evaluateStratChecklist evaluates 9 rules correctly and produces max 5 char badge", () => {
+  const hourly = [
+    { open: 340, high: 345, low: 338, close: 344 }, // 2U
+    { open: 344, high: 348, low: 342, close: 346 }, // 1
+    { open: 346, high: 350, low: 345, close: 349 }  // 2U Triggered
+  ]
+  const daily = [
+    { open: 330, high: 338, low: 325, close: 335 },
+    { open: 335, high: 342, low: 332, close: 340 },
+    { open: 340, high: 350, low: 338, close: 349 }
+  ]
+  const quote = { regularMarketPrice: 349 }
+
+  const res = Model.evaluateStratChecklist("TEST", hourly, daily, quote)
+  assert.equal(res.symbol, "TEST")
+  assert.equal(res.totalRules, 9)
+  assert.ok(res.badgeText.length <= 5)
+  assert.equal(res.rules.length, 9)
+  assert.equal(typeof res.isTradeable, "boolean")
+})
+
+
 
 
 

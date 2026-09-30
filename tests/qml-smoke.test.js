@@ -489,6 +489,29 @@ test("fetch-holdings-strat script exists and exports holdings strat pipeline", (
   assert.match(scriptContent, /Model\.computeHoldingsStratMap/)
 })
 
+test("grid cells provide live 9-rule Strat checklist text status on execution timeframe with localized inspector popup", () => {
+  const popup = fs.readFileSync(source("StratChecklistPopup.qml"), "utf8")
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+
+  assert.match(popup, /STRAT CHECKLIST/)
+  assert.match(popup, /STRAT RATIONALE/)
+  assert.match(popup, /TRADEABLE/)
+  assert.match(popup, /BLOCKED/)
+  assert.match(popup, /Color\.background/)
+  assert.doesNotMatch(grid, /masterStratChecklist/)
+  assert.match(cell, /stratChecklist/)
+  assert.match(cell, /isExecutionTimeframeCell/)
+  assert.match(cell, /id:\s*stratBadgeText/)
+  assert.match(cell, /id:\s*cellChecklistPopup/)
+  assert.match(cell, /signal stratTradeableDetected/)
+  assert.match(grid, /notifyStratTradeable/)
+  assert.match(grid, /notify-send/)
+  assert.match(grid, /stratSoundProc/)
+  assert.match(grid, /pw-play/)
+})
+
+
 
 
 
