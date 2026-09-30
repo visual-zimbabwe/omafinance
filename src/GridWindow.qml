@@ -43,7 +43,6 @@ FloatingWindow {
     readonly property int liveRefreshMs: Model.backoffDelay(2000, quoteFailureCount, 60000)
     readonly property int chartRefreshMs: Model.backoffDelay(15000, chartFailureCount, 120000)
     property bool quoteRefreshPending: false
-
     signal stateSaveRequested(string mode, var sync, var symbols, var splits)
 
     title: root.mainSymbol ? "Omafinance Grid - " + root.mainSymbol : "Omafinance Grid"
@@ -204,6 +203,51 @@ FloatingWindow {
         }
     }
 
+    Process {
+        id: stratNotifyProc
+    }
+
+    Process {
+        id: stratSoundProc
+    }
+
+    property var alertedSignals: ({})
+
+    function notifyStratTradeable(chk) {
+        if (!chk || !chk.isTradeable || !chk.symbol || !chk.direction)
+            return;
+        var alertKey = chk.symbol + ":" + chk.setupTimeframe + ":" + chk.direction;
+        var now = Date.now();
+        var lastAlert = alertedSignals[alertKey] || 0;
+        // Edge-triggered 10-minute cooldown per symbol/setup/direction
+        if (now - lastAlert < 600000)
+            return;
+
+        var nextAlerts = Object.assign({}, alertedSignals);
+        nextAlerts[alertKey] = now;
+        alertedSignals = nextAlerts;
+
+        var title = "The Strat Alert: " + chk.symbol + " [" + chk.direction + "]";
+        var triggerStr = chk.triggerPrice != null ? ("Trigger: $" + Number(chk.triggerPrice).toFixed(2)) : "";
+        var stopStr = chk.stopPrice != null ? ("Stop: $" + Number(chk.stopPrice).toFixed(2)) : "";
+        var targetStr = (chk.targetPrice != null && chk.targetName) ? (chk.targetName + " $" + Number(chk.targetPrice).toFixed(2)) : "";
+        var parts = [];
+        if (triggerStr)
+            parts.push(triggerStr);
+        if (stopStr)
+            parts.push(stopStr);
+        if (targetStr)
+            parts.push("Target: " + targetStr);
+
+        var body = "9/9 rules verified on " + chk.setupTimeframe + " setup.\n" + parts.join(" | ");
+
+        stratNotifyProc.command = ["notify-send", "-a", "Omafinance", "-u", "normal", title, body];
+        stratNotifyProc.running = true;
+
+        stratSoundProc.command = ["pw-play", "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"];
+        stratSoundProc.running = true;
+    }
+
     Timer {
         id: liveTimer
         interval: root.liveRefreshMs
@@ -227,6 +271,8 @@ FloatingWindow {
             var sym1 = symbolForCell(root.activeCellIndex);
             var tf1 = timeframeForCell(root.activeCellIndex);
             requestChartFetch(sym1, tf1, isForced);
+            requestChartFetch(sym1, "60", isForced);
+            requestChartFetch(sym1, "1D", isForced);
             return;
         }
         var count = root.gridMode === "2+3" ? 5 : 4;
@@ -234,6 +280,8 @@ FloatingWindow {
             var sym = symbolForCell(i);
             var tf = timeframeForCell(i);
             requestChartFetch(sym, tf, isForced);
+            requestChartFetch(sym, "60", isForced);
+            requestChartFetch(sym, "1D", isForced);
         }
     }
 
@@ -729,6 +777,8 @@ FloatingWindow {
                         timeframe: root.timeframeForCell(root.activeCellIndex)
                         quote: root.quotes[symbol] || null
                         candles: root.getCandles(symbol, timeframe)
+                        hourlyCandles: root.getCandles(symbol, "60")
+                        dailyCandles: root.getCandles(symbol, "1D")
                         activeFocusCell: true
 
                         onFocusRequested: function (idx) {
@@ -742,6 +792,9 @@ FloatingWindow {
                         }
                         onTimeframeChangedManually: function (idx, tf) {
                             root.setTimeframeForCell(idx, tf);
+                        }
+                        onStratTradeableDetected: function (chk) {
+                            root.notifyStratTradeable(chk);
                         }
                     }
                 }
@@ -774,6 +827,8 @@ FloatingWindow {
                             timeframe: root.timeframeForCell(0)
                             quote: root.quotes[symbol] || null
                             candles: root.getCandles(symbol, timeframe)
+                            hourlyCandles: root.getCandles(symbol, "60")
+                            dailyCandles: root.getCandles(symbol, "1D")
                             activeFocusCell: root.activeCellIndex === 0
 
                             onFocusRequested: function (idx) {
@@ -793,6 +848,9 @@ FloatingWindow {
                             }
                             onCrosshairCleared: {
                                 root.handleCrosshairCleared(0);
+                            }
+                            onStratTradeableDetected: function (chk) {
+                                root.notifyStratTradeable(chk);
                             }
                         }
 
@@ -820,6 +878,8 @@ FloatingWindow {
                             timeframe: root.timeframeForCell(1)
                             quote: root.quotes[symbol] || null
                             candles: root.getCandles(symbol, timeframe)
+                            hourlyCandles: root.getCandles(symbol, "60")
+                            dailyCandles: root.getCandles(symbol, "1D")
                             activeFocusCell: root.activeCellIndex === 1
 
                             onFocusRequested: function (idx) {
@@ -839,6 +899,9 @@ FloatingWindow {
                             }
                             onCrosshairCleared: {
                                 root.handleCrosshairCleared(1);
+                            }
+                            onStratTradeableDetected: function (chk) {
+                                root.notifyStratTradeable(chk);
                             }
                         }
                     }
@@ -884,6 +947,8 @@ FloatingWindow {
                                 timeframe: root.timeframeForCell(2)
                                 quote: root.quotes[symbol] || null
                                 candles: root.getCandles(symbol, timeframe)
+                                hourlyCandles: root.getCandles(symbol, "60")
+                                dailyCandles: root.getCandles(symbol, "1D")
                                 activeFocusCell: root.activeCellIndex === 2
 
                                 onFocusRequested: function (idx) {
@@ -903,6 +968,9 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(2);
+                                }
+                                onStratTradeableDetected: function (chk) {
+                                    root.notifyStratTradeable(chk);
                                 }
                             }
 
@@ -930,6 +998,8 @@ FloatingWindow {
                                 timeframe: root.timeframeForCell(3)
                                 quote: root.quotes[symbol] || null
                                 candles: root.getCandles(symbol, timeframe)
+                                hourlyCandles: root.getCandles(symbol, "60")
+                                dailyCandles: root.getCandles(symbol, "1D")
                                 activeFocusCell: root.activeCellIndex === 3
 
                                 onFocusRequested: function (idx) {
@@ -949,6 +1019,9 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(3);
+                                }
+                                onStratTradeableDetected: function (chk) {
+                                    root.notifyStratTradeable(chk);
                                 }
                             }
                         }
@@ -974,6 +1047,8 @@ FloatingWindow {
                                 timeframe: root.timeframeForCell(2)
                                 quote: root.quotes[symbol] || null
                                 candles: root.getCandles(symbol, timeframe)
+                                hourlyCandles: root.getCandles(symbol, "60")
+                                dailyCandles: root.getCandles(symbol, "1D")
                                 activeFocusCell: root.activeCellIndex === 2
 
                                 onFocusRequested: function (idx) {
@@ -993,6 +1068,9 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(2);
+                                }
+                                onStratTradeableDetected: function (chk) {
+                                    root.notifyStratTradeable(chk);
                                 }
                             }
 
@@ -1020,6 +1098,8 @@ FloatingWindow {
                                 timeframe: root.timeframeForCell(3)
                                 quote: root.quotes[symbol] || null
                                 candles: root.getCandles(symbol, timeframe)
+                                hourlyCandles: root.getCandles(symbol, "60")
+                                dailyCandles: root.getCandles(symbol, "1D")
                                 activeFocusCell: root.activeCellIndex === 3
 
                                 onFocusRequested: function (idx) {
@@ -1039,6 +1119,9 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(3);
+                                }
+                                onStratTradeableDetected: function (chk) {
+                                    root.notifyStratTradeable(chk);
                                 }
                             }
 
@@ -1066,6 +1149,8 @@ FloatingWindow {
                                 timeframe: root.timeframeForCell(4)
                                 quote: root.quotes[symbol] || null
                                 candles: root.getCandles(symbol, timeframe)
+                                hourlyCandles: root.getCandles(symbol, "60")
+                                dailyCandles: root.getCandles(symbol, "1D")
                                 activeFocusCell: root.activeCellIndex === 4
 
                                 onFocusRequested: function (idx) {
@@ -1085,6 +1170,9 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(4);
+                                }
+                                onStratTradeableDetected: function (chk) {
+                                    root.notifyStratTradeable(chk);
                                 }
                             }
                         }

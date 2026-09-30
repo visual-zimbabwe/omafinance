@@ -2647,6 +2647,223 @@ function formatNetDelta(val) {
   return sign + n.toFixed(1) + "%"
 }
 
+function stratRuleRationales() {
+  return {
+    1: "Full Timeframe Continuity (FTFC): Price relative to open must align across 60, 1D, 1W, and 1M (all green for long, all red for short). Eliminates low-probability counter-trend traps.",
+    2: "Actionable Strat Signal: Trades must strictly originate from recognized combos (2-1-2, 2-2 Reversal, 2-2 Continuation, 3-1-2). Prevents arbitrary or emotional market entry.",
+    3: "Signal Bar Confirmation: Scenario classifications (1, 2, 3) are dynamic until the candle closes. Entering before close risks failed signals and false breakouts.",
+    4: "Time and Run Exhaustion: Entering late in a candle\x27s period or after 3+ consecutive uncorrected 2-bars carries high risk of instant reversal when the next period opens.",
+    5: "Trigger Execution: Orders must execute strictly when price breaks the signal candle extreme, mechanically turning the current bar into a live Scenario 2 or 3 in your favor.",
+    6: "Chop Avoidance: Scenario 1 represents indecision and range contraction. Trading inside an unresolved inside bar leads to whipsaws and theta decay.",
+    7: "Untagged Macro Targets: Strat targets are previous pivot highs/lows and broadening boundaries. Target must be untagged with at least 1:2 Risk-to-Reward remaining.",
+    8: "Structural Invalidation Stop: Non-negotiable stop placed at the opposite extreme of the signal candle. Breaching this level invalidates the trade hypothesis.",
+    9: "Runway Quality: Major 1W/1M previous extremes act as heavy supply/demand zones. There must be no opposing HTF wall blocking the path to target."
+  }
+}
+
+function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, nowDate) {
+  var sym = normalizeSymbol(symbol)
+  var hourly = Array.isArray(hourlyCandles) ? hourlyCandles : []
+  var daily = Array.isArray(dailyCandles) ? dailyCandles : []
+  var weekly = mergePeriodCandles(daily, "1W")
+  var monthly = mergePeriodCandles(daily, "1M")
+
+  var qPrice = (liveQuote && isFinite(liveQuote.regularMarketPrice)) ? Number(liveQuote.regularMarketPrice) : null
+  var currentPrice = qPrice
+  if (currentPrice === null && hourly.length > 0) {
+    currentPrice = Number(hourly[hourly.length - 1].close)
+  }
+  if (currentPrice === null && daily.length > 0) {
+    currentPrice = Number(daily[daily.length - 1].close)
+  }
+
+  var c60 = hourly.length > 0 ? hourly[hourly.length - 1] : null
+  var p60 = hourly.length > 1 ? hourly[hourly.length - 2] : null
+  var c1D = daily.length > 0 ? daily[daily.length - 1] : null
+  var p1D = daily.length > 1 ? daily[daily.length - 2] : null
+  var c1W = weekly.length > 0 ? weekly[weekly.length - 1] : null
+  var p1W = weekly.length > 1 ? weekly[weekly.length - 2] : null
+  var c1M = monthly.length > 0 ? monthly[monthly.length - 1] : null
+  var p1M = monthly.length > 1 ? monthly[monthly.length - 2] : null
+
+  var price60 = (qPrice !== null && c60) ? qPrice : (c60 ? Number(c60.close) : null)
+  var price1D = (qPrice !== null && c1D) ? qPrice : (c1D ? Number(c1D.close) : null)
+  var price1W = (qPrice !== null && c1W) ? qPrice : (c1W ? Number(c1W.close) : null)
+  var price1M = (qPrice !== null && c1M) ? qPrice : (c1M ? Number(c1M.close) : null)
+
+  var col60 = (c60 && price60 !== null) ? (price60 >= Number(c60.open) ? "G" : "R") : "-"
+  var col1D = (c1D && price1D !== null) ? (price1D >= Number(c1D.open) ? "G" : "R") : "-"
+  var col1W = (c1W && price1W !== null) ? (price1W >= Number(c1W.open) ? "G" : "R") : "-"
+  var col1M = (c1M && price1M !== null) ? (price1M >= Number(c1M.open) ? "G" : "R") : "-"
+
+  var isBullishFTFC = (col60 === "G" && col1D === "G" && col1W === "G" && col1M === "G")
+  var isBearishFTFC = (col60 === "R" && col1D === "R" && col1W === "R" && col1M === "R")
+  var direction = isBullishFTFC ? "LONG" : (isBearishFTFC ? "SHORT" : (col1D === "G" ? "LONG" : (col1D === "R" ? "SHORT" : "CONFLICT")))
+
+  // 1. FTFC Polarity
+  var r1Pass = isBullishFTFC || isBearishFTFC
+  var r1Detail = "1M(" + col1M + ") 1W(" + col1W + ") 1D(" + col1D + ") 60m(" + col60 + ")"
+  if (!r1Pass) {
+    r1Detail = "Conflict: " + r1Detail
+  }
+
+  // 2. Actionable Signal on Setup TF
+  var setupTf = "60"
+  var signalCandle = p60
+  var isLong = (direction === "LONG")
+
+  var sc60 = (c60 && p60) ? stratScenario(c60, p60) : "-"
+
+  var validSignal = false
+  var signalName = "-"
+  if (hourly.length >= 3) {
+    var p2_60 = hourly[hourly.length - 3]
+    var sc_prev = stratScenario(p60, p2_60)
+    if (sc_prev === "1") {
+      signalName = "60m 2-1-2 " + (isLong ? "Up" : "Down")
+      validSignal = true
+    } else if ((sc_prev === "2d" && isLong) || (sc_prev === "2u" && !isLong)) {
+      signalName = "60m 2-2 Reversal " + (isLong ? "Up" : "Down")
+      validSignal = true
+    } else if ((sc_prev === "2u" && isLong) || (sc_prev === "2d" && !isLong)) {
+      signalName = "60m 2-2 Continuation " + (isLong ? "Up" : "Down")
+      validSignal = true
+    } else if (sc_prev === "3") {
+      signalName = "60m 3-2 " + (isLong ? "Up" : "Down")
+      validSignal = true
+    }
+  }
+  if (!validSignal && daily.length >= 3) {
+    setupTf = "1D"
+    signalCandle = p1D
+    var p2_1D = daily[daily.length - 3]
+    var sc_prev1D = stratScenario(p1D, p2_1D)
+    if (sc_prev1D === "1" || sc_prev1D === "2d" || sc_prev1D === "2u" || sc_prev1D === "3") {
+      signalName = "1D Strat Signal (" + sc_prev1D + ")"
+      validSignal = true
+    }
+  }
+
+  var r2Pass = validSignal
+  var r2Detail = validSignal ? signalName : "No actionable combo pattern"
+
+  // 3. Signal Candle Closed
+  var r3Pass = signalCandle !== null
+  var r3Detail = signalCandle ? (setupTf + " Signal closed [" + Number(signalCandle.low).toFixed(2) + " - " + Number(signalCandle.high).toFixed(2) + "]") : "No closed signal candle"
+
+  // 4. Time/Run Exhaustion Filter
+  var r4Pass = true
+  var r4Detail = "Fresh setup, no exhaustion"
+  if (c60) {
+    var isOpposingWick = isLong ? (col60 === "R") : (col60 === "G")
+    if (isOpposingWick) {
+      r4Pass = false
+      r4Detail = "60m bar pulled back opposing trade color"
+    }
+  }
+
+  // 5. Execution Trigger Crossed
+  var triggerPrice = signalCandle ? (isLong ? Number(signalCandle.high) : Number(signalCandle.low)) : null
+  var r5Pass = false
+  var r5Detail = "No trigger available"
+  if (triggerPrice !== null && currentPrice !== null) {
+    if (isLong) {
+      r5Pass = (currentPrice >= triggerPrice)
+      var deltaLong = currentPrice - triggerPrice
+      r5Detail = "Trig: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + (deltaLong >= 0 ? "+$" + deltaLong.toFixed(2) : "-$" + Math.abs(deltaLong).toFixed(2) + " below") + ")"
+    } else {
+      r5Pass = (currentPrice <= triggerPrice)
+      var deltaShort = triggerPrice - currentPrice
+      r5Detail = "Trig: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + (deltaShort >= 0 ? "-$" + deltaShort.toFixed(2) : "+$" + Math.abs(deltaShort).toFixed(2) + " above") + ")"
+    }
+  }
+
+  // 6. Execution Bar Not Stuck in Scenario 1
+  var r6Pass = (sc60 !== "1")
+  var r6Detail = "60m Bar: Scenario " + sc60.toUpperCase() + (sc60 === "1" ? " (Consolidation Chop)" : " (In-Force)")
+
+  // 7. Untagged HTF Targets
+  var targetPrice = null
+  var targetName = ""
+  if (isLong) {
+    if (p1D && Number(p1D.high) > currentPrice) { targetPrice = Number(p1D.high); targetName = "1D High"; }
+    else if (p1W && Number(p1W.high) > currentPrice) { targetPrice = Number(p1W.high); targetName = "1W High"; }
+    else if (p1M && Number(p1M.high) > currentPrice) { targetPrice = Number(p1M.high); targetName = "1M High"; }
+  } else {
+    if (p1D && Number(p1D.low) < currentPrice) { targetPrice = Number(p1D.low); targetName = "1D Low"; }
+    else if (p1W && Number(p1W.low) < currentPrice) { targetPrice = Number(p1W.low); targetName = "1W Low"; }
+    else if (p1M && Number(p1M.low) < currentPrice) { targetPrice = Number(p1M.low); targetName = "1M Low"; }
+  }
+  var stopPrice = signalCandle ? (isLong ? Number(signalCandle.low) : Number(signalCandle.high)) : null
+
+  var r7Pass = false
+  var r7Detail = "No untagged HTF target found"
+  if (targetPrice !== null && stopPrice !== null && currentPrice !== null) {
+    var reward = Math.abs(targetPrice - currentPrice)
+    var risk = Math.abs(currentPrice - stopPrice)
+    var rr = risk > 0 ? (reward / risk) : 0
+    r7Pass = (reward > 0)
+    r7Detail = "Target: " + targetName + " $" + targetPrice.toFixed(2) + " (Room: $" + reward.toFixed(2) + ", R:R 1:" + rr.toFixed(1) + ")"
+  } else if (targetPrice !== null) {
+    r7Pass = true
+    r7Detail = "Target: " + targetName + " $" + targetPrice.toFixed(2)
+  }
+
+  // 8. Stop-Loss Anchored to Signal TF
+  var r8Pass = false
+  var r8Detail = "Stop not defined"
+  if (stopPrice !== null && currentPrice !== null) {
+    r8Pass = isLong ? (currentPrice > stopPrice) : (currentPrice < stopPrice)
+    r8Detail = "Stop-Loss: $" + stopPrice.toFixed(2) + " (" + setupTf + " Signal " + (isLong ? "Low" : "High") + ")"
+  }
+
+  // 9. Runway Quality
+  var r9Pass = r7Pass
+  var r9Detail = r9Pass ? ("Runway clear toward " + targetName) : "Opposing pivot blocks path or target untagged"
+
+  var rationales = stratRuleRationales()
+
+  var rules = [
+    { id: 1, title: "FTFC confirmed: all timeframes share same color.", shortTitle: "1. FTFC Polarity", passed: r1Pass, detail: r1Detail, rationale: rationales[1] },
+    { id: 2, title: "Valid Strat signal on active setup timeframe.", shortTitle: "2. Valid Signal", passed: r2Pass, detail: r2Detail, rationale: rationales[2] },
+    { id: 3, title: "Signal candle has completed and closed.", shortTitle: "3. Signal Closed", passed: r3Pass, detail: r3Detail, rationale: rationales[3] },
+    { id: 4, title: "Entry is fresh: no time or run exhaustion.", shortTitle: "4. No Exhaustion", passed: r4Pass, detail: r4Detail, rationale: rationales[4] },
+    { id: 5, title: "Execution trigger price crossed by min 1 tick.", shortTitle: "5. Trigger Crossed", passed: r5Pass, detail: r5Detail, rationale: rationales[5] },
+    { id: 6, title: "Execution candle is not stuck in Scenario 1.", shortTitle: "6. Avoid 1-Chop", passed: r6Pass, detail: r6Detail, rationale: rationales[6] },
+    { id: 7, title: "Untagged HTF target provides sufficient room.", shortTitle: "7. Untagged Target", passed: r7Pass, detail: r7Detail, rationale: rationales[7] },
+    { id: 8, title: "Stop-loss anchored to signal candle opposite.", shortTitle: "8. Stop Defined", passed: r8Pass, detail: r8Detail, rationale: rationales[8] },
+    { id: 9, title: "No major opposing HTF pivot blocks runway.", shortTitle: "9. Clear Runway", passed: r9Pass, detail: r9Detail, rationale: rationales[9] }
+  ]
+
+  var passedCount = 0
+  for (var i = 0; i < rules.length; i++) {
+    if (rules[i].passed) passedCount++
+  }
+
+  var isTradeable = (passedCount === rules.length)
+  var badgeText = passedCount + "/9"
+  var badgeTone = "neutral"
+  if (isTradeable) {
+    badgeTone = (direction === "SHORT") ? "down" : "up"
+  }
+
+  return {
+    symbol: sym,
+    direction: direction,
+    setupTimeframe: setupTf,
+    passedCount: passedCount,
+    totalRules: rules.length,
+    isTradeable: isTradeable,
+    badgeText: badgeText,
+    badgeTone: badgeTone,
+    triggerPrice: isFinite(triggerPrice) ? triggerPrice : null,
+    targetPrice: isFinite(targetPrice) ? targetPrice : null,
+    targetName: targetName,
+    stopPrice: isFinite(stopPrice) ? stopPrice : null,
+    rules: rules
+  }
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -2740,7 +2957,9 @@ if (typeof module !== "undefined") {
     computeSectorBreadthMetrics: computeSectorBreadthMetrics,
     computeAllSectorsBreadth: computeAllSectorsBreadth,
     sortSectorBreadth: sortSectorBreadth,
-    formatNetDelta: formatNetDelta
+    formatNetDelta: formatNetDelta,
+    stratRuleRationales: stratRuleRationales,
+    evaluateStratChecklist: evaluateStratChecklist
   }
 }
 

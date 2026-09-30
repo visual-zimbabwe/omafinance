@@ -12,6 +12,15 @@ Item {
     property string timeframe: "1D"
     property var quote: null
     property var candles: []
+    property var hourlyCandles: []
+    property var dailyCandles: []
+    readonly property var stratChecklist: Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote)
+    property bool syncSymbolActive: true
+    readonly property bool isExecutionTimeframeCell: {
+        if (!root.stratChecklist || !root.stratChecklist.setupTimeframe)
+            return false;
+        return root.timeframe === root.stratChecklist.setupTimeframe;
+    }
     property bool activeFocusCell: false
     focus: activeFocusCell
     onActiveFocusCellChanged: {
@@ -45,6 +54,13 @@ Item {
     signal timeframeChangedManually(int index, string nextTimeframe)
     signal crosshairMoved(real timestamp, real price, var candle)
     signal crosshairCleared
+    signal stratTradeableDetected(var checklist)
+
+    onStratChecklistChanged: {
+        if (root.stratChecklist && root.stratChecklist.isTradeable && root.isExecutionTimeframeCell) {
+            root.stratTradeableDetected(root.stratChecklist);
+        }
+    }
 
     readonly property var activeHoverCandle: chart.hoverCandle
     readonly property var currentBar: {
@@ -369,6 +385,37 @@ Item {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Strat Checklist Status (Text & Color Only, Execution Timeframe Only)
+                Text {
+                    id: stratBadgeText
+                    visible: root.stratChecklist !== null && root.stratChecklist.badgeText !== "" && root.isExecutionTimeframeCell
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: root.stratChecklist ? root.stratChecklist.badgeText : ""
+                    color: {
+                        if (!root.stratChecklist)
+                            return root.dim;
+                        if (!root.stratChecklist.isTradeable)
+                            return root.dim;
+                        return root.stratChecklist.direction === "SHORT" ? root.downColor : root.upColor;
+                    }
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+
+                    MouseArea {
+                        anchors.fill: parent
+                        anchors.margins: -Style.space(4)
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            var pos = stratBadgeText.mapToItem(root, 0, 0);
+                            cellChecklistPopup.anchorX = pos.x + stratBadgeText.width / 2;
+                            cellChecklistPopup.anchorY = pos.y + stratBadgeText.height;
+                            cellChecklistPopup.open = !cellChecklistPopup.open;
                         }
                     }
                 }
@@ -699,5 +746,15 @@ Item {
                 }
             }
         }
+    }
+
+    StratChecklistPopup {
+        id: cellChecklistPopup
+        checklistData: root.stratChecklist
+        foreground: root.foreground
+        dim: root.dim
+        upColor: root.upColor
+        downColor: root.downColor
+        fontFamily: root.fontFamily
     }
 }
