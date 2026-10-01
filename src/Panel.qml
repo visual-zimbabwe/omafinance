@@ -47,6 +47,7 @@ Panel {
     property var layouts: ({})
     property string activeLayoutName: ""
     property string layoutActionStatus: ""
+    property string discordWebhook: ""
     property bool gridOpened: false
     property string chartFetchSymbol: ""
     property string chartFetchRange: ""
@@ -368,7 +369,7 @@ Panel {
     }
 
     function persist() {
-        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, breadthWeightMode, breadthSortTimeframe, breadthSortAsc));
+        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, breadthWeightMode, breadthSortTimeframe, breadthSortAsc, discordWebhook));
     }
 
     function persistSettings(values) {
@@ -487,6 +488,8 @@ Panel {
             breadthSortTimeframe = state.breadthSortTimeframe;
         if (state.breadthSortAsc !== undefined)
             breadthSortAsc = state.breadthSortAsc;
+        if (state.discordWebhook !== undefined)
+            discordWebhook = state.discordWebhook;
         clampSelected();
         if (before !== after && (opened || showBarQuote))
             Qt.callLater(refresh);
@@ -1916,6 +1919,7 @@ Panel {
         GridWindow {
             id: gridWin
             visible: true
+            discordWebhook: root.discordWebhook
 
             onStateSaveRequested: function (mode, sync, symbols, splits) {
                 root.gridMode = mode;

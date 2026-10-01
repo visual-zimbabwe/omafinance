@@ -1206,6 +1206,45 @@ test("evaluateStratChecklist evaluates 9 rules correctly and produces max 5 char
   assert.equal(typeof res.isTradeable, "boolean")
 })
 
+test("discordAlertPayload builds valid Discord embed JSON", () => {
+  const chk = {
+    symbol: "NVDA",
+    direction: "BULLISH",
+    setupTimeframe: "65m",
+    triggerPrice: 125.5,
+    stopPrice: 120.0,
+    targetPrice: 132.0,
+    targetName: "1D High"
+  }
+  const payloadStr = Model.discordAlertPayload(chk)
+  assert.ok(payloadStr)
+  const parsed = JSON.parse(payloadStr)
+  assert.ok(parsed.embeds && parsed.embeds.length === 1)
+  assert.match(parsed.embeds[0].title, /NVDA/)
+  assert.equal(parsed.embeds[0].color, 3066993)
+})
+
+test("state persistence preserves discordWebhook setting", () => {
+  const webhookUrl = "https://discord.com/api/webhooks/123/abc"
+  const serialized = Model.serializeState(
+    ["AAPL"],
+    [],
+    "1D",
+    "2x2",
+    {},
+    [],
+    {},
+    {},
+    "cap",
+    "1W",
+    true,
+    webhookUrl
+  )
+
+  const parsed = Model.parseState(serialized)
+  assert.equal(parsed.discordWebhook, webhookUrl)
+})
+
 
 
 
