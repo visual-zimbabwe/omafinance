@@ -100,11 +100,19 @@ Item {
                     if (!root.checklistData)
                         return "";
                     var dir = root.checklistData.direction ? ("[" + root.checklistData.direction + "] ") : "";
+                    if (root.checklistData.isTargetHit)
+                        return dir + "TARGET HIT (" + (root.checklistData.targetName || "T1") + ") - Exhaustion Risk";
+                    if (root.checklistData.isStoppedOut)
+                        return dir + "INVALIDATED - Stop Loss Breached";
                     return dir + (root.checklistData.isTradeable ? "TRADEABLE - All 9 Rules Verified" : "BLOCKED - " + root.checklistData.passedCount + "/9 Rules Met");
                 }
                 color: {
                     if (!root.checklistData)
                         return root.dim;
+                    if (root.checklistData.isTargetHit)
+                        return root.checklistData.direction === "SHORT" ? root.downColor : root.upColor;
+                    if (root.checklistData.isStoppedOut)
+                        return root.downColor;
                     if (!root.checklistData.isTradeable)
                         return root.dim;
                     return root.checklistData.direction === "SHORT" ? root.downColor : root.upColor;
