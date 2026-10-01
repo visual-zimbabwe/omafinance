@@ -2766,6 +2766,9 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
 
   // 5. Execution Trigger Crossed
   var triggerPrice = signalCandle ? (isLong ? Number(signalCandle.high) : Number(signalCandle.low)) : null
+  var stopPrice = signalCandle ? (isLong ? Number(signalCandle.low) : Number(signalCandle.high)) : null
+  var signalCandleTimestamp = (signalCandle && signalCandle.timestamp != null) ? signalCandle.timestamp : null
+
   var r5Pass = false
   var r5Detail = "No trigger available"
   if (triggerPrice !== null && currentPrice !== null) {
@@ -2784,23 +2787,92 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var r6Pass = (sc60 !== "1")
   var r6Detail = "60m Bar: Scenario " + sc60.toUpperCase() + (sc60 === "1" ? " (Consolidation Chop)" : " (In-Force)")
 
-  // 7. Untagged HTF Targets
+  // 7. Untagged HTF Targets — Lock T1 relative to signal/trigger at inception
   var targetPrice = null
   var targetName = ""
+  var targets = []
   if (isLong) {
-    if (p1D && Number(p1D.high) > currentPrice) { targetPrice = Number(p1D.high); targetName = "1D High"; }
-    else if (p1W && Number(p1W.high) > currentPrice) { targetPrice = Number(p1W.high); targetName = "1W High"; }
-    else if (p1M && Number(p1M.high) > currentPrice) { targetPrice = Number(p1M.high); targetName = "1M High"; }
+    if (setupTf === "60" && p1D && triggerPrice !== null && Number(p1D.high) > triggerPrice) {
+      targets.push({ name: "1D High", price: Number(p1D.high) })
+    }
+    if (p1W && triggerPrice !== null && Number(p1W.high) > triggerPrice) {
+      targets.push({ name: "1W High", price: Number(p1W.high) })
+    }
+    if (p1M && triggerPrice !== null && Number(p1M.high) > triggerPrice) {
+      targets.push({ name: "1M High", price: Number(p1M.high) })
+    }
+    if (targets.length === 0) {
+      if (p1D && Number(p1D.high) > 0) targets.push({ name: "1D High", price: Number(p1D.high) })
+      else if (p1W && Number(p1W.high) > 0) targets.push({ name: "1W High", price: Number(p1W.high) })
+      else if (p1M && Number(p1M.high) > 0) targets.push({ name: "1M High", price: Number(p1M.high) })
+    }
   } else {
-    if (p1D && Number(p1D.low) < currentPrice) { targetPrice = Number(p1D.low); targetName = "1D Low"; }
-    else if (p1W && Number(p1W.low) < currentPrice) { targetPrice = Number(p1W.low); targetName = "1W Low"; }
-    else if (p1M && Number(p1M.low) < currentPrice) { targetPrice = Number(p1M.low); targetName = "1M Low"; }
+    if (setupTf === "60" && p1D && triggerPrice !== null && Number(p1D.low) < triggerPrice) {
+      targets.push({ name: "1D Low", price: Number(p1D.low) })
+    }
+    if (p1W && triggerPrice !== null && Number(p1W.low) < triggerPrice) {
+      targets.push({ name: "1W Low", price: Number(p1W.low) })
+    }
+    if (p1M && triggerPrice !== null && Number(p1M.low) < triggerPrice) {
+      targets.push({ name: "1M Low", price: Number(p1M.low) })
+    }
+    if (targets.length === 0) {
+      if (p1D && Number(p1D.low) > 0) targets.push({ name: "1D Low", price: Number(p1D.low) })
+      else if (p1W && Number(p1W.low) > 0) targets.push({ name: "1W Low", price: Number(p1W.low) })
+      else if (p1M && Number(p1M.low) > 0) targets.push({ name: "1M Low", price: Number(p1M.low) })
+    }
   }
-  var stopPrice = signalCandle ? (isLong ? Number(signalCandle.low) : Number(signalCandle.high)) : null
+
+  if (targets.length > 0) {
+    targetPrice = targets[0].price
+    targetName = targets[0].name
+  }
+
+  // Check Target Hit & Invalidation
+  var isTargetHit = false
+  if (targetPrice !== null && currentPrice !== null) {
+    if (isLong) {
+      if (currentPrice >= targetPrice) isTargetHit = true
+      if (c60 && Number(c60.high) >= targetPrice) isTargetHit = true
+      if (c1D && Number(c1D.high) >= targetPrice) isTargetHit = true
+    } else {
+      if (currentPrice <= targetPrice) isTargetHit = true
+      if (c60 && Number(c60.low) <= targetPrice) isTargetHit = true
+      if (c1D && Number(c1D.low) <= targetPrice) isTargetHit = true
+    }
+  }
+
+  var isStoppedOut = false
+  if (stopPrice !== null && currentPrice !== null) {
+    if (isLong) {
+      if (currentPrice <= stopPrice) isStoppedOut = true
+      if (c60 && Number(c60.low) <= stopPrice) isStoppedOut = true
+    } else {
+      if (currentPrice >= stopPrice) isStoppedOut = true
+      if (c60 && Number(c60.high) >= stopPrice) isStoppedOut = true
+    }
+  }
+
+  // 4. Time/Run Exhaustion Filter
+  var r4Pass = true
+  var r4Detail = "Fresh setup, no exhaustion"
+  if (isTargetHit) {
+    r4Pass = false
+    r4Detail = "Target reached (" + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + ") — exhaustion risk"
+  } else if (c60) {
+    var isOpposingWick = isLong ? (col60 === "R") : (col60 === "G")
+    if (isOpposingWick) {
+      r4Pass = false
+      r4Detail = "60m bar pulled back opposing trade color"
+    }
+  }
 
   var r7Pass = false
   var r7Detail = "No untagged HTF target found"
-  if (targetPrice !== null && stopPrice !== null && currentPrice !== null) {
+  if (isTargetHit) {
+    r7Pass = false
+    r7Detail = "Target reached: " + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + " (Exhausted)"
+  } else if (targetPrice !== null && stopPrice !== null && currentPrice !== null) {
     var reward = Math.abs(targetPrice - currentPrice)
     var risk = Math.abs(currentPrice - stopPrice)
     var rr = risk > 0 ? (reward / risk) : 0
@@ -2814,7 +2886,10 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   // 8. Stop-Loss Anchored to Signal TF
   var r8Pass = false
   var r8Detail = "Stop not defined"
-  if (stopPrice !== null && currentPrice !== null) {
+  if (isStoppedOut) {
+    r8Pass = false
+    r8Detail = "Stopped out: $" + (stopPrice != null ? stopPrice.toFixed(2) : "") + " breached"
+  } else if (stopPrice !== null && currentPrice !== null) {
     r8Pass = isLong ? (currentPrice > stopPrice) : (currentPrice < stopPrice)
     r8Detail = "Stop-Loss: $" + stopPrice.toFixed(2) + " (" + setupTf + " Signal " + (isLong ? "Low" : "High") + ")"
   }
@@ -2842,7 +2917,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     if (rules[i].passed) passedCount++
   }
 
-  var isTradeable = (passedCount === rules.length)
+  var isTradeable = (passedCount === rules.length) && !isTargetHit && !isStoppedOut
   var badgeText = passedCount + "/9"
   var badgeTone = "neutral"
   if (isTradeable) {
@@ -2853,35 +2928,56 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     symbol: sym,
     direction: direction,
     setupTimeframe: setupTf,
+    signalCandleTimestamp: signalCandleTimestamp,
     passedCount: passedCount,
     totalRules: rules.length,
     isTradeable: isTradeable,
+    isTriggered: r5Pass,
+    isTargetHit: isTargetHit,
+    isStoppedOut: isStoppedOut,
     badgeText: badgeText,
     badgeTone: badgeTone,
     triggerPrice: isFinite(triggerPrice) ? triggerPrice : null,
     targetPrice: isFinite(targetPrice) ? targetPrice : null,
     targetName: targetName,
+    targets: targets,
     stopPrice: isFinite(stopPrice) ? stopPrice : null,
     rules: rules
   }
 }
 
-function discordAlertPayload(chk) {
+function discordAlertPayload(chk, eventType) {
   if (!chk || !chk.symbol || !chk.direction) return null
-  var isBull = chk.direction === "BULLISH"
+  var isBull = chk.direction === "BULLISH" || chk.direction === "LONG"
   var color = isBull ? 3066993 : 15158332
   var triggerStr = (chk.triggerPrice != null && isFinite(chk.triggerPrice)) ? ("$" + Number(chk.triggerPrice).toFixed(2)) : "N/A"
   var stopStr = (chk.stopPrice != null && isFinite(chk.stopPrice)) ? ("$" + Number(chk.stopPrice).toFixed(2)) : "N/A"
   var targetStr = (chk.targetPrice != null && isFinite(chk.targetPrice) && chk.targetName) ? (chk.targetName + " $" + Number(chk.targetPrice).toFixed(2)) : ((chk.targetPrice != null && isFinite(chk.targetPrice)) ? "$" + Number(chk.targetPrice).toFixed(2) : "N/A")
 
   var tf = chk.setupTimeframe || ""
+  var type = eventType || "TRIGGERED"
+
+  var content = "@everyone 🚨 **The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]**"
+  var title = "🚨 The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]"
   var desc = "**9/9 Rules Verified** on `" + tf + "` setup."
 
+  if (type === "TARGET_HIT") {
+    content = "@everyone 🎯 **The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]**"
+    title = "🎯 The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]"
+    desc = "**Target Reached (" + (chk.targetName || "T1") + ")** on `" + tf + "` setup. Exhaustion risk — take profit / trail stop."
+    color = 3066993
+  } else if (type === "STOPPED") {
+    content = "@everyone 🛑 **The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]**"
+    title = "🛑 The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]"
+    desc = "**Stop-Loss Breached** on `" + tf + "` setup."
+    color = 15158332
+  }
+
   return JSON.stringify({
-    content: "@everyone 🚨 **The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]**",
+    content: content,
     embeds: [
       {
-        title: "🚨 The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]",
+        title: title,
         description: desc,
         color: color,
         fields: [

@@ -1245,6 +1245,59 @@ test("state persistence preserves discordWebhook setting", () => {
   assert.equal(parsed.discordWebhook, webhookUrl)
 })
 
+test("evaluateStratChecklist locks target at inception and detects target hit exhaustion", () => {
+  const hourly = [
+    { timestamp: 1000, open: 100, high: 105, low: 98, close: 104 },
+    { timestamp: 2000, open: 104, high: 108, low: 102, close: 106 }, // Signal bar (high=108, low=102)
+    { timestamp: 3000, open: 106, high: 109, low: 105, close: 109 }  // Triggered (currentPrice=109)
+  ]
+  const daily = [
+    { timestamp: 100, open: 90, high: 100, low: 85, close: 95 },
+    { timestamp: 200, open: 95, high: 112, low: 93, close: 108 }, // 1D High = 112 (Target 1)
+    { timestamp: 300, open: 100, high: 110, low: 98, close: 109 }
+  ]
+
+  // Case 1: In flight, below target 112
+  const activeRes = Model.evaluateStratChecklist("TEST", hourly, daily, { regularMarketPrice: 109 })
+  assert.equal(activeRes.isTradeable, true)
+  assert.equal(activeRes.isTargetHit, false)
+  assert.equal(activeRes.isStoppedOut, false)
+  assert.equal(activeRes.targetPrice, 112)
+  assert.equal(activeRes.targetName, "1D High")
+  assert.equal(activeRes.signalCandleTimestamp, 2000)
+
+  // Case 2: Target 112 hit by currentPrice=113
+  const targetHitRes = Model.evaluateStratChecklist("TEST", hourly, daily, { regularMarketPrice: 113 })
+  assert.equal(targetHitRes.isTargetHit, true)
+  assert.equal(targetHitRes.isTradeable, false) // Exhaustion risk prevents new trade entry
+  assert.equal(targetHitRes.targetPrice, 112) // Target remains locked to 1D High, not mutated
+
+  // Case 3: Stopped out below signal low 102
+  const stoppedRes = Model.evaluateStratChecklist("TEST", hourly, daily, { regularMarketPrice: 101 })
+  assert.equal(stoppedRes.isStoppedOut, true)
+  assert.equal(stoppedRes.isTradeable, false)
+})
+
+test("discordAlertPayload formats TARGET_HIT and STOPPED events accurately", () => {
+  const chk = {
+    symbol: "XLC",
+    direction: "LONG",
+    setupTimeframe: "60",
+    triggerPrice: 111.75,
+    stopPrice: 111.45,
+    targetPrice: 112.00,
+    targetName: "1D High"
+  }
+
+  const tgtPayload = JSON.parse(Model.discordAlertPayload(chk, "TARGET_HIT"))
+  assert.match(tgtPayload.embeds[0].title, /Target Hit/)
+  assert.match(tgtPayload.embeds[0].description, /Exhaustion risk/)
+
+  const stopPayload = JSON.parse(Model.discordAlertPayload(chk, "STOPPED"))
+  assert.match(stopPayload.embeds[0].title, /Invalidated/)
+  assert.match(stopPayload.embeds[0].description, /Stop-Loss Breached/)
+})
+
 
 
 

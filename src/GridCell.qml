@@ -57,7 +57,7 @@ Item {
     signal stratTradeableDetected(var checklist)
 
     onStratChecklistChanged: {
-        if (root.stratChecklist && root.stratChecklist.isTradeable && root.isExecutionTimeframeCell) {
+        if (root.stratChecklist && root.isExecutionTimeframeCell) {
             root.stratTradeableDetected(root.stratChecklist);
         }
     }

@@ -216,35 +216,59 @@ FloatingWindow {
         id: stratDiscordProc
     }
 
-    property var alertedSignals: ({})
+    property var signalStates: ({})
 
     function notifyStratTradeable(chk) {
-        if (!chk || !chk.isTradeable || !chk.symbol || !chk.direction)
-            return;
-        var alertKey = chk.symbol + ":" + chk.setupTimeframe + ":" + chk.direction;
-        var now = Date.now();
-        var lastAlert = alertedSignals[alertKey] || 0;
-        // Edge-triggered 10-minute cooldown per symbol/setup/direction
-        if (now - lastAlert < 600000)
+        if (!chk || !chk.symbol || !chk.direction || !chk.setupTimeframe)
             return;
 
-        var nextAlerts = Object.assign({}, alertedSignals);
-        nextAlerts[alertKey] = now;
-        alertedSignals = nextAlerts;
+        var candleId = (chk.signalCandleTimestamp != null) ? String(chk.signalCandleTimestamp) : "active";
+        var baseKey = chk.symbol + ":" + chk.setupTimeframe + ":" + candleId + ":" + chk.direction;
+        var currentState = root.signalStates[baseKey] || "NONE";
 
-        var title = "The Strat Alert: " + chk.symbol + " [" + chk.direction + "]";
-        var triggerStr = chk.triggerPrice != null ? ("Trigger: $" + Number(chk.triggerPrice).toFixed(2)) : "";
-        var stopStr = chk.stopPrice != null ? ("Stop: $" + Number(chk.stopPrice).toFixed(2)) : "";
-        var targetStr = (chk.targetPrice != null && chk.targetName) ? (chk.targetName + " $" + Number(chk.targetPrice).toFixed(2)) : "";
-        var parts = [];
-        if (triggerStr)
-            parts.push(triggerStr);
-        if (stopStr)
-            parts.push(stopStr);
-        if (targetStr)
-            parts.push("Target: " + targetStr);
+        var eventType = "";
+        var title = "";
+        var body = "";
 
-        var body = "9/9 rules verified on " + chk.setupTimeframe + " setup.\n" + parts.join(" | ");
+        // 1. Entry Trigger: 9/9 rules passed, not yet triggered for this signal candle
+        if (chk.isTradeable && currentState === "NONE") {
+            eventType = "TRIGGERED";
+            title = "The Strat Alert: " + chk.symbol + " [" + chk.direction + "]";
+            var triggerStr = chk.triggerPrice != null ? ("Trigger: $" + Number(chk.triggerPrice).toFixed(2)) : "";
+            var stopStr = chk.stopPrice != null ? ("Stop: $" + Number(chk.stopPrice).toFixed(2)) : "";
+            var targetStr = (chk.targetPrice != null && chk.targetName) ? (chk.targetName + " $" + Number(chk.targetPrice).toFixed(2)) : "";
+            var parts = [];
+            if (triggerStr)
+                parts.push(triggerStr);
+            if (stopStr)
+                parts.push(stopStr);
+            if (targetStr)
+                parts.push("Target: " + targetStr);
+
+            body = "9/9 rules verified on " + chk.setupTimeframe + " setup.\n" + parts.join(" | ");
+        }
+        // 2. Target Hit: was in-force / triggered, and now reached target
+        else if (chk.isTargetHit && currentState === "TRIGGERED") {
+            eventType = "TARGET_HIT";
+            title = "🎯 The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]";
+            var tName = chk.targetName || "Target 1";
+            var tPriceStr = chk.targetPrice != null ? (" $" + Number(chk.targetPrice).toFixed(2)) : "";
+            body = tName + tPriceStr + " reached on " + chk.setupTimeframe + " setup.\nExhaustion risk — take profit / trail stops.";
+        }
+        // 3. Stop Breached: was in-force / triggered, and now stopped out
+        else if (chk.isStoppedOut && currentState === "TRIGGERED") {
+            eventType = "STOPPED";
+            title = "🛑 The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]";
+            var sPriceStr = chk.stopPrice != null ? (" $" + Number(chk.stopPrice).toFixed(2)) : "";
+            body = "Stop-loss" + sPriceStr + " breached on " + chk.setupTimeframe + " setup.";
+        }
+
+        if (!eventType)
+            return;
+
+        var nextStates = Object.assign({}, root.signalStates);
+        nextStates[baseKey] = eventType;
+        root.signalStates = nextStates;
 
         stratNotifyProc.command = ["notify-send", "-a", "Omafinance", "-u", "normal", title, body];
         stratNotifyProc.running = true;
@@ -254,7 +278,7 @@ FloatingWindow {
 
         var webhook = root.discordWebhook;
         if (webhook && webhook.indexOf("https://discord.com/api/webhooks/") === 0) {
-            var payload = Model.discordAlertPayload(chk);
+            var payload = Model.discordAlertPayload(chk, eventType);
             if (payload) {
                 stratDiscordProc.command = ["curl", "-fsS", "-H", "Content-Type: application/json", "-X", "POST", "-d", payload, webhook];
                 stratDiscordProc.running = true;
