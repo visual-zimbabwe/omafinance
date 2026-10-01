@@ -509,6 +509,8 @@ test("grid cells provide live 9-rule Strat checklist text status on execution ti
   assert.match(grid, /notify-send/)
   assert.match(grid, /stratSoundProc/)
   assert.match(grid, /pw-play/)
+  assert.match(grid, /stratDiscordProc/)
+  assert.match(grid, /discordAlertPayload/)
 })
 
 

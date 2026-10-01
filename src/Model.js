@@ -158,13 +158,14 @@ function parseState(raw) {
     if (data.breadthWeightMode === "cap" || data.breadthWeightMode === "equal") res.breadthWeightMode = data.breadthWeightMode
     if (data.breadthSortTimeframe !== undefined) res.breadthSortTimeframe = String(data.breadthSortTimeframe)
     if (data.breadthSortAsc !== undefined) res.breadthSortAsc = !!data.breadthSortAsc
+    if (data.discordWebhook !== undefined) res.discordWebhook = String(data.discordWebhook || "").trim()
     return res
   } catch (e) {
     return fallback
   }
 }
 
-function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, breadthWeightMode, breadthSortTimeframe, breadthSortAsc) {
+function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, breadthWeightMode, breadthSortTimeframe, breadthSortAsc, discordWebhook) {
   var list = Array.isArray(watchlist) ? watchlist.slice() : []
   var obj = {
     watchlist: list,
@@ -179,6 +180,7 @@ function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, grid
   if (breadthWeightMode !== undefined) obj.breadthWeightMode = breadthWeightMode
   if (breadthSortTimeframe !== undefined) obj.breadthSortTimeframe = breadthSortTimeframe
   if (breadthSortAsc !== undefined) obj.breadthSortAsc = breadthSortAsc
+  if (discordWebhook !== undefined && discordWebhook !== "") obj.discordWebhook = discordWebhook
   return JSON.stringify(obj, null, 2) + "\n"
 }
 
@@ -2864,6 +2866,36 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   }
 }
 
+function discordAlertPayload(chk) {
+  if (!chk || !chk.symbol || !chk.direction) return null
+  var isBull = chk.direction === "BULLISH"
+  var color = isBull ? 3066993 : 15158332
+  var triggerStr = (chk.triggerPrice != null && isFinite(chk.triggerPrice)) ? ("$" + Number(chk.triggerPrice).toFixed(2)) : "N/A"
+  var stopStr = (chk.stopPrice != null && isFinite(chk.stopPrice)) ? ("$" + Number(chk.stopPrice).toFixed(2)) : "N/A"
+  var targetStr = (chk.targetPrice != null && isFinite(chk.targetPrice) && chk.targetName) ? (chk.targetName + " $" + Number(chk.targetPrice).toFixed(2)) : ((chk.targetPrice != null && isFinite(chk.targetPrice)) ? "$" + Number(chk.targetPrice).toFixed(2) : "N/A")
+
+  var tf = chk.setupTimeframe || ""
+  var desc = "**9/9 Rules Verified** on `" + tf + "` setup."
+
+  return JSON.stringify({
+    content: "@everyone 🚨 **The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]**",
+    embeds: [
+      {
+        title: "🚨 The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]",
+        description: desc,
+        color: color,
+        fields: [
+          { name: "Trigger", value: triggerStr, inline: true },
+          { name: "Stop", value: stopStr, inline: true },
+          { name: "Target", value: targetStr, inline: true }
+        ],
+        footer: { text: "Omafinance Strat Execution Engine" },
+        timestamp: new Date().toISOString()
+      }
+    ]
+  })
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -2959,7 +2991,8 @@ if (typeof module !== "undefined") {
     sortSectorBreadth: sortSectorBreadth,
     formatNetDelta: formatNetDelta,
     stratRuleRationales: stratRuleRationales,
-    evaluateStratChecklist: evaluateStratChecklist
+    evaluateStratChecklist: evaluateStratChecklist,
+    discordAlertPayload: discordAlertPayload
   }
 }
 

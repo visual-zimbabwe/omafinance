@@ -21,6 +21,7 @@ FloatingWindow {
     property bool syncTimeframe: false
     property bool syncCrosshair: true
     property bool syncTime: true
+    property string discordWebhook: ""
 
     property int activeCellIndex: 0
     property var cellSymbols: ["AAPL", "AAPL", "AAPL", "AAPL", "AAPL"]
@@ -211,6 +212,10 @@ FloatingWindow {
         id: stratSoundProc
     }
 
+    Process {
+        id: stratDiscordProc
+    }
+
     property var alertedSignals: ({})
 
     function notifyStratTradeable(chk) {
@@ -246,6 +251,15 @@ FloatingWindow {
 
         stratSoundProc.command = ["pw-play", "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"];
         stratSoundProc.running = true;
+
+        var webhook = root.discordWebhook;
+        if (webhook && webhook.indexOf("https://discord.com/api/webhooks/") === 0) {
+            var payload = Model.discordAlertPayload(chk);
+            if (payload) {
+                stratDiscordProc.command = ["curl", "-fsS", "-H", "Content-Type: application/json", "-X", "POST", "-d", payload, webhook];
+                stratDiscordProc.running = true;
+            }
+        }
     }
 
     Timer {
