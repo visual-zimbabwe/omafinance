@@ -1298,6 +1298,109 @@ test("discordAlertPayload formats TARGET_HIT and STOPPED events accurately", () 
   assert.match(stopPayload.embeds[0].description, /Stop-Loss Breached/)
 })
 
+test("resolveDominoHtfSignal correctly resolves HTF Strat signals across multi-bar patterns", () => {
+  // 1. 2D -> 2U Bullish Reversal
+  const dailyReversal = [
+    { open: 780, high: 785, low: 775, close: 782 },
+    { open: 782, high: 777.09, low: 765, close: 768 }, // 2D (high: 777.09)
+    { open: 768, high: 775, low: 767, close: 774 }      // current bar
+  ]
+  const dRes = Model.resolveDominoHtfSignal("Daily", true, dailyReversal)
+  assert.equal(dRes.signalName, "Daily 2d-2u Bullish Reversal")
+  assert.equal(dRes.scenarioTriggered, "2u")
+  assert.equal(dRes.isReversal, true)
+
+  // 2. 2U -> 2D Bearish Reversal
+  const dailyBearReversal = [
+    { open: 765, high: 770, low: 760, close: 768 },
+    { open: 768, high: 780, low: 772, close: 778 }, // 2U (low: 772)
+    { open: 778, high: 779, low: 774, close: 775 }  // current bar
+  ]
+  const bearRes = Model.resolveDominoHtfSignal("Daily", false, dailyBearReversal)
+  assert.equal(bearRes.signalName, "Daily 2u-2d Bearish Reversal")
+  assert.equal(bearRes.scenarioTriggered, "2d")
+  assert.equal(bearRes.isReversal, true)
+
+  // 3. 2D -> 1 -> 2U (2-1-2 Bullish Reversal)
+  const daily212 = [
+    { open: 790, high: 795, low: 780, close: 782 },
+    { open: 782, high: 778, low: 765, close: 768 }, // 2D
+    { open: 768, high: 775, low: 770, close: 772 }, // 1 (inside 778 - 765)
+    { open: 772, high: 776, low: 771, close: 774 }  // current
+  ]
+  const res212 = Model.resolveDominoHtfSignal("Daily", true, daily212)
+  assert.equal(res212.signalName, "Daily 2-1-2 Bullish Reversal")
+  assert.equal(res212.isReversal, true)
+})
+
+test("evaluateStratChecklist detects Domino Effect when LTF 60m target is HTF Daily 2d-2u trigger", () => {
+  // Setup: SPY 60m 2-1-2 Bullish setup targeting Daily High 777.09
+  // Day -3: 775 - 785
+  // Day -2 (p1D): 765 - 777.09 (2D)
+  // Day -1 (current): 769 - 775 (forming bar)
+  const daily = [
+    { timestamp: 100, open: 760, high: 780, low: 770, close: 778 },
+    { timestamp: 200, open: 778, high: 777.09, low: 765, close: 768 }, // 1D High = 777.09 (2D bar)
+    { timestamp: 300, open: 769, high: 775, low: 768, close: 774 }
+  ]
+
+  // Hourly: 2U -> 1 -> 2U
+  const hourly = [
+    { timestamp: 1000, open: 768, high: 772, low: 767, close: 771 }, // 2U
+    { timestamp: 2000, open: 771, high: 773.50, low: 770, close: 772 }, // 1 (Signal bar: high 773.50, low 770)
+    { timestamp: 3000, open: 772, high: 775, low: 771.50, close: 774.20 } // Triggered above 773.50
+  ]
+
+  const quote = { regularMarketPrice: 774.20 }
+  const res = Model.evaluateStratChecklist("SPY", hourly, daily, quote)
+
+  assert.equal(res.symbol, "SPY")
+  assert.equal(res.direction, "LONG")
+  assert.equal(res.setupTimeframe, "60")
+  assert.equal(res.isTradeable, true)
+  assert.equal(res.triggerPrice, 773.50)
+  assert.equal(res.targetPrice, 777.09)
+  assert.equal(res.targetName, "1D High")
+
+  // Verify Domino Effect detection
+  assert.ok(res.domino, "Domino object must be present")
+  assert.equal(res.domino.hasDomino, true)
+  assert.equal(res.domino.targetPrice, 777.09)
+  assert.equal(res.domino.targetName, "1D High")
+  assert.equal(res.domino.triggeredTimeframe, "1D")
+  assert.equal(res.domino.triggeredSignal, "Daily 2d-2u Bullish Reversal")
+  assert.equal(res.domino.isReversal, true)
+  assert.match(res.domino.summary, /Daily 2d-2u Bullish Reversal/)
+
+  // Verify enriched target list
+  assert.ok(res.targets.length >= 1)
+  assert.equal(res.targets[0].dominoSignal, "Daily 2d-2u Bullish Reversal")
+
+  // Verify Discord alert payload with Domino Cascade & Strat wisdom
+  const payloadJson = Model.discordAlertPayload(res, "TRIGGERED")
+  assert.ok(payloadJson)
+  const payload = JSON.parse(payloadJson)
+  assert.equal(payload.embeds.length, 1)
+
+  const embed = payload.embeds[0]
+  assert.match(embed.title, /SPY/)
+  assert.match(embed.description, /Throw the first punch/)
+  
+  // Check field presence: Entry Trigger, Structural Stop, Domino Cascade, FTFC, Guidelines
+  const fieldNames = embed.fields.map(f => f.name)
+  assert.ok(fieldNames.some(name => name.includes("Entry Trigger")))
+  assert.ok(fieldNames.some(name => name.includes("Structural Stop")))
+  assert.ok(fieldNames.some(name => name.includes("Domino Cascade")))
+  assert.ok(fieldNames.some(name => name.includes("Timeframe Continuity")))
+  assert.ok(fieldNames.some(name => name.includes("Strat Execution Guidelines")))
+
+  // Verify domino cascade field content
+  const dominoField = embed.fields.find(f => f.name.includes("Domino Cascade"))
+  assert.match(dominoField.value, /777\.09/)
+  assert.match(dominoField.value, /Daily 2d-2u Bullish Reversal/)
+})
+
+
 
 
 

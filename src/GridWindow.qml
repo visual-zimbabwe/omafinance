@@ -242,8 +242,13 @@ FloatingWindow {
                 parts.push(triggerStr);
             if (stopStr)
                 parts.push(stopStr);
-            if (targetStr)
-                parts.push("Target: " + targetStr);
+            if (targetStr) {
+                if (chk.domino && chk.domino.hasDomino) {
+                    parts.push("T1 (Domino): " + targetStr + " ➔ " + chk.domino.triggeredSignal);
+                } else {
+                    parts.push("Target: " + targetStr);
+                }
+            }
 
             body = "9/9 rules verified on " + chk.setupTimeframe + " setup.\n" + parts.join(" | ");
         }
@@ -253,7 +258,11 @@ FloatingWindow {
             title = "🎯 The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]";
             var tName = chk.targetName || "Target 1";
             var tPriceStr = chk.targetPrice != null ? (" $" + Number(chk.targetPrice).toFixed(2)) : "";
-            body = tName + tPriceStr + " reached on " + chk.setupTimeframe + " setup.\nExhaustion risk — take profit / trail stops.";
+            if (chk.domino && chk.domino.hasDomino) {
+                body = tName + tPriceStr + " reached!\n⚡ Domino Triggered: " + chk.domino.triggeredSignal + "\nMove stop to B/E & trail for " + (chk.domino.nextTargetName || "T2") + ".";
+            } else {
+                body = tName + tPriceStr + " reached on " + chk.setupTimeframe + " setup.\nExhaustion risk — take profit / trail stops.";
+            }
         }
         // 3. Stop Breached: was in-force / triggered, and now stopped out
         else if (chk.isStoppedOut && currentState === "TRIGGERED") {
