@@ -1398,6 +1398,9 @@ test("evaluateStratChecklist detects Domino Effect when LTF 60m target is HTF Da
   const dominoField = embed.fields.find(f => f.name.includes("Domino Cascade"))
   assert.match(dominoField.value, /777\.09/)
   assert.match(dominoField.value, /Daily 2d-2u Bullish Reversal/)
+
+  // Verify no emojis in payload
+  assert.ok(!/[\u{1F300}-\u{1F9FF}]/u.test(payloadJson), "Discord payload must contain no emojis")
 })
 
 

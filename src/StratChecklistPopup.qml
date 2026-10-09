@@ -125,7 +125,7 @@ Item {
             // Domino Cascade Indicator (if active)
             Text {
                 visible: root.checklistData && root.checklistData.domino && root.checklistData.domino.hasDomino
-                text: (root.checklistData && root.checklistData.domino) ? ("⚡ DOMINO: " + root.checklistData.domino.targetName + " ($" + Number(root.checklistData.domino.targetPrice).toFixed(2) + ") ➔ " + root.checklistData.domino.triggeredSignal) : ""
+                text: (root.checklistData && root.checklistData.domino) ? ("DOMINO: " + root.checklistData.domino.targetName + " ($" + Number(root.checklistData.domino.targetPrice).toFixed(2) + ") -> " + root.checklistData.domino.triggeredSignal) : ""
                 color: (Color.accent !== undefined) ? Color.accent : root.upColor
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall - 1

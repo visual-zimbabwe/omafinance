@@ -3161,27 +3161,27 @@ function discordAlertPayload(chk, eventType) {
 
   // 1. TRIGGERED / IN-FORCE ALERT
   if (type === "TRIGGERED") {
-    content = "@everyone 🚨 **The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]**"
-    title = "🚨 The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]"
+    content = "@everyone **The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]**"
+    title = "The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]"
     desc = "**9/9 Rules Verified** on `" + tf + "` setup (" + sigName + ").\n*\"Throw the first punch at the trigger — price action is mechanical.\"*"
 
-    fields.push({ name: "🎯 Entry Trigger", value: "`" + triggerStr + "`", inline: true })
-    fields.push({ name: "🛑 Structural Stop", value: "`" + stopStr + "`", inline: true })
+    fields.push({ name: "Entry Trigger", value: "`" + triggerStr + "`", inline: true })
+    fields.push({ name: "Structural Stop", value: "`" + stopStr + "`", inline: true })
     if (rrStr !== "N/A") {
-      fields.push({ name: "📊 Risk : Reward", value: "`" + rrStr + "`", inline: true })
+      fields.push({ name: "Risk : Reward", value: "`" + rrStr + "`", inline: true })
     }
 
     // Domino Cascade Section
     if (chk.domino && chk.domino.hasDomino) {
       var dLines = [
-        "🎯 **Target 1 (Intraday):** `" + targetStr + "`",
-        "↳ ⚡ **Mechanical Catalyst:** Triggers **" + chk.domino.triggeredSignal + "**"
+        "Target 1 (Intraday): `" + targetStr + "`",
+        "↳ Catalyst: Triggers **" + chk.domino.triggeredSignal + "**"
       ]
       if (chk.domino.nextTargetName && chk.domino.nextTargetPrice != null) {
-        dLines.push("↳ 🚀 **Macro Target 2:** `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "` (HTF Magnitude)")
+        dLines.push("↳ Macro Target 2: `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "` (HTF Magnitude)")
       }
       fields.push({
-        name: "⚡ The Domino Cascade (LTF ➔ HTF)",
+        name: "The Domino Cascade (LTF -> HTF)",
         value: dLines.join("\n"),
         inline: false
       })
@@ -3189,23 +3189,23 @@ function discordAlertPayload(chk, eventType) {
       var tItems = []
       for (var i = 0; i < chk.targets.length; i++) {
         var t = chk.targets[i]
-        tItems.push((i === 0 ? "🎯 **T1:** " : "🎯 **T" + (i + 1) + ":** ") + "`" + t.name + " $" + Number(t.price).toFixed(2) + "`")
+        tItems.push((i === 0 ? "T1: " : "T" + (i + 1) + ": ") + "`" + t.name + " $" + Number(t.price).toFixed(2) + "`")
       }
       fields.push({
-        name: "🎯 Magnitude Targets",
+        name: "Magnitude Targets",
         value: tItems.join("  •  "),
         inline: false
       })
     } else {
-      fields.push({ name: "🎯 Target", value: "`" + targetStr + "`", inline: false })
+      fields.push({ name: "Target", value: "`" + targetStr + "`", inline: false })
     }
 
     // FTFC Alignment
     if (chk.ftfcSummary) {
       var f = chk.ftfcSummary
-      var cMap = { "G": "🟢 Green", "R": "🔴 Red", "-": "⚪ Flat" }
+      var cMap = { "G": "Green", "R": "Red", "-": "Flat" }
       fields.push({
-        name: "🌐 Timeframe Continuity (FTFC)",
+        name: "Timeframe Continuity (FTFC)",
         value: "1M: `" + (cMap[f.m] || f.m) + "` | 1W: `" + (cMap[f.w] || f.w) + "` | 1D: `" + (cMap[f.d] || f.d) + "` | 60m: `" + (cMap[f.h60] || f.h60) + "`",
         inline: false
       })
@@ -3213,54 +3213,54 @@ function discordAlertPayload(chk, eventType) {
 
     // Strat Golden Nuggets
     fields.push({
-      name: "💡 Strat Execution Guidelines",
-      value: "• **First Punch:** Take the offer the instant the trigger breaches by $0.01 on a live candle.\n• **Breakeven Rule:** Once Target 1 is tagged, move stop to breakeven — never let green go red.\n• **Instant Test:** Valid signals must go immediately. If price stalls, get off the bus.",
+      name: "Strat Execution Guidelines",
+      value: "* First Punch: Take the offer the instant the trigger breaches by $0.01 on a live candle.\n* Breakeven Rule: Once Target 1 is tagged, move stop to breakeven — never let green go red.\n* Instant Test: Valid signals must go immediately. If price stalls, get off the bus.",
       inline: false
     })
   }
   // 2. TARGET HIT EVENT
   else if (type === "TARGET_HIT") {
-    content = "@everyone 🎯 **The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]**"
-    title = "🎯 The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]"
+    content = "@everyone **The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]**"
+    title = "The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]"
 
     if (chk.domino && chk.domino.hasDomino) {
       desc = "**Target Reached (" + (chk.targetName || "T1") + ")** on `" + tf + "` setup. Exhaustion risk — take profit / trail stop.\n\n" +
-             "⚡ **DOMINO TRIGGER ACTIVATED:** Breaching this level puts **" + chk.domino.triggeredSignal + "** in-force!" +
-             (chk.domino.nextTargetName ? ("\n🚀 **Next Objective (T2):** `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "`") : "") +
+             "DOMINO TRIGGER ACTIVATED: Breaching this level puts **" + chk.domino.triggeredSignal + "** in-force!" +
+             (chk.domino.nextTargetName ? ("\nMacro Target 2: `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "`") : "") +
              "\n\n*\"Move stop to breakeven. Let remaining runners pursue macro magnitude with house money.\"*"
     } else {
       desc = "**Target Reached (" + (chk.targetName || "T1") + ")** on `" + tf + "` setup. Exhaustion risk — take profit / trail stop.\n\n*\"Pivots clear trapped participants — secure profit at magnitude.\"*"
     }
 
-    fields.push({ name: "🎯 Tagged Target", value: "`" + targetStr + "`", inline: true })
-    fields.push({ name: "🛡️ Stop Adjustment", value: "`Move Stop to Breakeven (" + triggerStr + ")`", inline: true })
+    fields.push({ name: "Tagged Target", value: "`" + targetStr + "`", inline: true })
+    fields.push({ name: "Stop Adjustment", value: "`Move Stop to Breakeven (" + triggerStr + ")`", inline: true })
 
     if (chk.domino && chk.domino.hasDomino && chk.domino.nextTargetName) {
       fields.push({
-        name: "🚀 Macro Domino Follow-Through",
-        value: "Breached **" + chk.targetName + "** ignites **" + chk.domino.triggeredSignal + "** ➔ Macro Target 2: `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "`",
+        name: "Macro Domino Follow-Through",
+        value: "Breached **" + chk.targetName + "** ignites **" + chk.domino.triggeredSignal + "** -> Macro Target 2: `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "`",
         inline: false
       })
     }
 
     fields.push({
-      name: "💡 Strat Target Protocol",
-      value: "• **Take Profit at Magnitude:** Pivots clear trapped participants — exit primary size at target.\n• **Lock the Win:** Never allow a green trade to become a loser after touching Target 1.",
+      name: "Strat Target Protocol",
+      value: "* Take Profit at Magnitude: Pivots clear trapped participants — exit primary size at target.\n* Lock the Win: Never allow a green trade to become a loser after touching Target 1.",
       inline: false
     })
   }
   // 3. STOPPED / INVALIDATED EVENT
   else if (type === "STOPPED") {
-    content = "@everyone 🛑 **The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]**"
-    title = "🛑 The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]"
+    content = "@everyone **The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]**"
+    title = "The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]"
     desc = "**Stop-Loss Breached** on `" + tf + "` setup.\n\n*\"Tuition paid at a stop is data, not personal failure. When the thesis dies, get off the bus immediately.\"*"
 
-    fields.push({ name: "🛑 Stop Breached", value: "`" + stopStr + "`", inline: true })
-    fields.push({ name: "🎯 Entry Trigger Was", value: "`" + triggerStr + "`", inline: true })
+    fields.push({ name: "Stop Breached", value: "`" + stopStr + "`", inline: true })
+    fields.push({ name: "Entry Trigger Was", value: "`" + triggerStr + "`", inline: true })
 
     fields.push({
-      name: "💡 Strat Risk Discipline",
-      value: "• **Stops are Structural:** The trade's logic failed at this extreme. Do not widen stops or average down.\n• **Wait for Fresh Setups:** Reclaim failures often spark the opposite move — wait for a new actionable signal.",
+      name: "Strat Risk Discipline",
+      value: "* Stops are Structural: The trade's logic failed at this extreme. Do not widen stops or average down.\n* Wait for Fresh Setups: Reclaim failures often spark the opposite move — wait for a new actionable signal.",
       inline: false
     })
   }
