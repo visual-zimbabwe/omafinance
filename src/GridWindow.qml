@@ -244,7 +244,7 @@ FloatingWindow {
                 parts.push(stopStr);
             if (targetStr) {
                 if (chk.domino && chk.domino.hasDomino) {
-                    parts.push("T1 (Domino): " + targetStr + " ➔ " + chk.domino.triggeredSignal);
+                    parts.push("T1 (Domino): " + targetStr + " -> " + chk.domino.triggeredSignal);
                 } else {
                     parts.push("Target: " + targetStr);
                 }
@@ -255,11 +255,11 @@ FloatingWindow {
         // 2. Target Hit: was in-force / triggered, and now reached target
         else if (chk.isTargetHit && currentState === "TRIGGERED") {
             eventType = "TARGET_HIT";
-            title = "🎯 The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]";
+            title = "The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]";
             var tName = chk.targetName || "Target 1";
             var tPriceStr = chk.targetPrice != null ? (" $" + Number(chk.targetPrice).toFixed(2)) : "";
             if (chk.domino && chk.domino.hasDomino) {
-                body = tName + tPriceStr + " reached!\n⚡ Domino Triggered: " + chk.domino.triggeredSignal + "\nMove stop to B/E & trail for " + (chk.domino.nextTargetName || "T2") + ".";
+                body = tName + tPriceStr + " reached!\nDomino Triggered: " + chk.domino.triggeredSignal + "\nMove stop to B/E & trail for " + (chk.domino.nextTargetName || "T2") + ".";
             } else {
                 body = tName + tPriceStr + " reached on " + chk.setupTimeframe + " setup.\nExhaustion risk — take profit / trail stops.";
             }
@@ -267,7 +267,7 @@ FloatingWindow {
         // 3. Stop Breached: was in-force / triggered, and now stopped out
         else if (chk.isStoppedOut && currentState === "TRIGGERED") {
             eventType = "STOPPED";
-            title = "🛑 The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]";
+            title = "The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]";
             var sPriceStr = chk.stopPrice != null ? (" $" + Number(chk.stopPrice).toFixed(2)) : "";
             body = "Stop-loss" + sPriceStr + " breached on " + chk.setupTimeframe + " setup.";
         }
