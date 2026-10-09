@@ -2663,6 +2663,78 @@ function stratRuleRationales() {
   }
 }
 
+function resolveDominoHtfSignal(tfLabel, isLong, candles) {
+  if (!Array.isArray(candles) || candles.length < 2) return null
+  var n = candles.length
+  var p1 = candles[n - 2]
+  var p2 = n >= 3 ? candles[n - 3] : null
+  var p3 = n >= 4 ? candles[n - 4] : null
+
+  var sc_prev = p2 ? stratScenario(p1, p2) : null
+  var signalName = ""
+  var scenarioTriggered = isLong ? "2u" : "2d"
+  var isReversal = false
+
+  if (isLong) {
+    if (sc_prev === "2d") {
+      signalName = tfLabel + " 2d-2u Bullish Reversal"
+      isReversal = true
+    } else if (sc_prev === "1") {
+      var sc_p2 = (p3 && p2) ? stratScenario(p2, p3) : null
+      if (sc_p2 === "2d") {
+        signalName = tfLabel + " 2-1-2 Bullish Reversal"
+        isReversal = true
+      } else if (sc_p2 === "2u") {
+        signalName = tfLabel + " 2-1-2 Bullish Continuation"
+      } else if (sc_p2 === "3") {
+        signalName = tfLabel + " 3-1-2 Bullish Reversal"
+        isReversal = true
+      } else {
+        signalName = tfLabel + " Inside Break (1-2u Up)"
+      }
+    } else if (sc_prev === "2u") {
+      signalName = tfLabel + " 2-2 Bullish Continuation"
+    } else if (sc_prev === "3") {
+      signalName = tfLabel + " 3-2 Bullish Continuation"
+    } else {
+      signalName = tfLabel + " 2u Break"
+    }
+  } else {
+    // Short / Bearish
+    if (sc_prev === "2u") {
+      signalName = tfLabel + " 2u-2d Bearish Reversal"
+      isReversal = true
+    } else if (sc_prev === "1") {
+      var sc_p2_bear = (p3 && p2) ? stratScenario(p2, p3) : null
+      if (sc_p2_bear === "2u") {
+        signalName = tfLabel + " 2-1-2 Bearish Reversal"
+        isReversal = true
+      } else if (sc_p2_bear === "2d") {
+        signalName = tfLabel + " 2-1-2 Bearish Continuation"
+      } else if (sc_p2_bear === "3") {
+        signalName = tfLabel + " 3-1-2 Bearish Reversal"
+        isReversal = true
+      } else {
+        signalName = tfLabel + " Inside Break (1-2d Down)"
+      }
+    } else if (sc_prev === "2d") {
+      signalName = tfLabel + " 2-2 Bearish Continuation"
+    } else if (sc_prev === "3") {
+      signalName = tfLabel + " 3-2 Bearish Continuation"
+    } else {
+      signalName = tfLabel + " 2d Break"
+    }
+  }
+
+  return {
+    timeframe: tfLabel,
+    signalName: signalName,
+    scenarioTriggered: scenarioTriggered,
+    priorScenario: sc_prev,
+    isReversal: isReversal
+  }
+}
+
 function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, nowDate) {
   var sym = normalizeSymbol(symbol)
   var hourly = Array.isArray(hourlyCandles) ? hourlyCandles : []
@@ -2787,45 +2859,126 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var r6Pass = (sc60 !== "1")
   var r6Detail = "60m Bar: Scenario " + sc60.toUpperCase() + (sc60 === "1" ? " (Consolidation Chop)" : " (In-Force)")
 
-  // 7. Untagged HTF Targets — Lock T1 relative to signal/trigger at inception
+  // 7. Untagged HTF Targets & Domino Effect Resolution
   var targetPrice = null
   var targetName = ""
   var targets = []
   if (isLong) {
     if (setupTf === "60" && p1D && triggerPrice !== null && Number(p1D.high) > triggerPrice) {
-      targets.push({ name: "1D High", price: Number(p1D.high) })
+      var dDom = resolveDominoHtfSignal("Daily", true, daily)
+      targets.push({
+        name: "1D High",
+        price: Number(p1D.high),
+        timeframe: "1D",
+        dominoSignal: dDom ? dDom.signalName : null,
+        dominoScenario: dDom ? dDom.scenarioTriggered : null,
+        isReversal: dDom ? dDom.isReversal : false
+      })
     }
     if (p1W && triggerPrice !== null && Number(p1W.high) > triggerPrice) {
-      targets.push({ name: "1W High", price: Number(p1W.high) })
+      var wDom = resolveDominoHtfSignal("Weekly", true, weekly)
+      targets.push({
+        name: "1W High",
+        price: Number(p1W.high),
+        timeframe: "1W",
+        dominoSignal: wDom ? wDom.signalName : null,
+        dominoScenario: wDom ? wDom.scenarioTriggered : null,
+        isReversal: wDom ? wDom.isReversal : false
+      })
     }
     if (p1M && triggerPrice !== null && Number(p1M.high) > triggerPrice) {
-      targets.push({ name: "1M High", price: Number(p1M.high) })
+      var mDom = resolveDominoHtfSignal("Monthly", true, monthly)
+      targets.push({
+        name: "1M High",
+        price: Number(p1M.high),
+        timeframe: "1M",
+        dominoSignal: mDom ? mDom.signalName : null,
+        dominoScenario: mDom ? mDom.scenarioTriggered : null,
+        isReversal: mDom ? mDom.isReversal : false
+      })
     }
     if (targets.length === 0) {
-      if (p1D && Number(p1D.high) > 0) targets.push({ name: "1D High", price: Number(p1D.high) })
-      else if (p1W && Number(p1W.high) > 0) targets.push({ name: "1W High", price: Number(p1W.high) })
-      else if (p1M && Number(p1M.high) > 0) targets.push({ name: "1M High", price: Number(p1M.high) })
+      if (p1D && Number(p1D.high) > 0) {
+        var dDom0 = resolveDominoHtfSignal("Daily", true, daily)
+        targets.push({ name: "1D High", price: Number(p1D.high), timeframe: "1D", dominoSignal: dDom0 ? dDom0.signalName : null, isReversal: dDom0 ? dDom0.isReversal : false })
+      } else if (p1W && Number(p1W.high) > 0) {
+        var wDom0 = resolveDominoHtfSignal("Weekly", true, weekly)
+        targets.push({ name: "1W High", price: Number(p1W.high), timeframe: "1W", dominoSignal: wDom0 ? wDom0.signalName : null, isReversal: wDom0 ? wDom0.isReversal : false })
+      } else if (p1M && Number(p1M.high) > 0) {
+        var mDom0 = resolveDominoHtfSignal("Monthly", true, monthly)
+        targets.push({ name: "1M High", price: Number(p1M.high), timeframe: "1M", dominoSignal: mDom0 ? mDom0.signalName : null, isReversal: mDom0 ? mDom0.isReversal : false })
+      }
     }
   } else {
+    // Bearish / Short
     if (setupTf === "60" && p1D && triggerPrice !== null && Number(p1D.low) < triggerPrice) {
-      targets.push({ name: "1D Low", price: Number(p1D.low) })
+      var dDomBear = resolveDominoHtfSignal("Daily", false, daily)
+      targets.push({
+        name: "1D Low",
+        price: Number(p1D.low),
+        timeframe: "1D",
+        dominoSignal: dDomBear ? dDomBear.signalName : null,
+        dominoScenario: dDomBear ? dDomBear.scenarioTriggered : null,
+        isReversal: dDomBear ? dDomBear.isReversal : false
+      })
     }
     if (p1W && triggerPrice !== null && Number(p1W.low) < triggerPrice) {
-      targets.push({ name: "1W Low", price: Number(p1W.low) })
+      var wDomBear = resolveDominoHtfSignal("Weekly", false, weekly)
+      targets.push({
+        name: "1W Low",
+        price: Number(p1W.low),
+        timeframe: "1W",
+        dominoSignal: wDomBear ? wDomBear.signalName : null,
+        dominoScenario: wDomBear ? wDomBear.scenarioTriggered : null,
+        isReversal: wDomBear ? wDomBear.isReversal : false
+      })
     }
     if (p1M && triggerPrice !== null && Number(p1M.low) < triggerPrice) {
-      targets.push({ name: "1M Low", price: Number(p1M.low) })
+      var mDomBear = resolveDominoHtfSignal("Monthly", false, monthly)
+      targets.push({
+        name: "1M Low",
+        price: Number(p1M.low),
+        timeframe: "1M",
+        dominoSignal: mDomBear ? mDomBear.signalName : null,
+        dominoScenario: mDomBear ? mDomBear.scenarioTriggered : null,
+        isReversal: mDomBear ? mDomBear.isReversal : false
+      })
     }
     if (targets.length === 0) {
-      if (p1D && Number(p1D.low) > 0) targets.push({ name: "1D Low", price: Number(p1D.low) })
-      else if (p1W && Number(p1W.low) > 0) targets.push({ name: "1W Low", price: Number(p1W.low) })
-      else if (p1M && Number(p1M.low) > 0) targets.push({ name: "1M Low", price: Number(p1M.low) })
+      if (p1D && Number(p1D.low) > 0) {
+        var dDomBear0 = resolveDominoHtfSignal("Daily", false, daily)
+        targets.push({ name: "1D Low", price: Number(p1D.low), timeframe: "1D", dominoSignal: dDomBear0 ? dDomBear0.signalName : null, isReversal: dDomBear0 ? dDomBear0.isReversal : false })
+      } else if (p1W && Number(p1W.low) > 0) {
+        var wDomBear0 = resolveDominoHtfSignal("Weekly", false, weekly)
+        targets.push({ name: "1W Low", price: Number(p1W.low), timeframe: "1W", dominoSignal: wDomBear0 ? wDomBear0.signalName : null, isReversal: wDomBear0 ? wDomBear0.isReversal : false })
+      } else if (p1M && Number(p1M.low) > 0) {
+        var mDomBear0 = resolveDominoHtfSignal("Monthly", false, monthly)
+        targets.push({ name: "1M Low", price: Number(p1M.low), timeframe: "1M", dominoSignal: mDomBear0 ? mDomBear0.signalName : null, isReversal: mDomBear0 ? mDomBear0.isReversal : false })
+      }
     }
   }
 
   if (targets.length > 0) {
     targetPrice = targets[0].price
     targetName = targets[0].name
+  }
+
+  var domino = null
+  if (targets.length > 0 && targets[0].dominoSignal) {
+    var t1 = targets[0]
+    var t2 = targets.length > 1 ? targets[1] : null
+    domino = {
+      hasDomino: true,
+      targetName: t1.name,
+      targetPrice: t1.price,
+      triggeredTimeframe: t1.timeframe || "1D",
+      triggeredSignal: t1.dominoSignal,
+      triggeredScenario: t1.dominoScenario,
+      isReversal: Boolean(t1.isReversal),
+      nextTargetName: t2 ? t2.name : null,
+      nextTargetPrice: (t2 && t2.price != null) ? t2.price : null,
+      summary: t1.name + " ($" + t1.price.toFixed(2) + ") ➔ Triggers " + t1.dominoSignal + (t2 ? (" ➔ Next Target: " + t2.name + " ($" + Number(t2.price).toFixed(2) + ")") : "")
+    }
   }
 
   // Check Target Hit & Invalidation
@@ -2858,7 +3011,11 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var r4Detail = "Fresh setup, no exhaustion"
   if (isTargetHit) {
     r4Pass = false
-    r4Detail = "Target reached (" + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + ") — exhaustion risk"
+    if (domino && domino.hasDomino) {
+      r4Detail = "Target reached (" + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + ") — Triggered " + domino.triggeredSignal + "! Exhaustion risk on " + setupTf + "."
+    } else {
+      r4Detail = "Target reached (" + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + ") — exhaustion risk"
+    }
   } else if (c60) {
     var isOpposingWick = isLong ? (col60 === "R") : (col60 === "G")
     if (isOpposingWick) {
@@ -2871,16 +3028,29 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var r7Detail = "No untagged HTF target found"
   if (isTargetHit) {
     r7Pass = false
-    r7Detail = "Target reached: " + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + " (Exhausted)"
+    if (domino && domino.hasDomino) {
+      r7Detail = "Target reached: " + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + " ➔ " + domino.triggeredSignal + " (Exhausted on " + setupTf + ")"
+    } else {
+      r7Detail = "Target reached: " + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + " (Exhausted)"
+    }
   } else if (targetPrice !== null && stopPrice !== null && currentPrice !== null) {
     var reward = Math.abs(targetPrice - currentPrice)
     var risk = Math.abs(currentPrice - stopPrice)
     var rr = risk > 0 ? (reward / risk) : 0
     r7Pass = (reward > 0)
-    r7Detail = "Target: " + targetName + " $" + targetPrice.toFixed(2) + " (Room: $" + reward.toFixed(2) + ", R:R 1:" + rr.toFixed(1) + ")"
+    if (domino && domino.hasDomino) {
+      var nextStr = domino.nextTargetName ? (" ➔ T2: " + domino.nextTargetName + " $" + Number(domino.nextTargetPrice).toFixed(2)) : ""
+      r7Detail = "T1: " + targetName + " $" + targetPrice.toFixed(2) + " [Triggers " + domino.triggeredSignal + "]" + nextStr + " (Room: $" + reward.toFixed(2) + ", R:R 1:" + rr.toFixed(1) + ")"
+    } else {
+      r7Detail = "Target: " + targetName + " $" + targetPrice.toFixed(2) + " (Room: $" + reward.toFixed(2) + ", R:R 1:" + rr.toFixed(1) + ")"
+    }
   } else if (targetPrice !== null) {
     r7Pass = true
-    r7Detail = "Target: " + targetName + " $" + targetPrice.toFixed(2)
+    if (domino && domino.hasDomino) {
+      r7Detail = "T1: " + targetName + " $" + targetPrice.toFixed(2) + " [Triggers " + domino.triggeredSignal + "]"
+    } else {
+      r7Detail = "Target: " + targetName + " $" + targetPrice.toFixed(2)
+    }
   }
 
   // 8. Stop-Loss Anchored to Signal TF
@@ -2896,7 +3066,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
 
   // 9. Runway Quality
   var r9Pass = r7Pass
-  var r9Detail = r9Pass ? ("Runway clear toward " + targetName) : "Opposing pivot blocks path or target untagged"
+  var r9Detail = r9Pass ? (domino && domino.hasDomino ? ("Runway clear toward " + targetName + " (Catalyst for " + domino.triggeredSignal + ")") : ("Runway clear toward " + targetName)) : "Opposing pivot blocks path or target untagged"
 
   var rationales = stratRuleRationales()
 
@@ -2928,6 +3098,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     symbol: sym,
     direction: direction,
     setupTimeframe: setupTf,
+    signalName: signalName,
     signalCandleTimestamp: signalCandleTimestamp,
     passedCount: passedCount,
     totalRules: rules.length,
@@ -2941,7 +3112,15 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     targetPrice: isFinite(targetPrice) ? targetPrice : null,
     targetName: targetName,
     targets: targets,
+    domino: domino,
     stopPrice: isFinite(stopPrice) ? stopPrice : null,
+    ftfcSummary: {
+      m: col1M,
+      w: col1W,
+      d: col1D,
+      h60: col60,
+      isFTFC: isBullishFTFC || isBearishFTFC
+    },
     rules: rules
   }
 }
@@ -2949,28 +3128,141 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
 function discordAlertPayload(chk, eventType) {
   if (!chk || !chk.symbol || !chk.direction) return null
   var isBull = chk.direction === "BULLISH" || chk.direction === "LONG"
-  var color = isBull ? 3066993 : 15158332
-  var triggerStr = (chk.triggerPrice != null && isFinite(chk.triggerPrice)) ? ("$" + Number(chk.triggerPrice).toFixed(2)) : "N/A"
-  var stopStr = (chk.stopPrice != null && isFinite(chk.stopPrice)) ? ("$" + Number(chk.stopPrice).toFixed(2)) : "N/A"
-  var targetStr = (chk.targetPrice != null && isFinite(chk.targetPrice) && chk.targetName) ? (chk.targetName + " $" + Number(chk.targetPrice).toFixed(2)) : ((chk.targetPrice != null && isFinite(chk.targetPrice)) ? "$" + Number(chk.targetPrice).toFixed(2) : "N/A")
-
-  var tf = chk.setupTimeframe || ""
+  var tf = chk.setupTimeframe || "60"
   var type = eventType || "TRIGGERED"
 
-  var content = "@everyone 🚨 **The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]**"
-  var title = "🚨 The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]"
-  var desc = "**9/9 Rules Verified** on `" + tf + "` setup."
+  var color = isBull ? 3066993 : 15158332
+  if (type === "TARGET_HIT") color = 3066993
+  else if (type === "STOPPED") color = 15158332
 
-  if (type === "TARGET_HIT") {
+  var triggerStr = (chk.triggerPrice != null && isFinite(chk.triggerPrice)) ? ("$" + Number(chk.triggerPrice).toFixed(2)) : "N/A"
+  var stopStr = (chk.stopPrice != null && isFinite(chk.stopPrice)) ? ("$" + Number(chk.stopPrice).toFixed(2)) : "N/A"
+  var targetStr = (chk.targetPrice != null && isFinite(chk.targetPrice) && chk.targetName)
+    ? (chk.targetName + " $" + Number(chk.targetPrice).toFixed(2))
+    : ((chk.targetPrice != null && isFinite(chk.targetPrice)) ? "$" + Number(chk.targetPrice).toFixed(2) : "N/A")
+
+  var sigName = chk.signalName && chk.signalName !== "-" ? chk.signalName : (tf + " Actionable Setup")
+
+  var content = ""
+  var title = ""
+  var desc = ""
+  var fields = []
+
+  // Risk / Reward Ratio Calculation
+  var rrStr = "N/A"
+  if (chk.triggerPrice != null && chk.stopPrice != null && chk.targetPrice != null && isFinite(chk.triggerPrice) && isFinite(chk.stopPrice) && isFinite(chk.targetPrice)) {
+    var risk = Math.abs(chk.triggerPrice - chk.stopPrice)
+    var reward = Math.abs(chk.targetPrice - chk.triggerPrice)
+    if (risk > 0.0001) {
+      var ratio = reward / risk
+      rrStr = "1 : " + ratio.toFixed(1) + " (Risk: $" + risk.toFixed(2) + " | T1: $" + reward.toFixed(2) + ")"
+    }
+  }
+
+  // 1. TRIGGERED / IN-FORCE ALERT
+  if (type === "TRIGGERED") {
+    content = "@everyone 🚨 **The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]**"
+    title = "🚨 The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]"
+    desc = "**9/9 Rules Verified** on `" + tf + "` setup (" + sigName + ").\n*\"Throw the first punch at the trigger — price action is mechanical.\"*"
+
+    fields.push({ name: "🎯 Entry Trigger", value: "`" + triggerStr + "`", inline: true })
+    fields.push({ name: "🛑 Structural Stop", value: "`" + stopStr + "`", inline: true })
+    if (rrStr !== "N/A") {
+      fields.push({ name: "📊 Risk : Reward", value: "`" + rrStr + "`", inline: true })
+    }
+
+    // Domino Cascade Section
+    if (chk.domino && chk.domino.hasDomino) {
+      var dLines = [
+        "🎯 **Target 1 (Intraday):** `" + targetStr + "`",
+        "↳ ⚡ **Mechanical Catalyst:** Triggers **" + chk.domino.triggeredSignal + "**"
+      ]
+      if (chk.domino.nextTargetName && chk.domino.nextTargetPrice != null) {
+        dLines.push("↳ 🚀 **Macro Target 2:** `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "` (HTF Magnitude)")
+      }
+      fields.push({
+        name: "⚡ The Domino Cascade (LTF ➔ HTF)",
+        value: dLines.join("\n"),
+        inline: false
+      })
+    } else if (chk.targets && chk.targets.length > 0) {
+      var tItems = []
+      for (var i = 0; i < chk.targets.length; i++) {
+        var t = chk.targets[i]
+        tItems.push((i === 0 ? "🎯 **T1:** " : "🎯 **T" + (i + 1) + ":** ") + "`" + t.name + " $" + Number(t.price).toFixed(2) + "`")
+      }
+      fields.push({
+        name: "🎯 Magnitude Targets",
+        value: tItems.join("  •  "),
+        inline: false
+      })
+    } else {
+      fields.push({ name: "🎯 Target", value: "`" + targetStr + "`", inline: false })
+    }
+
+    // FTFC Alignment
+    if (chk.ftfcSummary) {
+      var f = chk.ftfcSummary
+      var cMap = { "G": "🟢 Green", "R": "🔴 Red", "-": "⚪ Flat" }
+      fields.push({
+        name: "🌐 Timeframe Continuity (FTFC)",
+        value: "1M: `" + (cMap[f.m] || f.m) + "` | 1W: `" + (cMap[f.w] || f.w) + "` | 1D: `" + (cMap[f.d] || f.d) + "` | 60m: `" + (cMap[f.h60] || f.h60) + "`",
+        inline: false
+      })
+    }
+
+    // Strat Golden Nuggets
+    fields.push({
+      name: "💡 Strat Execution Guidelines",
+      value: "• **First Punch:** Take the offer the instant the trigger breaches by $0.01 on a live candle.\n• **Breakeven Rule:** Once Target 1 is tagged, move stop to breakeven — never let green go red.\n• **Instant Test:** Valid signals must go immediately. If price stalls, get off the bus.",
+      inline: false
+    })
+  }
+  // 2. TARGET HIT EVENT
+  else if (type === "TARGET_HIT") {
     content = "@everyone 🎯 **The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]**"
     title = "🎯 The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]"
-    desc = "**Target Reached (" + (chk.targetName || "T1") + ")** on `" + tf + "` setup. Exhaustion risk — take profit / trail stop."
-    color = 3066993
-  } else if (type === "STOPPED") {
+
+    if (chk.domino && chk.domino.hasDomino) {
+      desc = "**Target Reached (" + (chk.targetName || "T1") + ")** on `" + tf + "` setup. Exhaustion risk — take profit / trail stop.\n\n" +
+             "⚡ **DOMINO TRIGGER ACTIVATED:** Breaching this level puts **" + chk.domino.triggeredSignal + "** in-force!" +
+             (chk.domino.nextTargetName ? ("\n🚀 **Next Objective (T2):** `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "`") : "") +
+             "\n\n*\"Move stop to breakeven. Let remaining runners pursue macro magnitude with house money.\"*"
+    } else {
+      desc = "**Target Reached (" + (chk.targetName || "T1") + ")** on `" + tf + "` setup. Exhaustion risk — take profit / trail stop.\n\n*\"Pivots clear trapped participants — secure profit at magnitude.\"*"
+    }
+
+    fields.push({ name: "🎯 Tagged Target", value: "`" + targetStr + "`", inline: true })
+    fields.push({ name: "🛡️ Stop Adjustment", value: "`Move Stop to Breakeven (" + triggerStr + ")`", inline: true })
+
+    if (chk.domino && chk.domino.hasDomino && chk.domino.nextTargetName) {
+      fields.push({
+        name: "🚀 Macro Domino Follow-Through",
+        value: "Breached **" + chk.targetName + "** ignites **" + chk.domino.triggeredSignal + "** ➔ Macro Target 2: `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "`",
+        inline: false
+      })
+    }
+
+    fields.push({
+      name: "💡 Strat Target Protocol",
+      value: "• **Take Profit at Magnitude:** Pivots clear trapped participants — exit primary size at target.\n• **Lock the Win:** Never allow a green trade to become a loser after touching Target 1.",
+      inline: false
+    })
+  }
+  // 3. STOPPED / INVALIDATED EVENT
+  else if (type === "STOPPED") {
     content = "@everyone 🛑 **The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]**"
     title = "🛑 The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]"
-    desc = "**Stop-Loss Breached** on `" + tf + "` setup."
-    color = 15158332
+    desc = "**Stop-Loss Breached** on `" + tf + "` setup.\n\n*\"Tuition paid at a stop is data, not personal failure. When the thesis dies, get off the bus immediately.\"*"
+
+    fields.push({ name: "🛑 Stop Breached", value: "`" + stopStr + "`", inline: true })
+    fields.push({ name: "🎯 Entry Trigger Was", value: "`" + triggerStr + "`", inline: true })
+
+    fields.push({
+      name: "💡 Strat Risk Discipline",
+      value: "• **Stops are Structural:** The trade's logic failed at this extreme. Do not widen stops or average down.\n• **Wait for Fresh Setups:** Reclaim failures often spark the opposite move — wait for a new actionable signal.",
+      inline: false
+    })
   }
 
   return JSON.stringify({
@@ -2980,12 +3272,8 @@ function discordAlertPayload(chk, eventType) {
         title: title,
         description: desc,
         color: color,
-        fields: [
-          { name: "Trigger", value: triggerStr, inline: true },
-          { name: "Stop", value: stopStr, inline: true },
-          { name: "Target", value: targetStr, inline: true }
-        ],
-        footer: { text: "Omafinance Strat Execution Engine" },
+        fields: fields,
+        footer: { text: "Omafinance Strat Execution Engine • Rob Smith Universal Principles" },
         timestamp: new Date().toISOString()
       }
     ]
@@ -3087,6 +3375,7 @@ if (typeof module !== "undefined") {
     sortSectorBreadth: sortSectorBreadth,
     formatNetDelta: formatNetDelta,
     stratRuleRationales: stratRuleRationales,
+    resolveDominoHtfSignal: resolveDominoHtfSignal,
     evaluateStratChecklist: evaluateStratChecklist,
     discordAlertPayload: discordAlertPayload
   }
