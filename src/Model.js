@@ -1505,6 +1505,154 @@ function stratScenario(current, prev) {
   return "1"
 }
 
+function computeStratBinaryDetails(candles, liveQuote) {
+  if (!candles || candles.length < 2) {
+    return {
+      bits: "------",
+      color: "muted",
+      tooltip: "Insufficient candle data",
+      signalType: null
+    }
+  }
+  var n = candles.length
+  var cur = candles[n - 1]
+  var p1 = candles[n - 2]
+  var p2 = n >= 3 ? candles[n - 3] : null
+  var p3 = n >= 4 ? candles[n - 4] : null
+
+  var curOpen = Number(cur.open)
+  var curHigh = Number(cur.high)
+  var curLow = Number(cur.low)
+  var curClose = Number(cur.close)
+  if (liveQuote && isFinite(Number(liveQuote.price))) {
+    curClose = Number(liveQuote.price)
+    if (isFinite(Number(liveQuote.dayHigh)) && Number(liveQuote.dayHigh) > curHigh) curHigh = Number(liveQuote.dayHigh)
+    if (isFinite(Number(liveQuote.dayLow)) && Number(liveQuote.dayLow) < curLow) curLow = Number(liveQuote.dayLow)
+  }
+
+  var sc_cur = stratScenario(cur, p1)
+  var sc_p1 = p2 ? stratScenario(p1, p2) : "-"
+  var sc_p2 = (p2 && p3) ? stratScenario(p2, p3) : "-"
+
+  // 1. Direction (2u = 1, 2d = 0, Inside/Outside = -)
+  var dBit = "-"
+  if (sc_cur === "2u") dBit = "1"
+  else if (sc_cur === "2d") dBit = "0"
+
+  // 2. Color (Green = 1, Red = 0)
+  var cBit = (isFinite(curClose) && isFinite(curOpen) && curClose >= curOpen) ? "1" : "0"
+
+  // 3. Signal
+  var sBit = "0"
+  var signalType = null
+  var targetPrice = null
+  var isBullish = false
+
+  if (sc_p1 === "2d" && sc_cur === "2u") {
+    sBit = "1"
+    signalType = "2d-2u Bullish Reversal"
+    isBullish = true
+    targetPrice = p2 ? Number(p2.high) : null
+  } else if (sc_p1 === "2u" && sc_cur === "2d") {
+    sBit = "1"
+    signalType = "2u-2d Bearish Reversal"
+    isBullish = false
+    targetPrice = p2 ? Number(p2.low) : null
+  } else if (sc_p1 === "1") {
+    if (sc_p2 === "2d" && sc_cur === "2u") {
+      sBit = "1"
+      signalType = "2d-1-2u Bullish Reversal"
+      isBullish = true
+      targetPrice = p3 ? Number(p3.high) : (p2 ? Number(p2.high) : null)
+    } else if (sc_p2 === "2u" && sc_cur === "2d") {
+      sBit = "1"
+      signalType = "2u-1-2d Bearish Reversal"
+      isBullish = false
+      targetPrice = p3 ? Number(p3.low) : (p2 ? Number(p2.low) : null)
+    } else if (sc_p2 === "2u" && sc_cur === "2u") {
+      sBit = "1"
+      signalType = "2u-1-2u Bullish Continuation"
+      isBullish = true
+      targetPrice = p3 ? Number(p3.high) : (p2 ? Number(p2.high) : null)
+    } else if (sc_p2 === "2d" && sc_cur === "2d") {
+      sBit = "1"
+      signalType = "2d-1-2d Bearish Continuation"
+      isBullish = false
+      targetPrice = p3 ? Number(p3.low) : (p2 ? Number(p2.low) : null)
+    }
+  }
+
+  // 4. Triggered, 5. In-Force, 6. Magnitude
+  var tBit = "0"
+  var iBit = "0"
+  var mBit = "0"
+  var statusDesc = "No Active Setup"
+
+  if (sBit === "1") {
+    var trigPrice = isBullish ? Number(p1.high) : Number(p1.low)
+    if (isBullish) {
+      if (curHigh >= trigPrice) tBit = "1"
+      if (tBit === "1") {
+        if (curClose >= trigPrice) iBit = "1"
+        var hitTarget = isFinite(targetPrice) && curHigh >= targetPrice
+        mBit = hitTarget ? "0" : "1"
+      }
+    } else {
+      if (curLow <= trigPrice) tBit = "1"
+      if (tBit === "1") {
+        if (curClose <= trigPrice) iBit = "1"
+        var hitTargetBear = isFinite(targetPrice) && curLow <= targetPrice
+        mBit = hitTargetBear ? "0" : "1"
+      }
+    }
+    if (tBit === "1") {
+      var pullDir = isBullish ? "Below" : "Above"
+      if (iBit === "1") {
+        statusDesc = mBit === "1" ? "Triggered & In-Force (Magnitude Open)" : "Triggered & In-Force (Target Reached / Exhausted)"
+      } else {
+        statusDesc = mBit === "1" ? ("Triggered & Pulled Back " + pullDir + " Trigger") : ("Exhausted & Pulled Back " + pullDir + " Trigger")
+      }
+    } else {
+      statusDesc = "Setup Pending Trigger"
+    }
+  }
+
+  var bits = dBit + cBit + sBit + tBit + iBit + mBit
+
+  // Determine color:
+  // "pulled back and exhausted should have same color (amber)"
+  var color = "muted"
+  if (sBit === "0") {
+    color = "muted"
+  } else if (tBit === "1" && iBit === "1" && mBit === "1") {
+    color = isBullish ? "green" : "red"
+  } else {
+    color = "amber"
+  }
+
+  var ttLines = []
+  ttLines.push("[" + bits + "] • " + (signalType || "Scenario " + sc_cur.toUpperCase()))
+  ttLines.push("• Direction: " + (sc_cur === "2u" ? "2u (Bullish Break)" : (sc_cur === "2d" ? "2d (Bearish Break)" : (sc_cur === "1" ? "Inside Bar (Consolidation)" : "Outside Bar (Expanding)"))))
+  ttLines.push("• Candle: " + (cBit === "1" ? "Green (Close >= Open)" : "Red (Close < Open)"))
+  if (signalType) {
+    ttLines.push("• Setup: " + signalType)
+    ttLines.push("• Status: " + statusDesc)
+    if (isFinite(targetPrice)) {
+      ttLines.push("• Target: $" + targetPrice.toFixed(2) + (mBit === "0" ? " (Hit)" : " (Open)"))
+    }
+  }
+  var tooltip = ttLines.join("\n")
+
+  return {
+    bits: bits,
+    color: color,
+    tooltip: tooltip,
+    isBullish: isBullish,
+    signalType: signalType,
+    statusDesc: statusDesc
+  }
+}
+
 function computeStratDetails(candles, liveQuote) {
   if (!candles || candles.length < 2) {
     return {
@@ -1578,6 +1726,8 @@ function computeStratDetails(candles, liveQuote) {
   }
   var sequence = seqParts.length > 0 ? seqParts.join("-") : "-"
 
+  var binary = computeStratBinaryDetails(candles, liveQuote)
+
   return {
     bar: bar,
     polarity: polarity,
@@ -1588,7 +1738,10 @@ function computeStratDetails(candles, liveQuote) {
     open: isFinite(curOpen) ? curOpen : null,
     high: isFinite(curHigh) ? curHigh : null,
     low: isFinite(curLow) ? curLow : null,
-    close: isFinite(curClose) ? curClose : null
+    close: isFinite(curClose) ? curClose : null,
+    bits: binary.bits,
+    bitColor: binary.color,
+    bitTooltip: binary.tooltip
   }
 }
 
@@ -3336,6 +3489,7 @@ if (typeof module !== "undefined") {
     formatCandleTime: formatCandleTime,
     formatTimeAxisLabel: formatTimeAxisLabel,
     stratScenario: stratScenario,
+    computeStratBinaryDetails: computeStratBinaryDetails,
     computeStratDetails: computeStratDetails,
     computeHoldingStratMatrix: computeHoldingStratMatrix,
     computeHoldingsStratMap: computeHoldingsStratMap,

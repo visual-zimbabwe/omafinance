@@ -15,6 +15,7 @@ Item {
     property var hourlyCandles: []
     property var dailyCandles: []
     readonly property var stratChecklist: Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote)
+    readonly property var stratBinary: Model.computeStratBinaryDetails(root.candles, root.quote)
     property bool syncSymbolActive: true
     readonly property bool isExecutionTimeframeCell: {
         if (!root.stratChecklist || !root.stratChecklist.setupTimeframe)
@@ -389,6 +390,44 @@ Item {
                     }
                 }
 
+                // Strat Binary Framework Bits (Option 1: Per-Cell)
+                Item {
+                    id: stratBitsItem
+                    visible: root.stratBinary !== null && root.stratBinary.bits !== ""
+                    implicitWidth: stratBitsLabel.implicitWidth
+                    implicitHeight: stratBitsLabel.implicitHeight
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Text {
+                        id: stratBitsLabel
+                        anchors.verticalCenter: parent.verticalCenter
+                        textFormat: Text.PlainText
+                        text: root.stratBinary ? root.stratBinary.bits : ""
+                        font.family: "monospace"
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+                        color: {
+                            if (!root.stratBinary)
+                                return root.dim;
+                            if (root.stratBinary.color === "green")
+                                return root.upColor;
+                            if (root.stratBinary.color === "red")
+                                return root.downColor;
+                            if (root.stratBinary.color === "amber")
+                                return Qt.rgba(0.92, 0.65, 0.15, 1);
+                            return Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45);
+                        }
+                    }
+
+                    MouseArea {
+                        id: bitsHoverArea
+                        anchors.fill: parent
+                        anchors.margins: -Style.space(4)
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                    }
+                }
+
                 // Strat Checklist Status (Text & Color Only, Execution Timeframe Only)
                 Text {
                     id: stratBadgeText
@@ -752,5 +791,41 @@ Item {
         id: cellChecklistPopup
         checklistData: root.stratChecklist
         fontFamily: root.fontFamily
+    }
+
+    // Strat Binary Hover Tooltip Popup Overlay
+    Item {
+        id: bitsTooltipOverlay
+        anchors.fill: parent
+        z: 9999
+        visible: bitsHoverArea.containsMouse && root.stratBinary !== null && root.stratBinary.tooltip !== ""
+
+        Rectangle {
+            id: bitsTooltipCard
+            width: bitsTooltipCol.implicitWidth + Style.space(20)
+            height: bitsTooltipCol.implicitHeight + Style.space(16)
+            radius: Style.space(6)
+            color: (Color.popups && Color.popups.background) ? Color.popups.background : Qt.rgba(0.08, 0.08, 0.10, 0.96)
+            border.color: (Color.popups && Color.popups.border) ? Color.popups.border : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.22)
+            border.width: 1
+
+            x: Math.max(Style.space(8), Math.min(root.width - width - Style.space(8), stratBitsItem.mapToItem(root, 0, 0).x - Style.space(4)))
+            y: Style.space(34)
+
+            Column {
+                id: bitsTooltipCol
+                anchors.centerIn: parent
+                spacing: Style.space(4)
+
+                Text {
+                    text: root.stratBinary ? root.stratBinary.tooltip : ""
+                    textFormat: Text.PlainText
+                    color: (Color.popups && Color.popups.text) ? Color.popups.text : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    lineHeight: 1.2
+                }
+            }
+        }
     }
 }
