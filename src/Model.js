@@ -839,6 +839,10 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
   var granularity = String(meta.dataGranularity || "")
   var isHourly = granularity === "1h" || granularity === "60m" || rangeKey === "60"
   var ftfc = isHourly ? extractFTFC(result.timestamp, result.indicators, ftfcPrice, meta) : null
+  // Scenario needs real high/low; spark payloads carry closes only, so skip them.
+  var q0 = result.indicators && result.indicators.quote && result.indicators.quote[0] ? result.indicators.quote[0] : null
+  var hasOHLC = !!(q0 && q0.open && q0.open.length && q0.high && q0.high.length && q0.low && q0.low.length)
+  var bar60 = (isHourly && hasOHLC) ? extractBar60(mergePeriodCandles(parseCandles(result.timestamp, result.indicators), "60"), ftfcPrice) : null
 
   return {
     symbol: symbol,
@@ -864,7 +868,8 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
     yahooRange: meta.range ? String(meta.range) : "",
     closes: closes,
     candles: candles,
-    ftfc: ftfc
+    ftfc: ftfc,
+    bar60: bar60
   }
 }
 
@@ -988,6 +993,7 @@ function parseCoinbaseChart(raw, fallbackSymbol, rangeKey) {
     var change = last.close - prevClose
     var changePercent = (prevClose !== 0) ? (change / prevClose) * 100 : 0
     var ftfc = (rk === "60") ? extractFTFCFromCandles(candles, last.close) : null
+    var bar60 = (rk === "60") ? extractBar60(candles, last.close) : null
 
     return {
       symbol: symbol,
@@ -1013,7 +1019,8 @@ function parseCoinbaseChart(raw, fallbackSymbol, rangeKey) {
       yahooRange: "",
       closes: closes,
       candles: candles,
-      ftfc: ftfc
+      ftfc: ftfc,
+      bar60: bar60
     }
   } catch (e) {
     return null
@@ -1061,6 +1068,7 @@ function parseHyperliquidChart(raw, fallbackSymbol, rangeKey) {
     var change = last.close - prevClose
     var changePercent = (prevClose !== 0) ? (change / prevClose) * 100 : 0
     var ftfc = (rk === "60") ? extractFTFCFromCandles(candles, last.close) : null
+    var bar60 = (rk === "60") ? extractBar60(candles, last.close) : null
 
     return {
       symbol: symbol,
@@ -1086,7 +1094,8 @@ function parseHyperliquidChart(raw, fallbackSymbol, rangeKey) {
       yahooRange: "",
       closes: closes,
       candles: candles,
-      ftfc: ftfc
+      ftfc: ftfc,
+      bar60: bar60
     }
   } catch (e) {
     return null
@@ -1503,6 +1512,129 @@ function stratScenario(current, prev) {
   if (breaksHigh) return "2u"
   if (breaksLow) return "2d"
   return "1"
+}
+
+// Live price for Strat evaluation. Accepts raw Yahoo meta fields (regularMarketPrice)
+// as well as the normalized quote objects built by quoteFromChart (regularPrice / price),
+// so the grid's 2s live quote is honored instead of the 15s-stale candle close.
+function stratLivePrice(liveQuote) {
+  if (!liveQuote) return null
+  var keys = ["regularMarketPrice", "regularPrice", "price"]
+  for (var i = 0; i < keys.length; i++) {
+    var v = finiteOrNull(liveQuote[keys[i]])
+    if (v !== null) return v
+  }
+  return null
+}
+
+// Bar state = scenario (range vs prior bar) + color (price vs this bar's open).
+// The live price is folded into the bar's high/low so the scenario never lags the
+// color. If the bar is older than one period (nowSec - timestamp >= periodSec), the
+// live price belongs to a newer bar, so it is ignored and the bar's close is used.
+function stratBarState(current, prev, livePrice, nowSec, periodSec) {
+  var state = {
+    scenario: "-", color: "-", code: "-", label: "-",
+    open: null, high: null, low: null, price: null,
+    prevHigh: null, prevLow: null,
+    failed2u: false, failed2d: false, liveMerged: false
+  }
+  if (!current) return state
+
+  var open = finiteOrNull(current.open)
+  var high = finiteOrNull(current.high)
+  var low = finiteOrNull(current.low)
+  var price = finiteOrNull(livePrice)
+
+  if (price !== null) {
+    var ts = finiteOrNull(current.timestamp)
+    var now = finiteOrNull(nowSec)
+    var span = finiteOrNull(periodSec) || 3600
+    var stale = ts !== null && now !== null && (now - ts) >= span
+    if (stale) {
+      price = null
+    } else {
+      if (high === null || price > high) { high = price; state.liveMerged = true }
+      if (low === null || price < low) { low = price; state.liveMerged = true }
+    }
+  }
+  if (price === null) price = finiteOrNull(current.close)
+
+  state.open = open
+  state.high = high
+  state.low = low
+  state.price = price
+  state.color = (price !== null && open !== null) ? (price >= open ? "G" : "R") : "-"
+
+  if (prev) {
+    state.prevHigh = finiteOrNull(prev.high)
+    state.prevLow = finiteOrNull(prev.low)
+    var complete = high !== null && low !== null && state.prevHigh !== null && state.prevLow !== null
+    state.scenario = complete ? stratScenario({ high: high, low: low }, prev) : "-"
+  }
+
+  state.failed2u = state.scenario === "2u" && state.color === "R"
+  state.failed2d = state.scenario === "2d" && state.color === "G"
+  state.code = state.failed2u ? "F2u" : (state.failed2d ? "F2d" : state.scenario)
+  if (state.scenario !== "-") {
+    var colorWord = state.color === "G" ? " GREEN" : (state.color === "R" ? " RED" : "")
+    state.label = state.scenario.toUpperCase() + colorWord
+  }
+  return state
+}
+
+// Entry state of a bar relative to the intended trade direction.
+//   WAIT_INSIDE        aligned color, Scenario 1      -> continuity, no trigger
+//   IN_FORCE           aligned color, 2 in direction  -> trigger already fired
+//   FAILED_2_REVERSAL  aligned color, opposite 2      -> failed 2u (short) / failed 2d (long)
+//   OUTSIDE            aligned color, Scenario 3      -> valid, check extension
+//   COUNTER            opposing color                 -> hour controlled against the trade
+function stratEntryState(bar, isLong) {
+  var unknown = { state: "UNKNOWN", name: "Unknown", passes: false, detail: "60m bar state unavailable" }
+  if (!bar || bar.scenario === "-" || bar.color === "-") return unknown
+
+  var s = bar.scenario
+  var dirWord = isLong ? "LONG" : "SHORT"
+  var aligned = isLong ? (bar.color === "G") : (bar.color === "R")
+  var with2 = isLong ? "2u" : "2d"
+  var against2 = isLong ? "2d" : "2u"
+  var prefix = "60m " + bar.label + " — "
+
+  if (!aligned) {
+    if (s === with2) {
+      return {
+        state: "COUNTER", name: "Failed " + with2, passes: false,
+        detail: prefix + "Failed " + with2 + ": " + (isLong ? "buyers" : "sellers") + " broke the prior " + (isLong ? "high" : "low") + " and failed back through the open (against " + dirWord + ")"
+      }
+    }
+    return { state: "COUNTER", name: "Counter", passes: false, detail: prefix + "hour controlled against " + dirWord }
+  }
+  if (s === "1") {
+    return {
+      state: "WAIT_INSIDE", name: "Inside - Wait", passes: false,
+      detail: prefix + "continuity but no trigger; wait for break of prior 60m " + (isLong ? "high" : "low")
+    }
+  }
+  if (s === with2) {
+    return { state: "IN_FORCE", name: "In Force", passes: true, detail: prefix + "in force (" + with2 + " with " + dirWord + ")" }
+  }
+  if (s === against2) {
+    return {
+      state: "FAILED_2_REVERSAL", name: "Failed " + against2 + " Reversal", passes: true,
+      detail: prefix + "Failed " + against2 + " reversal (" + (isLong ? "sellers" : "buyers") + " failed back through the open)"
+    }
+  }
+  if (s === "3") {
+    return { state: "OUTSIDE", name: "Outside", passes: true, detail: prefix + "outside bar; both sides of prior 60m taken, check extension" }
+  }
+  return unknown
+}
+
+// Compact 60m bar state (e.g. "2d", "1", "F2u") for the FTFC row.
+function extractBar60(hourlyCandles, price) {
+  var n = Array.isArray(hourlyCandles) ? hourlyCandles.length : 0
+  if (!n) return null
+  var bar = stratBarState(hourlyCandles[n - 1], n > 1 ? hourlyCandles[n - 2] : null, price, null, 3600)
+  return { scenario: bar.scenario, color: bar.color, code: bar.code, label: bar.label }
 }
 
 function computeStratBinaryDetails(candles, liveQuote) {
@@ -2895,7 +3027,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var weekly = mergePeriodCandles(daily, "1W")
   var monthly = mergePeriodCandles(daily, "1M")
 
-  var qPrice = (liveQuote && isFinite(liveQuote.regularMarketPrice)) ? Number(liveQuote.regularMarketPrice) : null
+  var qPrice = stratLivePrice(liveQuote)
   var currentPrice = qPrice
   if (currentPrice === null && hourly.length > 0) {
     currentPrice = Number(hourly[hourly.length - 1].close)
@@ -2913,12 +3045,15 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var c1M = monthly.length > 0 ? monthly[monthly.length - 1] : null
   var p1M = monthly.length > 1 ? monthly[monthly.length - 2] : null
 
-  var price60 = (qPrice !== null && c60) ? qPrice : (c60 ? Number(c60.close) : null)
+  var nowSec = (nowDate instanceof Date) ? Math.floor(nowDate.getTime() / 1000) : null
+  var bar60 = stratBarState(c60, p60, currentPrice, nowSec, 3600)
+
+  var price60 = bar60.price !== null ? bar60.price : ((qPrice !== null && c60) ? qPrice : (c60 ? Number(c60.close) : null))
   var price1D = (qPrice !== null && c1D) ? qPrice : (c1D ? Number(c1D.close) : null)
   var price1W = (qPrice !== null && c1W) ? qPrice : (c1W ? Number(c1W.close) : null)
   var price1M = (qPrice !== null && c1M) ? qPrice : (c1M ? Number(c1M.close) : null)
 
-  var col60 = (c60 && price60 !== null) ? (price60 >= Number(c60.open) ? "G" : "R") : "-"
+  var col60 = bar60.color !== "-" ? bar60.color : ((c60 && price60 !== null) ? (price60 >= Number(c60.open) ? "G" : "R") : "-")
   var col1D = (c1D && price1D !== null) ? (price1D >= Number(c1D.open) ? "G" : "R") : "-"
   var col1W = (c1W && price1W !== null) ? (price1W >= Number(c1W.open) ? "G" : "R") : "-"
   var col1M = (c1M && price1M !== null) ? (price1M >= Number(c1M.open) ? "G" : "R") : "-"
@@ -2938,12 +3073,15 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var setupTf = "60"
   var signalCandle = p60
   var isLong = (direction === "LONG")
-
-  var sc60 = (c60 && p60) ? stratScenario(c60, p60) : "-"
+  var entryState = stratEntryState(bar60, isLong)
+  var isFailed2 = (entryState.state === "FAILED_2_REVERSAL")
 
   var validSignal = false
   var signalName = "-"
-  if (hourly.length >= 3) {
+  if (isFailed2) {
+    validSignal = true
+    signalName = isLong ? "60m Failed 2d Bullish Reversal" : "60m Failed 2u Bearish Reversal"
+  } else if (hourly.length >= 3) {
     var p2_60 = hourly[hourly.length - 3]
     var sc_prev = stratScenario(p60, p2_60)
     if (sc_prev === "1") {
@@ -2981,23 +3119,58 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   // 4. Time/Run Exhaustion Filter
   var r4Pass = true
   var r4Detail = "Fresh setup, no exhaustion"
-  if (c60) {
-    var isOpposingWick = isLong ? (col60 === "R") : (col60 === "G")
-    if (isOpposingWick) {
+
+  // Check run exhaustion: 3+ consecutive uncorrected directional bars
+  var runCount = 0
+  if (hourly.length >= 2) {
+    var dir2 = isLong ? "2u" : "2d"
+    for (var runIdx = hourly.length - 2; runIdx >= 1; runIdx--) {
+      var sc_run = stratScenario(hourly[runIdx], hourly[runIdx - 1])
+      if (sc_run === dir2) {
+        runCount++
+      } else {
+        break
+      }
+    }
+  }
+  if (runCount >= 3) {
+    r4Pass = false
+    r4Detail = "Run exhaustion: " + runCount + " consecutive " + (isLong ? "2u" : "2d") + " bars without consolidation"
+  } else if (nowSec !== null && c60 && c60.timestamp) {
+    var elapsedSec = nowSec - c60.timestamp
+    if (elapsedSec >= 3300 && elapsedSec < 3600) {
       r4Pass = false
-      r4Detail = "60m bar pulled back opposing trade color"
+      r4Detail = "Time exhaustion: <5m remaining in 60m candle (" + Math.floor((3600 - elapsedSec) / 60) + "m left)"
     }
   }
 
   // 5. Execution Trigger Crossed
-  var triggerPrice = signalCandle ? (isLong ? Number(signalCandle.high) : Number(signalCandle.low)) : null
-  var stopPrice = signalCandle ? (isLong ? Number(signalCandle.low) : Number(signalCandle.high)) : null
+  var triggerPrice = null
+  var stopPrice = null
   var signalCandleTimestamp = (signalCandle && signalCandle.timestamp != null) ? signalCandle.timestamp : null
+
+  if (isFailed2 && c60) {
+    triggerPrice = Number(c60.open)
+    stopPrice = isLong ? Number(bar60.low) : Number(bar60.high)
+  } else if (signalCandle) {
+    triggerPrice = isLong ? Number(signalCandle.high) : Number(signalCandle.low)
+    stopPrice = isLong ? Number(signalCandle.low) : Number(signalCandle.high)
+  }
 
   var r5Pass = false
   var r5Detail = "No trigger available"
   if (triggerPrice !== null && currentPrice !== null) {
-    if (isLong) {
+    if (isFailed2) {
+      if (isLong) {
+        r5Pass = (currentPrice >= triggerPrice)
+        var deltaF2Long = currentPrice - triggerPrice
+        r5Detail = "Failed 2d Trigger (Reclaimed Open): $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + (deltaF2Long >= 0 ? "+$" + deltaF2Long.toFixed(2) : "-$" + Math.abs(deltaF2Long).toFixed(2)) + ")"
+      } else {
+        r5Pass = (currentPrice <= triggerPrice)
+        var deltaF2Short = triggerPrice - currentPrice
+        r5Detail = "Failed 2u Trigger (Rejected Open): $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + (deltaF2Short >= 0 ? "-$" + deltaF2Short.toFixed(2) : "+$" + Math.abs(deltaF2Short).toFixed(2)) + ")"
+      }
+    } else if (isLong) {
       r5Pass = (currentPrice >= triggerPrice)
       var deltaLong = currentPrice - triggerPrice
       r5Detail = "Trig: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + (deltaLong >= 0 ? "+$" + deltaLong.toFixed(2) : "-$" + Math.abs(deltaLong).toFixed(2) + " below") + ")"
@@ -3009,13 +3182,36 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   }
 
   // 6. Execution Bar Not Stuck in Scenario 1
-  var r6Pass = (sc60 !== "1")
-  var r6Detail = "60m Bar: Scenario " + sc60.toUpperCase() + (sc60 === "1" ? " (Consolidation Chop)" : " (In-Force)")
+  var r6Pass = entryState.passes
+  var r6Detail = entryState.detail
 
   // 7. Untagged HTF Targets & Domino Effect Resolution
   var targetPrice = null
   var targetName = ""
   var targets = []
+
+  if (isFailed2 && p60) {
+    if (isLong && Number(p60.high) > currentPrice) {
+      targets.push({
+        name: "60m High (Outside Bar Trigger)",
+        price: Number(p60.high),
+        timeframe: "60",
+        dominoSignal: "60m Scenario 3 (Outside Bar)",
+        dominoScenario: "3",
+        isReversal: true
+      })
+    } else if (!isLong && Number(p60.low) < currentPrice) {
+      targets.push({
+        name: "60m Low (Outside Bar Trigger)",
+        price: Number(p60.low),
+        timeframe: "60",
+        dominoSignal: "60m Scenario 3 (Outside Bar)",
+        dominoScenario: "3",
+        isReversal: true
+      })
+    }
+  }
+
   if (isLong) {
     if (setupTf === "60" && p1D && triggerPrice !== null && Number(p1D.high) > triggerPrice) {
       var dDom = resolveDominoHtfSignal("Daily", true, daily)
@@ -3152,28 +3348,20 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   if (stopPrice !== null && currentPrice !== null) {
     if (isLong) {
       if (currentPrice <= stopPrice) isStoppedOut = true
-      if (c60 && Number(c60.low) <= stopPrice) isStoppedOut = true
+      if (!isFailed2 && c60 && Number(c60.low) <= stopPrice) isStoppedOut = true
     } else {
       if (currentPrice >= stopPrice) isStoppedOut = true
-      if (c60 && Number(c60.high) >= stopPrice) isStoppedOut = true
+      if (!isFailed2 && c60 && Number(c60.high) >= stopPrice) isStoppedOut = true
     }
   }
 
-  // 4. Time/Run Exhaustion Filter
-  var r4Pass = true
-  var r4Detail = "Fresh setup, no exhaustion"
+  // Target Hit Exhaustion Risk for Rule 4
   if (isTargetHit) {
     r4Pass = false
     if (domino && domino.hasDomino) {
       r4Detail = "Target reached (" + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + ") — Triggered " + domino.triggeredSignal + "! Exhaustion risk on " + setupTf + "."
     } else {
       r4Detail = "Target reached (" + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + ") — exhaustion risk"
-    }
-  } else if (c60) {
-    var isOpposingWick = isLong ? (col60 === "R") : (col60 === "G")
-    if (isOpposingWick) {
-      r4Pass = false
-      r4Detail = "60m bar pulled back opposing trade color"
     }
   }
 
@@ -3214,7 +3402,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     r8Detail = "Stopped out: $" + (stopPrice != null ? stopPrice.toFixed(2) : "") + " breached"
   } else if (stopPrice !== null && currentPrice !== null) {
     r8Pass = isLong ? (currentPrice > stopPrice) : (currentPrice < stopPrice)
-    r8Detail = "Stop-Loss: $" + stopPrice.toFixed(2) + " (" + setupTf + " Signal " + (isLong ? "Low" : "High") + ")"
+    var stopAnchorName = isFailed2 ? ("Failed " + (isLong ? "2d Low" : "2u High")) : (setupTf + " Signal " + (isLong ? "Low" : "High"))
+    r8Detail = "Stop-Loss: $" + stopPrice.toFixed(2) + " (" + stopAnchorName + ")"
   }
 
   // 9. Runway Quality
@@ -3267,6 +3456,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     targets: targets,
     domino: domino,
     stopPrice: isFinite(stopPrice) ? stopPrice : null,
+    bar60: bar60,
+    entryState: entryState,
     ftfcSummary: {
       m: col1M,
       w: col1W,
@@ -3322,6 +3513,14 @@ function discordAlertPayload(chk, eventType) {
     fields.push({ name: "Structural Stop", value: "`" + stopStr + "`", inline: true })
     if (rrStr !== "N/A") {
       fields.push({ name: "Risk : Reward", value: "`" + rrStr + "`", inline: true })
+    }
+
+    if (chk.entryState && chk.entryState.state === "FAILED_2_REVERSAL") {
+      fields.push({
+        name: "Execution Mechanics (Failed 2 Reversal)",
+        value: chk.entryState.detail,
+        inline: false
+      })
     }
 
     // Domino Cascade Section
@@ -3531,7 +3730,11 @@ if (typeof module !== "undefined") {
     stratRuleRationales: stratRuleRationales,
     resolveDominoHtfSignal: resolveDominoHtfSignal,
     evaluateStratChecklist: evaluateStratChecklist,
-    discordAlertPayload: discordAlertPayload
+    discordAlertPayload: discordAlertPayload,
+    stratLivePrice: stratLivePrice,
+    stratBarState: stratBarState,
+    stratEntryState: stratEntryState,
+    extractBar60: extractBar60
   }
 }
 

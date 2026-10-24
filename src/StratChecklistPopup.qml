@@ -134,6 +134,23 @@ Item {
                 width: parent.width
             }
 
+            // 60m Strat State Indicator (if present)
+            Text {
+                visible: root.checklistData && root.checklistData.entryState && root.checklistData.entryState.state !== "UNKNOWN"
+                text: {
+                    if (!root.checklistData || !root.checklistData.entryState)
+                        return "";
+                    var bCode = (root.checklistData.bar60 && root.checklistData.bar60.code !== "-") ? (" [" + root.checklistData.bar60.code + "]") : "";
+                    return "60m STATE: " + root.checklistData.entryState.name.toUpperCase() + bCode;
+                }
+                color: (root.checklistData && root.checklistData.entryState && root.checklistData.entryState.passes) ? root.upColor : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall - 1
+                font.bold: true
+                wrapMode: Text.WordWrap
+                width: parent.width
+            }
+
             // Divider
             Rectangle {
                 width: parent.width

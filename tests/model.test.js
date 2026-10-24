@@ -1403,6 +1403,200 @@ test("evaluateStratChecklist detects Domino Effect when LTF 60m target is HTF Da
   assert.ok(!/[\u{1F300}-\u{1F9FF}]/u.test(payloadJson), "Discord payload must contain no emojis")
 })
 
+test("stratBarState and stratEntryState classify bar states, failed 2 reversals, and live quote merging", () => {
+  const prev = { open: 100, high: 105, low: 95, close: 102 }
+
+  // 1. Inside bar (1 Red)
+  const curInside = { open: 101, high: 103, low: 97, close: 99 }
+  const barInside = Model.stratBarState(curInside, prev, 99)
+  assert.equal(barInside.scenario, "1")
+  assert.equal(barInside.color, "R")
+  assert.equal(barInside.failed2u, false)
+  const entryInsideShort = Model.stratEntryState(barInside, false) // SHORT
+  assert.equal(entryInsideShort.state, "WAIT_INSIDE")
+  assert.equal(entryInsideShort.passes, false)
+  assert.match(entryInsideShort.detail, /continuity but no trigger/)
+
+  // 2. In-Force 2d Red
+  const cur2d = { open: 100, high: 101, low: 93, close: 94 }
+  const bar2d = Model.stratBarState(cur2d, prev, 94)
+  assert.equal(bar2d.scenario, "2d")
+  assert.equal(bar2d.color, "R")
+  const entry2dShort = Model.stratEntryState(bar2d, false)
+  assert.equal(entry2dShort.state, "IN_FORCE")
+  assert.equal(entry2dShort.passes, true)
+
+  // 3. Failed 2u Reversal (Shooter / Bearish Reversal)
+  // Took out prior high 105 with high 106, but dropped below open 103 to 99 (Red)
+  const curFailed2u = { open: 103, high: 106, low: 98, close: 99 }
+  const barFailed2u = Model.stratBarState(curFailed2u, prev, 99)
+  assert.equal(barFailed2u.scenario, "2u")
+  assert.equal(barFailed2u.color, "R")
+  assert.equal(barFailed2u.failed2u, true)
+  assert.equal(barFailed2u.code, "F2u")
+  const entryFailed2uShort = Model.stratEntryState(barFailed2u, false)
+  assert.equal(entryFailed2uShort.state, "FAILED_2_REVERSAL")
+  assert.equal(entryFailed2uShort.passes, true)
+  assert.match(entryFailed2uShort.detail, /Failed 2u reversal/)
+
+  // 4. Counter-trend bar (2u Green against SHORT)
+  const cur2uGreen = { open: 101, high: 107, low: 100, close: 106 }
+  const bar2uGreen = Model.stratBarState(cur2uGreen, prev, 106)
+  assert.equal(bar2uGreen.scenario, "2u")
+  assert.equal(bar2uGreen.color, "G")
+  const entryCounterShort = Model.stratEntryState(bar2uGreen, false)
+  assert.equal(entryCounterShort.state, "COUNTER")
+  assert.equal(entryCounterShort.passes, false)
+
+  // 5. Live quote merges into candle eliminating lag
+  // Developing candle stored with high 104, but live quote price pushes to 106.50
+  const curLagging = { open: 101, high: 104, low: 99, close: 103 }
+  const barLive = Model.stratBarState(curLagging, prev, 106.50)
+  assert.equal(barLive.high, 106.50)
+  assert.equal(barLive.liveMerged, true)
+  assert.equal(barLive.scenario, "2u") // Now correctly reflects 2u break without waiting for chart refresh
+})
+
+test("evaluateStratChecklist blocks 1-Red inside chop despite full bearish FTFC", () => {
+  // All timeframes Red
+  const daily = [
+    { timestamp: 100, open: 200, high: 205, low: 190, close: 195 },
+    { timestamp: 200, open: 195, high: 198, low: 185, close: 188 },
+    { timestamp: 300, open: 190, high: 191, low: 180, close: 182 } // Red
+  ]
+  // Hourly: p60 is 185-180, current c60 is 184-181 (Inside 1), open 183, price 182 (Red)
+  const hourly = [
+    { timestamp: 1000, open: 188, high: 189, low: 182, close: 184 },
+    { timestamp: 2000, open: 184, high: 185, low: 180, close: 181 },
+    { timestamp: 3000, open: 183, high: 184, low: 181, close: 182 } // Inside bar, Red
+  ]
+  const quote = { regularMarketPrice: 182 }
+
+  const res = Model.evaluateStratChecklist("TSLA", hourly, daily, quote)
+  assert.equal(res.direction, "SHORT")
+  // Rule 1: FTFC Polarity PASSES (all are Red)
+  const r1 = res.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, true)
+  // Rule 6: Avoid 1-Chop FAILS (continuity, but no trigger)
+  const r6 = res.rules.find(r => r.id === 6)
+  assert.equal(r6.passed, false)
+  assert.match(r6.detail, /continuity but no trigger/)
+  // Overall setup is BLOCKED from execution
+  assert.equal(res.isTradeable, false)
+})
+
+test("evaluateStratChecklist executes tradeable short on 60m 2d-Red in-force", () => {
+  const daily = [
+    { timestamp: 100, open: 200, high: 205, low: 180, close: 195 },
+    { timestamp: 200, open: 195, high: 198, low: 170, close: 188 }, // 1D Low = 170 (Target)
+    { timestamp: 300, open: 190, high: 191, low: 175, close: 178 }  // Red
+  ]
+  // Hourly: p60 is 185-180, current c60 open 181, high 181.5, low 177, close 178 (2d Red)
+  const hourly = [
+    { timestamp: 1000, open: 188, high: 189, low: 182, close: 184 },
+    { timestamp: 2000, open: 184, high: 185, low: 180, close: 181 }, // Signal candle (low 180)
+    { timestamp: 3000, open: 181, high: 181.5, low: 177, close: 178 } // Broke 180 -> 2d Red
+  ]
+  const quote = { regularMarketPrice: 178 }
+
+  const res = Model.evaluateStratChecklist("TSLA", hourly, daily, quote)
+  assert.equal(res.direction, "SHORT")
+  assert.equal(res.isTradeable, true)
+  assert.equal(res.triggerPrice, 180)
+  assert.equal(res.stopPrice, 185)
+
+  const r6 = res.rules.find(r => r.id === 6)
+  assert.equal(r6.passed, true)
+  assert.match(r6.detail, /in force/)
+})
+
+test("evaluateStratChecklist triggers tradeable Failed 2u Reversal with tight stop on current candle high", () => {
+  const daily = [
+    { timestamp: 100, open: 200, high: 205, low: 180, close: 195 },
+    { timestamp: 200, open: 195, high: 198, low: 170, close: 188 },
+    { timestamp: 300, open: 190, high: 191, low: 181, close: 181 } // Day low 181 (target 180 untagged)
+  ]
+  // Hourly: p60 is 185-180.
+  // Current c60 opened at 183, pushed above 185 to 186 (2u break), but failed and dropped back to 181 (Red).
+  const hourly = [
+    { timestamp: 1000, open: 188, high: 189, low: 182, close: 184 },
+    { timestamp: 2000, open: 184, high: 185, low: 180, close: 182 }, // p60: high 185, low 180
+    { timestamp: 3000, open: 183, high: 186, low: 181, close: 181 }  // 2u Red (Failed 2u)
+  ]
+  const quote = { regularMarketPrice: 181 }
+
+  const res = Model.evaluateStratChecklist("AMD", hourly, daily, quote)
+  assert.equal(res.direction, "SHORT")
+  assert.equal(res.isTradeable, true)
+  assert.equal(res.signalName, "60m Failed 2u Bearish Reversal")
+  assert.equal(res.triggerPrice, 183) // Open of rejection candle
+  assert.equal(res.stopPrice, 186)    // High of failed 2u push (ultra-tight structural stop!)
+  assert.equal(res.targetPrice, 180)  // T1 is prior 60m low (turning bar into Scenario 3)
+  assert.equal(res.targetName, "60m Low (Outside Bar Trigger)")
+
+  const r5 = res.rules.find(r => r.id === 5)
+  assert.equal(r5.passed, true)
+  const r6 = res.rules.find(r => r.id === 6)
+  assert.equal(r6.passed, true)
+  assert.match(r6.detail, /Failed 2u reversal/)
+
+  // Verify Discord alert includes Failed 2 Reversal execution mechanics
+  const alertStr = Model.discordAlertPayload(res, "TRIGGERED")
+  const alertJson = JSON.parse(alertStr)
+  assert.ok(alertJson.embeds[0].fields.some(f => f.name.includes("Failed 2 Reversal")))
+  assert.ok(!/[\u{1F300}-\u{1F9FF}]/u.test(alertStr), "Must contain no emojis")
+})
+
+test("evaluateStratChecklist blocks trade when 60m is green against red HTF (profit taking / pullback)", () => {
+  const daily = [
+    { timestamp: 100, open: 200, high: 205, low: 190, close: 195 },
+    { timestamp: 200, open: 195, high: 198, low: 185, close: 188 },
+    { timestamp: 300, open: 190, high: 191, low: 175, close: 181 } // Red
+  ]
+  // Hourly: p60 is 185-180. Current c60 opened at 180, price is 183 (Green)
+  const hourly = [
+    { timestamp: 1000, open: 188, high: 189, low: 182, close: 184 },
+    { timestamp: 2000, open: 184, high: 185, low: 180, close: 180.5 },
+    { timestamp: 3000, open: 180, high: 183.5, low: 179.5, close: 183 } // Green
+  ]
+  const quote = { regularMarketPrice: 183 }
+
+  const res = Model.evaluateStratChecklist("AMD", hourly, daily, quote)
+  // Direction falls back to daily SHORT, but FTFC is broken
+  const r1 = res.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, false)
+  assert.match(r1.detail, /Conflict/)
+
+  const r6 = res.rules.find(r => r.id === 6)
+  assert.equal(r6.passed, false)
+  assert.match(r6.detail, /against SHORT/)
+
+  assert.equal(res.isTradeable, false)
+})
+
+test("evaluateStratChecklist detects run exhaustion when 3+ consecutive uncorrected 2-bars occur", () => {
+  const daily = [
+    { timestamp: 100, open: 100, high: 110, low: 98, close: 108 },
+    { timestamp: 200, open: 108, high: 140, low: 105, close: 118 }, // Target 1D High = 140
+    { timestamp: 300, open: 118, high: 125, low: 115, close: 123 }
+  ]
+  // 3 consecutive 2u bars in hourly before current bar
+  const hourly = [
+    { timestamp: 1000, open: 100, high: 105, low: 98, close: 104 },
+    { timestamp: 2000, open: 104, high: 110, low: 103, close: 109 }, // 2u (high 110 > 105, low 103 >= 98)
+    { timestamp: 3000, open: 109, high: 115, low: 108, close: 114 }, // 2u (high 115 > 110, low 108 >= 103)
+    { timestamp: 4000, open: 114, high: 120, low: 113, close: 119 }, // 2u (high 120 > 115, low 113 >= 108)
+    { timestamp: 5000, open: 119, high: 125, low: 118, close: 123 }  // current bar
+  ]
+  const quote = { regularMarketPrice: 123 }
+
+  const res = Model.evaluateStratChecklist("NVDA", hourly, daily, quote)
+  const r4 = res.rules.find(r => r.id === 4)
+  assert.equal(r4.passed, false)
+  assert.match(r4.detail, /Run exhaustion: 3 consecutive 2u bars/)
+  assert.equal(res.isTradeable, false)
+})
+
 
 
 
