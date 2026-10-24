@@ -1403,6 +1403,372 @@ test("evaluateStratChecklist detects Domino Effect when LTF 60m target is HTF Da
   assert.ok(!/[\u{1F300}-\u{1F9FF}]/u.test(payloadJson), "Discord payload must contain no emojis")
 })
 
+test("stratBarState and stratEntryState classify bar states, failed 2 reversals, and live quote merging", () => {
+  const prev = { open: 100, high: 105, low: 95, close: 102 }
+
+  // 1. Inside bar (1 Red)
+  const curInside = { open: 101, high: 103, low: 97, close: 99 }
+  const barInside = Model.stratBarState(curInside, prev, 99)
+  assert.equal(barInside.scenario, "1")
+  assert.equal(barInside.color, "R")
+  assert.equal(barInside.failed2u, false)
+  const entryInsideShort = Model.stratEntryState(barInside, false) // SHORT
+  assert.equal(entryInsideShort.state, "WAIT_INSIDE")
+  assert.equal(entryInsideShort.passes, false)
+  assert.match(entryInsideShort.detail, /continuity but no trigger/)
+
+  // 2. In-Force 2d Red
+  const cur2d = { open: 100, high: 101, low: 93, close: 94 }
+  const bar2d = Model.stratBarState(cur2d, prev, 94)
+  assert.equal(bar2d.scenario, "2d")
+  assert.equal(bar2d.color, "R")
+  const entry2dShort = Model.stratEntryState(bar2d, false)
+  assert.equal(entry2dShort.state, "IN_FORCE")
+  assert.equal(entry2dShort.passes, true)
+
+  // 3. Failed 2u Reversal (Shooter / Bearish Reversal)
+  // Took out prior high 105 with high 106, but dropped below open 103 to 99 (Red)
+  const curFailed2u = { open: 103, high: 106, low: 98, close: 99 }
+  const barFailed2u = Model.stratBarState(curFailed2u, prev, 99)
+  assert.equal(barFailed2u.scenario, "2u")
+  assert.equal(barFailed2u.color, "R")
+  assert.equal(barFailed2u.failed2u, true)
+  assert.equal(barFailed2u.code, "F2u")
+  const entryFailed2uShort = Model.stratEntryState(barFailed2u, false)
+  assert.equal(entryFailed2uShort.state, "FAILED_2_REVERSAL")
+  assert.equal(entryFailed2uShort.passes, true)
+  assert.match(entryFailed2uShort.detail, /Failed 2u reversal/)
+
+  // 4. Counter-trend bar (2u Green against SHORT)
+  const cur2uGreen = { open: 101, high: 107, low: 100, close: 106 }
+  const bar2uGreen = Model.stratBarState(cur2uGreen, prev, 106)
+  assert.equal(bar2uGreen.scenario, "2u")
+  assert.equal(bar2uGreen.color, "G")
+  const entryCounterShort = Model.stratEntryState(bar2uGreen, false)
+  assert.equal(entryCounterShort.state, "COUNTER")
+  assert.equal(entryCounterShort.passes, false)
+
+  // 5. Live quote merges into candle eliminating lag
+  // Developing candle stored with high 104, but live quote price pushes to 106.50
+  const curLagging = { open: 101, high: 104, low: 99, close: 103 }
+  const barLive = Model.stratBarState(curLagging, prev, 106.50)
+  assert.equal(barLive.high, 106.50)
+  assert.equal(barLive.liveMerged, true)
+  assert.equal(barLive.scenario, "2u") // Now correctly reflects 2u break without waiting for chart refresh
+})
+
+test("evaluateStratChecklist blocks 1-Red inside chop despite full bearish FTFC", () => {
+  // All timeframes Red with untagged target 170
+  const daily = [
+    { timestamp: 100, open: 200, high: 205, low: 180, close: 195 },
+    { timestamp: 200, open: 195, high: 198, low: 170, close: 188 }, // 1D Low = 170 (Target)
+    { timestamp: 300, open: 190, high: 191, low: 180, close: 182 }  // Red
+  ]
+  // Hourly: p60 is 185-180, current c60 is 184-181 (Inside 1), open 183, price 182 (Red)
+  const hourly = [
+    { timestamp: 1000, open: 188, high: 189, low: 182, close: 184 },
+    { timestamp: 2000, open: 184, high: 185, low: 180, close: 181 },
+    { timestamp: 3000, open: 183, high: 184, low: 181, close: 182 } // Inside bar, Red
+  ]
+  const quote = { regularMarketPrice: 182 }
+
+  const res = Model.evaluateStratChecklist("TSLA", hourly, daily, quote)
+  assert.equal(res.direction, "SHORT")
+  // Rule 1: FTFC Polarity PASSES (all are Red)
+  const r1 = res.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, true)
+  // Rule 6: Avoid 1-Chop FAILS (continuity, but no trigger)
+  const r6 = res.rules.find(r => r.id === 6)
+  assert.equal(r6.passed, false)
+  assert.match(r6.detail, /continuity but no trigger/)
+  // Overall setup is BLOCKED from execution but ARMED waiting for break
+  assert.equal(res.isTradeable, false)
+  assert.equal(res.isArmed, true)
+  assert.equal(res.statusTag, "ARMED - 60m Inside (Wait for Break)")
+  assert.equal(res.badgeText, "ARMED")
+  assert.equal(res.badgeTone, "amber")
+})
+
+test("evaluateStratChecklist executes tradeable short on 60m 2d-Red in-force", () => {
+  const daily = [
+    { timestamp: 100, open: 200, high: 205, low: 180, close: 195 },
+    { timestamp: 200, open: 195, high: 198, low: 170, close: 188 }, // 1D Low = 170 (Target)
+    { timestamp: 300, open: 190, high: 191, low: 175, close: 178 }  // Red
+  ]
+  // Hourly: p60 is 185-180, current c60 open 181, high 181.5, low 177, close 178 (2d Red)
+  const hourly = [
+    { timestamp: 1000, open: 188, high: 189, low: 182, close: 184 },
+    { timestamp: 2000, open: 184, high: 185, low: 180, close: 181 }, // Signal candle (low 180)
+    { timestamp: 3000, open: 181, high: 181.5, low: 177, close: 178 } // Broke 180 -> 2d Red
+  ]
+  const quote = { regularMarketPrice: 178 }
+
+  const res = Model.evaluateStratChecklist("TSLA", hourly, daily, quote)
+  assert.equal(res.direction, "SHORT")
+  assert.equal(res.isTradeable, true)
+  assert.equal(res.triggerPrice, 180)
+  assert.equal(res.stopPrice, 185)
+
+  const r6 = res.rules.find(r => r.id === 6)
+  assert.equal(r6.passed, true)
+  assert.match(r6.detail, /in force/)
+})
+
+test("evaluateStratChecklist triggers tradeable Failed 2u Reversal with tight stop on current candle high", () => {
+  const daily = [
+    { timestamp: 100, open: 200, high: 205, low: 180, close: 195 },
+    { timestamp: 200, open: 195, high: 198, low: 170, close: 188 },
+    { timestamp: 300, open: 190, high: 191, low: 181, close: 181 } // Day low 181 (target 180 untagged)
+  ]
+  // Hourly: p60 is 185-180.
+  // Current c60 opened at 183, pushed above 185 to 186 (2u break), but failed and dropped back to 181 (Red).
+  const hourly = [
+    { timestamp: 1000, open: 188, high: 189, low: 182, close: 184 },
+    { timestamp: 2000, open: 184, high: 185, low: 180, close: 182 }, // p60: high 185, low 180
+    { timestamp: 3000, open: 183, high: 186, low: 181, close: 181 }  // 2u Red (Failed 2u)
+  ]
+  const quote = { regularMarketPrice: 181 }
+
+  const res = Model.evaluateStratChecklist("AMD", hourly, daily, quote)
+  assert.equal(res.direction, "SHORT")
+  assert.equal(res.isTradeable, true)
+  assert.equal(res.signalName, "60m Failed 2u Bearish Reversal")
+  assert.equal(res.triggerPrice, 183) // Open of rejection candle
+  assert.equal(res.stopPrice, 186)    // High of failed 2u push (ultra-tight structural stop!)
+  assert.equal(res.targetPrice, 180)  // T1 is prior 60m low (turning bar into Scenario 3)
+  assert.equal(res.targetName, "60m Low (Outside Bar Trigger)")
+
+  const r5 = res.rules.find(r => r.id === 5)
+  assert.equal(r5.passed, true)
+  const r6 = res.rules.find(r => r.id === 6)
+  assert.equal(r6.passed, true)
+  assert.match(r6.detail, /Failed 2u reversal/)
+
+  // Verify Discord alert includes Failed 2 Reversal execution mechanics
+  const alertStr = Model.discordAlertPayload(res, "TRIGGERED")
+  const alertJson = JSON.parse(alertStr)
+  assert.ok(alertJson.embeds[0].fields.some(f => f.name.includes("Failed 2 Reversal")))
+  assert.ok(!/[\u{1F300}-\u{1F9FF}]/u.test(alertStr), "Must contain no emojis")
+})
+
+test("evaluateStratChecklist blocks trade when 60m is green against red HTF (profit taking / pullback)", () => {
+  const daily = [
+    { timestamp: 100, open: 200, high: 205, low: 180, close: 195 },
+    { timestamp: 200, open: 195, high: 198, low: 170, close: 188 }, // Target 170 untagged
+    { timestamp: 300, open: 190, high: 191, low: 175, close: 181 }  // Red
+  ]
+  // Hourly: p60 is 185-180. Current c60 opened at 180, price is 183 (Green)
+  const hourly = [
+    { timestamp: 1000, open: 188, high: 189, low: 182, close: 184 },
+    { timestamp: 2000, open: 184, high: 185, low: 180, close: 180.5 },
+    { timestamp: 3000, open: 180, high: 183.5, low: 179.5, close: 183 } // Green
+  ]
+  const quote = { regularMarketPrice: 183 }
+
+  const res = Model.evaluateStratChecklist("AMD", hourly, daily, quote)
+  // Direction falls back to daily SHORT, but FTFC is broken
+  const r1 = res.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, false)
+  assert.match(r1.detail, /Conflict/)
+
+  const r6 = res.rules.find(r => r.id === 6)
+  assert.equal(r6.passed, false)
+  assert.match(r6.detail, /against SHORT/)
+
+  assert.equal(res.isTradeable, false)
+  assert.equal(res.isArmed, true)
+  assert.equal(res.statusTag, "ARMED - Waiting on 60m Flip to Red")
+  assert.equal(res.badgeText, "ARMED")
+  assert.equal(res.badgeTone, "amber")
+})
+
+test("evaluateStratChecklist prioritizes Macro Consensus (Month + Week) over opposing Day and arms on pullback", () => {
+  // All in Sep 2026:
+  // Sep 1 (Tue): open 200, close 190 (Month Open 200)
+  // Sep 7 (Mon): open 195, close 182 (Week Open 195)
+  // Sep 8 (Tue): open 180, price 184 (Day Open 180 -> Day Green, but Month & Week are Red)
+  const t1 = Math.floor(new Date("2026-09-01T14:30:00Z").getTime() / 1000)
+  const t2 = Math.floor(new Date("2026-09-07T14:30:00Z").getTime() / 1000)
+  const t3 = Math.floor(new Date("2026-09-08T14:30:00Z").getTime() / 1000)
+  const daily = [
+    { timestamp: t1, open: 200, high: 205, low: 188, close: 190 },
+    { timestamp: t2, open: 195, high: 196, low: 180, close: 182 },
+    { timestamp: t3, open: 180, high: 186, low: 181, close: 184 }
+  ]
+  const hourly = [
+    { timestamp: 1000, open: 180, high: 182, low: 179, close: 181 },
+    { timestamp: 2000, open: 181, high: 185, low: 180, close: 183 },
+    { timestamp: 3000, open: 183, high: 184.5, low: 182, close: 184 }
+  ]
+  const quote = { regularMarketPrice: 184 }
+
+  const res = Model.evaluateStratChecklist("AAPL", hourly, daily, quote)
+  // Macro Consensus (Month=R, Week=R) overrides Day=G, locking direction to SHORT
+  assert.equal(res.direction, "SHORT")
+  assert.equal(res.ftfcSummary.m, "R")
+  assert.equal(res.ftfcSummary.w, "R")
+  assert.equal(res.ftfcSummary.d, "G")
+  assert.equal(res.ftfcSummary.h60, "G")
+  assert.equal(res.ftfcSummary.isFTFC, false)
+
+  // Status reflects armed macro trend with pullback in force
+  assert.equal(res.isTradeable, false)
+  assert.equal(res.isArmed, true)
+  assert.equal(res.statusTag, "ARMED - Macro Trend SHORT (Day/60m Pullback)")
+  assert.equal(res.badgeText, "ARMED")
+  assert.equal(res.badgeTone, "amber")
+})
+
+test("evaluateStratChecklist detects run exhaustion when 3+ consecutive uncorrected 2-bars occur", () => {
+  const daily = [
+    { timestamp: 100, open: 100, high: 110, low: 98, close: 108 },
+    { timestamp: 200, open: 108, high: 140, low: 105, close: 118 }, // Target 1D High = 140
+    { timestamp: 300, open: 118, high: 125, low: 115, close: 123 }
+  ]
+  // 3 consecutive 2u bars in hourly before current bar
+  const hourly = [
+    { timestamp: 1000, open: 100, high: 105, low: 98, close: 104 },
+    { timestamp: 2000, open: 104, high: 110, low: 103, close: 109 }, // 2u (high 110 > 105, low 103 >= 98)
+    { timestamp: 3000, open: 109, high: 115, low: 108, close: 114 }, // 2u (high 115 > 110, low 108 >= 103)
+    { timestamp: 4000, open: 114, high: 120, low: 113, close: 119 }, // 2u (high 120 > 115, low 113 >= 108)
+    { timestamp: 5000, open: 119, high: 125, low: 118, close: 123 }  // current bar
+  ]
+  const quote = { regularMarketPrice: 123 }
+
+  const res = Model.evaluateStratChecklist("NVDA", hourly, daily, quote)
+  const r4 = res.rules.find(r => r.id === 4)
+  assert.equal(r4.passed, false)
+  assert.match(r4.detail, /Run exhaustion: 3 consecutive 2u bars/)
+  assert.equal(res.isTradeable, false)
+})
+
+test("stratHtfQuality accurately evaluates Grade A+ Macro Expansion and Grade A Failed 2 traps", () => {
+  // Case 1: Short Grade A+ Macro Expansion (Weekly 2d Red + Daily 2d Red)
+  const barM_bear = { scenario: "2d", color: "R", code: "2d" }
+  const barW_bear = { scenario: "2d", color: "R", code: "2d" }
+  const barD_bear = { scenario: "2d", color: "R", code: "2d" }
+  const qShortA_plus = Model.stratHtfQuality(barM_bear, barW_bear, barD_bear, false)
+  assert.equal(qShortA_plus.grade, "A+")
+  assert.equal(qShortA_plus.status, "MACRO_EXPANSION")
+  assert.equal(qShortA_plus.label, "Grade A+ (Macro Expansion)")
+  assert.equal(qShortA_plus.isTrending, true)
+  assert.equal(qShortA_plus.inForceCount, 3)
+
+  // Case 2: Long Grade A+ Macro Expansion (Weekly 2u Green + Daily 2u Green)
+  const barW_bull = { scenario: "2u", color: "G", code: "2u" }
+  const barD_bull = { scenario: "2u", color: "G", code: "2u" }
+  const qLongA_plus = Model.stratHtfQuality(null, barW_bull, barD_bull, true)
+  assert.equal(qLongA_plus.grade, "A+")
+  assert.equal(qLongA_plus.status, "MACRO_EXPANSION")
+  assert.equal(qLongA_plus.isTrending, true)
+  assert.equal(qLongA_plus.inForceCount, 2)
+
+  // Case 3: Weekly Failed 2u Reversal into Short (Grade A)
+  const barW_failed2u = { scenario: "2u", color: "R", code: "F2u", failed2u: true }
+  const barD_1 = { scenario: "1", color: "R", code: "1" }
+  const qShortFailed2 = Model.stratHtfQuality(null, barW_failed2u, barD_1, false)
+  assert.equal(qShortFailed2.grade, "A")
+  assert.equal(qShortFailed2.status, "FAILED_2_REVERSAL")
+  assert.equal(qShortFailed2.label, "Grade A (Weekly Failed 2u Reversal)")
+  assert.equal(qShortFailed2.hasHtfFailed2, true)
+
+  // Case 4: Daily Failed 2d Reversal into Long (Grade A)
+  const barW_flat = { scenario: "1", color: "G", code: "1" }
+  const barD_failed2d = { scenario: "2d", color: "G", code: "F2d", failed2d: true }
+  const qLongFailed2 = Model.stratHtfQuality(null, barW_flat, barD_failed2d, true)
+  assert.equal(qLongFailed2.grade, "A")
+  assert.equal(qLongFailed2.status, "FAILED_2_REVERSAL")
+  assert.equal(qLongFailed2.label, "Grade A (Daily Failed 2d Reversal)")
+  assert.equal(qLongFailed2.hasHtfFailed2, true)
+})
+
+test("stratHtfQuality detects Breakout Catalyst, Inside Compression Chop, and Opposing In-Force", () => {
+  // Case 1: Weekly in-force 2d with Daily Scenario 1 Inside Coiling (Breakout Catalyst)
+  const barW_2d = { scenario: "2d", color: "R", code: "2d" }
+  const barD_1 = { scenario: "1", color: "R", code: "1" }
+  const qCat = Model.stratHtfQuality(null, barW_2d, barD_1, false)
+  assert.equal(qCat.grade, "B")
+  assert.equal(qCat.status, "COMPRESSION_BREAKOUT")
+  assert.equal(qCat.label, "Grade B (Daily Inside Coiling / 1W In-Force)")
+  assert.equal(qCat.isTrending, true)
+
+  // Case 2: Multi-timeframe Inside Compression Chop (Both Weekly and Daily Scenario 1)
+  const barW_1 = { scenario: "1", color: "R", code: "1" }
+  const qChop = Model.stratHtfQuality(null, barW_1, barD_1, false)
+  assert.equal(qChop.grade, "C")
+  assert.equal(qChop.status, "COMPRESSION_CHOP")
+  assert.equal(qChop.label, "Grade C (HTF Inside Compression)")
+  assert.equal(qChop.isTrending, false)
+
+  // Case 3: Opposing HTF In-Force (Daily in-force 2u Green against Short trade)
+  const barD_opp = { scenario: "2u", color: "G", code: "2u" }
+  const qOpp = Model.stratHtfQuality(null, barW_2d, barD_opp, false)
+  assert.equal(qOpp.grade, "D")
+  assert.equal(qOpp.status, "OPPOSING_IN_FORCE")
+  assert.equal(qOpp.label, "Grade D (Opposing HTF In-Force)")
+  assert.equal(qOpp.isTrending, false)
+})
+
+test("evaluateStratChecklist enriches Rule 1 and checklist with HTF scenario verification and setup grade", () => {
+  // August 2026: Prior Month low = 150 (Untagged Macro Target)
+  const tM1 = Math.floor(new Date("2026-08-15T14:30:00Z").getTime() / 1000)
+
+  // September 2026:
+  // Week 1: Sep 1 (high 215, low 185) -> Prior Week low = 185
+  // Week 2: Sep 7 (Day 3: high 182, low 178) -> Prior Day low = 178
+  //         Sep 8 (Day 4: open 177, high 177, low 170, cur 174) -> Weekly 2d (<185) & Daily 2d (<178)
+  const tW1 = Math.floor(new Date("2026-09-01T14:30:00Z").getTime() / 1000)
+  const tW2_1 = Math.floor(new Date("2026-09-07T14:30:00Z").getTime() / 1000)
+  const tW2_2 = Math.floor(new Date("2026-09-08T14:30:00Z").getTime() / 1000)
+
+  const daily = [
+    { timestamp: tM1, open: 220, high: 225, low: 150, close: 200 },    // Prior Month (low 150)
+    { timestamp: tW1, open: 200, high: 215, low: 185, close: 190 },    // Prior Week (low 185)
+    { timestamp: tW2_1, open: 182, high: 182, low: 178, close: 180 },  // Prior Day (low 178)
+    { timestamp: tW2_2, open: 177, high: 177, low: 170, close: 174 }   // Current Day (Weekly 2d Red, Daily 2d Red)
+  ]
+
+  // Hourly 60m 2d-Red in-force targeting Prior Month Low 150
+  // p60: high 179, low 175 (trigger 175)
+  // c60: open 175, high 176, low 172, cur=174 -> 2d in-force
+  const hourly = [
+    { timestamp: tW2_2 - 7200, open: 180, high: 181, low: 176, close: 178 },
+    { timestamp: tW2_2 - 3600, open: 178, high: 179, low: 175, close: 177 },
+    { timestamp: tW2_2, open: 175, high: 176, low: 172, close: 174 }
+  ]
+
+  const quote = { regularMarketPrice: 174 }
+  const res = Model.evaluateStratChecklist("TSLA", hourly, daily, quote)
+
+  assert.equal(res.direction, "SHORT")
+  assert.equal(res.bar1D.scenario, "2d")
+  assert.equal(res.bar1D.color, "R")
+  assert.equal(res.bar1W.scenario, "2d")
+  assert.equal(res.bar1W.color, "R")
+
+  // HTF Quality Grade is A+ (Macro Expansion: both Weekly and Daily actively in-force 2d)
+  assert.equal(res.htfQuality.grade, "A+")
+  assert.equal(res.htfQuality.status, "MACRO_EXPANSION")
+  assert.equal(res.htfQuality.isTrending, true)
+
+  // Target locked to Prior Month Low 150 with room to run
+  assert.equal(res.targetName, "1M Low")
+  assert.equal(res.targetPrice, 150)
+  assert.equal(res.isTargetHit, false)
+
+  // Rule 1 details include timeframe scenarios and setup grade
+  const r1 = res.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, true)
+  assert.match(r1.detail, /1W\(2d R\)/)
+  assert.match(r1.detail, /1D\(2d R\)/)
+  assert.match(r1.detail, /60m\(2d R\)/)
+  assert.match(r1.detail, /Grade A\+ \(Macro Expansion\)/)
+
+  // Status tag reflects Grade A+ tradeable
+  assert.match(res.statusTag, /TRADEABLE \(Grade A\+\)/)
+  assert.equal(res.isTradeable, true)
+})
+
 
 
 

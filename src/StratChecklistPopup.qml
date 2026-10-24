@@ -83,6 +83,8 @@ Item {
                     color: {
                         if (!root.checklistData)
                             return root.dim;
+                        if (root.checklistData.isArmed)
+                            return (Color.accent !== undefined) ? Color.accent : Qt.rgba(0.92, 0.65, 0.15, 1);
                         if (!root.checklistData.isTradeable)
                             return root.dim;
                         return root.checklistData.direction === "SHORT" ? root.downColor : root.upColor;
@@ -100,6 +102,8 @@ Item {
                     if (!root.checklistData)
                         return "";
                     var dir = root.checklistData.direction ? ("[" + root.checklistData.direction + "] ") : "";
+                    if (root.checklistData.statusTag)
+                        return dir + root.checklistData.statusTag;
                     if (root.checklistData.isTargetHit)
                         return dir + "TARGET HIT (" + (root.checklistData.targetName || "T1") + ") - Exhaustion Risk";
                     if (root.checklistData.isStoppedOut)
@@ -113,6 +117,8 @@ Item {
                         return root.checklistData.direction === "SHORT" ? root.downColor : root.upColor;
                     if (root.checklistData.isStoppedOut)
                         return root.downColor;
+                    if (root.checklistData.isArmed)
+                        return (Color.accent !== undefined) ? Color.accent : Qt.rgba(0.92, 0.65, 0.15, 1);
                     if (!root.checklistData.isTradeable)
                         return root.dim;
                     return root.checklistData.direction === "SHORT" ? root.downColor : root.upColor;
@@ -127,6 +133,56 @@ Item {
                 visible: root.checklistData && root.checklistData.domino && root.checklistData.domino.hasDomino
                 text: (root.checklistData && root.checklistData.domino) ? ("DOMINO: " + root.checklistData.domino.targetName + " ($" + Number(root.checklistData.domino.targetPrice).toFixed(2) + ") -> " + root.checklistData.domino.triggeredSignal) : ""
                 color: (Color.accent !== undefined) ? Color.accent : root.upColor
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall - 1
+                font.bold: true
+                wrapMode: Text.WordWrap
+                width: parent.width
+            }
+
+            // 60m Strat State Indicator (if present)
+            Text {
+                visible: root.checklistData && root.checklistData.entryState && root.checklistData.entryState.state !== "UNKNOWN"
+                text: {
+                    if (!root.checklistData || !root.checklistData.entryState)
+                        return "";
+                    var bCode = (root.checklistData.bar60 && root.checklistData.bar60.code !== "-") ? (" [" + root.checklistData.bar60.code + "]") : "";
+                    return "60m STATE: " + root.checklistData.entryState.name.toUpperCase() + bCode;
+                }
+                color: (root.checklistData && root.checklistData.entryState && root.checklistData.entryState.passes) ? root.upColor : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall - 1
+                font.bold: true
+                wrapMode: Text.WordWrap
+                width: parent.width
+            }
+
+            // HTF Scenario Quality Indicator (if present)
+            Text {
+                visible: root.checklistData && root.checklistData.htfQuality && root.checklistData.htfQuality.label !== ""
+                text: {
+                    if (!root.checklistData || !root.checklistData.htfQuality)
+                        return "";
+                    var htf = root.checklistData.htfScenarios;
+                    var htfStr = "";
+                    if (htf && htf.bar1W && htf.bar1D) {
+                        var wCode = htf.bar1W.code !== "-" ? htf.bar1W.code : htf.bar1W.scenario;
+                        var dCode = htf.bar1D.code !== "-" ? htf.bar1D.code : htf.bar1D.scenario;
+                        if (wCode !== "-" || dCode !== "-")
+                            htfStr = " [1W:" + wCode + " 1D:" + dCode + "]";
+                    }
+                    return "HTF SETUP: " + root.checklistData.htfQuality.label.toUpperCase() + htfStr;
+                }
+                color: {
+                    if (!root.checklistData || !root.checklistData.htfQuality)
+                        return root.dim;
+                    var gr = root.checklistData.htfQuality.grade;
+                    if (gr === "A+" || gr === "A")
+                        return root.upColor;
+                    if (gr === "B")
+                        return (Color.accent !== undefined) ? Color.accent : Qt.rgba(0.92, 0.65, 0.15, 1);
+                    return root.dim;
+                }
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall - 1
                 font.bold: true
