@@ -157,6 +157,39 @@ Item {
                 width: parent.width
             }
 
+            // HTF Scenario Quality Indicator (if present)
+            Text {
+                visible: root.checklistData && root.checklistData.htfQuality && root.checklistData.htfQuality.label !== ""
+                text: {
+                    if (!root.checklistData || !root.checklistData.htfQuality)
+                        return "";
+                    var htf = root.checklistData.htfScenarios;
+                    var htfStr = "";
+                    if (htf && htf.bar1W && htf.bar1D) {
+                        var wCode = htf.bar1W.code !== "-" ? htf.bar1W.code : htf.bar1W.scenario;
+                        var dCode = htf.bar1D.code !== "-" ? htf.bar1D.code : htf.bar1D.scenario;
+                        if (wCode !== "-" || dCode !== "-")
+                            htfStr = " [1W:" + wCode + " 1D:" + dCode + "]";
+                    }
+                    return "HTF SETUP: " + root.checklistData.htfQuality.label.toUpperCase() + htfStr;
+                }
+                color: {
+                    if (!root.checklistData || !root.checklistData.htfQuality)
+                        return root.dim;
+                    var gr = root.checklistData.htfQuality.grade;
+                    if (gr === "A+" || gr === "A")
+                        return root.upColor;
+                    if (gr === "B")
+                        return (Color.accent !== undefined) ? Color.accent : Qt.rgba(0.92, 0.65, 0.15, 1);
+                    return root.dim;
+                }
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall - 1
+                font.bold: true
+                wrapMode: Text.WordWrap
+                width: parent.width
+            }
+
             // Divider
             Rectangle {
                 width: parent.width

@@ -1637,6 +1637,195 @@ function extractBar60(hourlyCandles, price) {
   return { scenario: bar.scenario, color: bar.color, code: bar.code, label: bar.label }
 }
 
+// HTF setup quality & scenario alignment relative to trade direction.
+//   Grade A+ (Macro Expansion)      Weekly + Daily both in-force 2 in trade direction
+//   Grade A  (HTF Failed 2 Reversal) Weekly or Daily failed 2 reversal in trade direction
+//   Grade B  (Breakout Catalyst)     1 in-force 2 with inside bar coiling, or single TF in-force
+//   Grade C  (Inside Compression)    Both Weekly and Daily are Scenario 1 inside bars
+//   Grade D  (Opposing In-Force)     Weekly or Daily in-force 2 against trade direction
+function stratHtfQuality(bar1M, bar1W, bar1D, isLong) {
+  var m = bar1M || { scenario: "-", color: "-", code: "-" }
+  var w = bar1W || { scenario: "-", color: "-", code: "-" }
+  var d = bar1D || { scenario: "-", color: "-", code: "-" }
+
+  var with2 = isLong ? "2u" : "2d"
+  var against2 = isLong ? "2d" : "2u"
+  var withCol = isLong ? "G" : "R"
+  var againstCol = isLong ? "R" : "G"
+
+  var mInForce = (m.scenario === with2 && m.color === withCol)
+  var wInForce = (w.scenario === with2 && w.color === withCol)
+  var dInForce = (d.scenario === with2 && d.color === withCol)
+
+  var mFailed2 = Boolean(m.failed2d !== undefined ? (isLong ? m.failed2d : m.failed2u) : (m.scenario === against2 && m.color === withCol))
+  var wFailed2 = Boolean(w.failed2d !== undefined ? (isLong ? w.failed2d : w.failed2u) : (w.scenario === against2 && w.color === withCol))
+  var dFailed2 = Boolean(d.failed2d !== undefined ? (isLong ? d.failed2d : d.failed2u) : (d.scenario === against2 && d.color === withCol))
+
+  var mInside = (m.scenario === "1")
+  var wInside = (w.scenario === "1")
+  var dInside = (d.scenario === "1")
+
+  var mOpposing = (m.scenario === against2 && m.color === againstCol)
+  var wOpposing = (w.scenario === against2 && w.color === againstCol)
+  var dOpposing = (d.scenario === against2 && d.color === againstCol)
+
+  var inForceCount = (mInForce ? 1 : 0) + (wInForce ? 1 : 0) + (dInForce ? 1 : 0)
+  var insideCount = (mInside ? 1 : 0) + (wInside ? 1 : 0) + (dInside ? 1 : 0)
+  var hasHtfFailed2 = mFailed2 || wFailed2 || dFailed2
+
+  // 1. Opposing In-Force Scenario 2 (Strong counter-trend expansion)
+  if (wOpposing || dOpposing) {
+    var oppTf = wOpposing ? "Weekly" : "Daily"
+    return {
+      grade: "D",
+      status: "OPPOSING_IN_FORCE",
+      label: "Grade D (Opposing HTF In-Force)",
+      details: oppTf + " in-force " + against2 + " against " + (isLong ? "LONG" : "SHORT"),
+      isTrending: false,
+      inForceCount: inForceCount,
+      insideCount: insideCount,
+      hasHtfFailed2: hasHtfFailed2
+    }
+  }
+
+  // 2. HTF Failed 2 Reversals (High-conviction trap setup)
+  if (wFailed2) {
+    return {
+      grade: "A",
+      status: "FAILED_2_REVERSAL",
+      label: "Grade A (Weekly Failed " + against2 + " Reversal)",
+      details: "Weekly failed " + against2 + " trapped opposing traders; reversing into " + (isLong ? "LONG" : "SHORT"),
+      isTrending: true,
+      inForceCount: inForceCount,
+      insideCount: insideCount,
+      hasHtfFailed2: true
+    }
+  }
+  if (dFailed2) {
+    return {
+      grade: "A",
+      status: "FAILED_2_REVERSAL",
+      label: "Grade A (Daily Failed " + against2 + " Reversal)",
+      details: "Daily failed " + against2 + " trapped opposing traders; reversing into " + (isLong ? "LONG" : "SHORT"),
+      isTrending: true,
+      inForceCount: inForceCount,
+      insideCount: insideCount,
+      hasHtfFailed2: true
+    }
+  }
+
+  // 3. Macro Trend Expansion (Weekly + Daily in-force in trade direction)
+  if (wInForce && dInForce) {
+    var expPrefix = mInForce ? "Monthly, Weekly, and Daily all" : "Weekly and Daily actively"
+    return {
+      grade: "A+",
+      status: "MACRO_EXPANSION",
+      label: "Grade A+ (Macro Expansion)",
+      details: expPrefix + " in-force " + with2 + " expanding in trade direction",
+      isTrending: true,
+      inForceCount: inForceCount,
+      insideCount: insideCount,
+      hasHtfFailed2: false
+    }
+  }
+
+  // 4. Trending with Breakout Catalyst / Inside bar coiling
+  if (wInForce && dInside) {
+    return {
+      grade: "B",
+      status: "COMPRESSION_BREAKOUT",
+      label: "Grade B (Daily Inside Coiling / 1W In-Force)",
+      details: "Weekly in-force " + with2 + " with Daily inside bar coiling for breakout",
+      isTrending: true,
+      inForceCount: inForceCount,
+      insideCount: insideCount,
+      hasHtfFailed2: false
+    }
+  }
+  if (dInForce && wInside) {
+    return {
+      grade: "B",
+      status: "COMPRESSION_BREAKOUT",
+      label: "Grade B (Weekly Inside Breakout Catalyst)",
+      details: "Daily in-force " + with2 + " driving toward Weekly inside bar boundary",
+      isTrending: true,
+      inForceCount: inForceCount,
+      insideCount: insideCount,
+      hasHtfFailed2: false
+    }
+  }
+
+  // 5. Single Timeframe In-Force
+  if (wInForce || dInForce) {
+    var tfName = wInForce ? "Weekly" : "Daily"
+    return {
+      grade: "B",
+      status: "TRENDING_IN_FORCE",
+      label: "Grade B (" + tfName + " In-Force)",
+      details: tfName + " in-force " + with2 + " in trade direction",
+      isTrending: true,
+      inForceCount: inForceCount,
+      insideCount: insideCount,
+      hasHtfFailed2: false
+    }
+  }
+
+  // 6. Multi-Timeframe Inside Compression (Chop / consolidation)
+  if (wInside && dInside) {
+    return {
+      grade: "C",
+      status: "COMPRESSION_CHOP",
+      label: "Grade C (HTF Inside Compression)",
+      details: "Weekly and Daily are both Scenario 1 inside bars (consolidation chop)",
+      isTrending: false,
+      inForceCount: 0,
+      insideCount: insideCount,
+      hasHtfFailed2: false
+    }
+  }
+
+  // 7. Single Timeframe Inside
+  if (wInside || dInside) {
+    var inTf = wInside ? "Weekly" : "Daily"
+    return {
+      grade: "B",
+      status: "HTF_INSIDE",
+      label: "Grade B (" + inTf + " Inside Bar)",
+      details: inTf + " is Scenario 1 inside bar",
+      isTrending: false,
+      inForceCount: 0,
+      insideCount: insideCount,
+      hasHtfFailed2: false
+    }
+  }
+
+  // 8. Scenario 3 (Outside bar) or Default Continuity
+  if (w.scenario === "3" || d.scenario === "3") {
+    var outTf = (w.scenario === "3") ? "Weekly" : "Daily"
+    return {
+      grade: "B",
+      status: "OUTSIDE_EXPANSION",
+      label: "Grade B (" + outTf + " Scenario 3 Outside)",
+      details: outTf + " outside bar; range expanded in both directions",
+      isTrending: true,
+      inForceCount: inForceCount,
+      insideCount: insideCount,
+      hasHtfFailed2: false
+    }
+  }
+
+  return {
+    grade: "B",
+    status: "COLOR_ALIGNED",
+    label: "Grade B (HTF Continuity)",
+    details: "Higher timeframes aligned by color",
+    isTrending: false,
+    inForceCount: inForceCount,
+    insideCount: insideCount,
+    hasHtfFailed2: false
+  }
+}
+
 function computeStratBinaryDetails(candles, liveQuote) {
   if (!candles || candles.length < 2) {
     return {
@@ -3048,15 +3237,54 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var nowSec = (nowDate instanceof Date) ? Math.floor(nowDate.getTime() / 1000) : null
   var bar60 = stratBarState(c60, p60, currentPrice, nowSec, 3600)
 
+  // Synthesize current day / week if liveQuote has dayHigh / dayLow
+  var c1D_synth = c1D
+  if (c1D && liveQuote) {
+    var dh = finiteOrNull(liveQuote.dayHigh)
+    var dl = finiteOrNull(liveQuote.dayLow)
+    var ch = Number(c1D.high)
+    var cl = Number(c1D.low)
+    if ((dh !== null && dh > ch) || (dl !== null && dl < cl)) {
+      c1D_synth = {
+        open: c1D.open,
+        high: (dh !== null && dh > ch) ? dh : ch,
+        low: (dl !== null && dl < cl) ? dl : cl,
+        close: c1D.close,
+        timestamp: c1D.timestamp
+      }
+    }
+  }
+
+  var c1W_synth = c1W
+  if (c1W && c1D_synth) {
+    var wh = Number(c1W.high)
+    var wl = Number(c1W.low)
+    var dSynthH = Number(c1D_synth.high)
+    var dSynthL = Number(c1D_synth.low)
+    if (dSynthH > wh || dSynthL < wl) {
+      c1W_synth = {
+        open: c1W.open,
+        high: Math.max(wh, dSynthH),
+        low: Math.min(wl, dSynthL),
+        close: c1W.close,
+        timestamp: c1W.timestamp
+      }
+    }
+  }
+
+  var bar1D = stratBarState(c1D_synth, p1D, currentPrice, null, 86400)
+  var bar1W = stratBarState(c1W_synth, p1W, currentPrice, null, 604800)
+  var bar1M = stratBarState(c1M, p1M, currentPrice, null, 2678400)
+
   var price60 = bar60.price !== null ? bar60.price : ((qPrice !== null && c60) ? qPrice : (c60 ? Number(c60.close) : null))
-  var price1D = (qPrice !== null && c1D) ? qPrice : (c1D ? Number(c1D.close) : null)
-  var price1W = (qPrice !== null && c1W) ? qPrice : (c1W ? Number(c1W.close) : null)
-  var price1M = (qPrice !== null && c1M) ? qPrice : (c1M ? Number(c1M.close) : null)
+  var price1D = bar1D.price !== null ? bar1D.price : ((qPrice !== null && c1D) ? qPrice : (c1D ? Number(c1D.close) : null))
+  var price1W = bar1W.price !== null ? bar1W.price : ((qPrice !== null && c1W) ? qPrice : (c1W ? Number(c1W.close) : null))
+  var price1M = bar1M.price !== null ? bar1M.price : ((qPrice !== null && c1M) ? qPrice : (c1M ? Number(c1M.close) : null))
 
   var col60 = bar60.color !== "-" ? bar60.color : ((c60 && price60 !== null) ? (price60 >= Number(c60.open) ? "G" : "R") : "-")
-  var col1D = (c1D && price1D !== null) ? (price1D >= Number(c1D.open) ? "G" : "R") : "-"
-  var col1W = (c1W && price1W !== null) ? (price1W >= Number(c1W.open) ? "G" : "R") : "-"
-  var col1M = (c1M && price1M !== null) ? (price1M >= Number(c1M.open) ? "G" : "R") : "-"
+  var col1D = bar1D.color !== "-" ? bar1D.color : ((c1D && price1D !== null) ? (price1D >= Number(c1D.open) ? "G" : "R") : "-")
+  var col1W = bar1W.color !== "-" ? bar1W.color : ((c1W && price1W !== null) ? (price1W >= Number(c1W.open) ? "G" : "R") : "-")
+  var col1M = bar1M.color !== "-" ? bar1M.color : ((c1M && price1M !== null) ? (price1M >= Number(c1M.open) ? "G" : "R") : "-")
 
   var isBullishFTFC = (col60 === "G" && col1D === "G" && col1W === "G" && col1M === "G")
   var isBearishFTFC = (col60 === "R" && col1D === "R" && col1W === "R" && col1M === "R")
@@ -3080,9 +3308,19 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     direction = "SHORT"
   }
 
+  var isLong = (direction === "LONG")
+  var htfQuality = stratHtfQuality(bar1M, bar1W, bar1D, isLong)
+
   // 1. FTFC Polarity
   var r1Pass = isBullishFTFC || isBearishFTFC
-  var r1Detail = "1M(" + col1M + ") 1W(" + col1W + ") 1D(" + col1D + ") 60m(" + col60 + ")"
+
+  function fmtHtf(code, col) {
+    if (code && code !== "-") return code + " " + col
+    return col
+  }
+
+  var tfStr = "1M(" + fmtHtf(bar1M.code, col1M) + ") 1W(" + fmtHtf(bar1W.code, col1W) + ") 1D(" + fmtHtf(bar1D.code, col1D) + ") 60m(" + fmtHtf(bar60.code, col60) + ")"
+  var r1Detail = tfStr + (htfQuality && htfQuality.label ? (" — " + htfQuality.label) : "")
   if (!r1Pass) {
     r1Detail = "Conflict: " + r1Detail
   }
@@ -3426,7 +3664,17 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
 
   // 9. Runway Quality
   var r9Pass = r7Pass
-  var r9Detail = r9Pass ? (domino && domino.hasDomino ? ("Runway clear toward " + targetName + " (Catalyst for " + domino.triggeredSignal + ")") : ("Runway clear toward " + targetName)) : "Opposing pivot blocks path or target untagged"
+  var r9Detail = "Opposing pivot blocks path or target untagged"
+  if (r9Pass) {
+    if (domino && domino.hasDomino) {
+      r9Detail = "Runway clear toward " + targetName + " (Catalyst for " + domino.triggeredSignal + ")"
+    } else {
+      r9Detail = "Runway clear toward " + targetName
+    }
+    if (htfQuality && htfQuality.status === "COMPRESSION_CHOP") {
+      r9Detail += " (Caution: HTF inside compression)"
+    }
+  }
 
   var rationales = stratRuleRationales()
 
@@ -3458,7 +3706,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var statusTag = ""
 
   if (isTradeable) {
-    statusTag = "TRADEABLE - All 9 Rules Verified"
+    var gr = (htfQuality && htfQuality.grade) ? (" (Grade " + htfQuality.grade + ")") : ""
+    statusTag = "TRADEABLE" + gr + " - All 9 Rules Verified"
   } else if (isTargetHit) {
     statusTag = "TARGET HIT (" + (targetName || "T1") + ") - Exhaustion Risk"
   } else if (isStoppedOut) {
@@ -3520,11 +3769,27 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     stopPrice: isFinite(stopPrice) ? stopPrice : null,
     bar60: bar60,
     entryState: entryState,
+    bar1D: bar1D,
+    bar1W: bar1W,
+    bar1M: bar1M,
+    htfScenarios: {
+      m: bar1M.scenario,
+      w: bar1W.scenario,
+      d: bar1D.scenario,
+      bar1M: bar1M,
+      bar1W: bar1W,
+      bar1D: bar1D
+    },
+    htfQuality: htfQuality,
     ftfcSummary: {
       m: col1M,
       w: col1W,
       d: col1D,
       h60: col60,
+      sc1M: bar1M.scenario,
+      sc1W: bar1W.scenario,
+      sc1D: bar1D.scenario,
+      sc60: bar60.scenario,
       isFTFC: isBullishFTFC || isBearishFTFC
     },
     rules: rules
@@ -3618,9 +3883,10 @@ function discordAlertPayload(chk, eventType) {
     if (chk.ftfcSummary) {
       var f = chk.ftfcSummary
       var cMap = { "G": "Green", "R": "Red", "-": "Flat" }
+      var htfNote = (chk.htfQuality && chk.htfQuality.label) ? ("\n↳ Setup Grade: **" + chk.htfQuality.label + "**") : ""
       fields.push({
         name: "Timeframe Continuity (FTFC)",
-        value: "1M: `" + (cMap[f.m] || f.m) + "` | 1W: `" + (cMap[f.w] || f.w) + "` | 1D: `" + (cMap[f.d] || f.d) + "` | 60m: `" + (cMap[f.h60] || f.h60) + "`",
+        value: "1M: `" + (cMap[f.m] || f.m) + "` | 1W: `" + (cMap[f.w] || f.w) + "` | 1D: `" + (cMap[f.d] || f.d) + "` | 60m: `" + (cMap[f.h60] || f.h60) + "`" + htfNote,
         inline: false
       })
     }
@@ -3796,6 +4062,7 @@ if (typeof module !== "undefined") {
     stratLivePrice: stratLivePrice,
     stratBarState: stratBarState,
     stratEntryState: stratEntryState,
+    stratHtfQuality: stratHtfQuality,
     extractBar60: extractBar60
   }
 }

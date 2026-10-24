@@ -1642,6 +1642,133 @@ test("evaluateStratChecklist detects run exhaustion when 3+ consecutive uncorrec
   assert.equal(res.isTradeable, false)
 })
 
+test("stratHtfQuality accurately evaluates Grade A+ Macro Expansion and Grade A Failed 2 traps", () => {
+  // Case 1: Short Grade A+ Macro Expansion (Weekly 2d Red + Daily 2d Red)
+  const barM_bear = { scenario: "2d", color: "R", code: "2d" }
+  const barW_bear = { scenario: "2d", color: "R", code: "2d" }
+  const barD_bear = { scenario: "2d", color: "R", code: "2d" }
+  const qShortA_plus = Model.stratHtfQuality(barM_bear, barW_bear, barD_bear, false)
+  assert.equal(qShortA_plus.grade, "A+")
+  assert.equal(qShortA_plus.status, "MACRO_EXPANSION")
+  assert.equal(qShortA_plus.label, "Grade A+ (Macro Expansion)")
+  assert.equal(qShortA_plus.isTrending, true)
+  assert.equal(qShortA_plus.inForceCount, 3)
+
+  // Case 2: Long Grade A+ Macro Expansion (Weekly 2u Green + Daily 2u Green)
+  const barW_bull = { scenario: "2u", color: "G", code: "2u" }
+  const barD_bull = { scenario: "2u", color: "G", code: "2u" }
+  const qLongA_plus = Model.stratHtfQuality(null, barW_bull, barD_bull, true)
+  assert.equal(qLongA_plus.grade, "A+")
+  assert.equal(qLongA_plus.status, "MACRO_EXPANSION")
+  assert.equal(qLongA_plus.isTrending, true)
+  assert.equal(qLongA_plus.inForceCount, 2)
+
+  // Case 3: Weekly Failed 2u Reversal into Short (Grade A)
+  const barW_failed2u = { scenario: "2u", color: "R", code: "F2u", failed2u: true }
+  const barD_1 = { scenario: "1", color: "R", code: "1" }
+  const qShortFailed2 = Model.stratHtfQuality(null, barW_failed2u, barD_1, false)
+  assert.equal(qShortFailed2.grade, "A")
+  assert.equal(qShortFailed2.status, "FAILED_2_REVERSAL")
+  assert.equal(qShortFailed2.label, "Grade A (Weekly Failed 2u Reversal)")
+  assert.equal(qShortFailed2.hasHtfFailed2, true)
+
+  // Case 4: Daily Failed 2d Reversal into Long (Grade A)
+  const barW_flat = { scenario: "1", color: "G", code: "1" }
+  const barD_failed2d = { scenario: "2d", color: "G", code: "F2d", failed2d: true }
+  const qLongFailed2 = Model.stratHtfQuality(null, barW_flat, barD_failed2d, true)
+  assert.equal(qLongFailed2.grade, "A")
+  assert.equal(qLongFailed2.status, "FAILED_2_REVERSAL")
+  assert.equal(qLongFailed2.label, "Grade A (Daily Failed 2d Reversal)")
+  assert.equal(qLongFailed2.hasHtfFailed2, true)
+})
+
+test("stratHtfQuality detects Breakout Catalyst, Inside Compression Chop, and Opposing In-Force", () => {
+  // Case 1: Weekly in-force 2d with Daily Scenario 1 Inside Coiling (Breakout Catalyst)
+  const barW_2d = { scenario: "2d", color: "R", code: "2d" }
+  const barD_1 = { scenario: "1", color: "R", code: "1" }
+  const qCat = Model.stratHtfQuality(null, barW_2d, barD_1, false)
+  assert.equal(qCat.grade, "B")
+  assert.equal(qCat.status, "COMPRESSION_BREAKOUT")
+  assert.equal(qCat.label, "Grade B (Daily Inside Coiling / 1W In-Force)")
+  assert.equal(qCat.isTrending, true)
+
+  // Case 2: Multi-timeframe Inside Compression Chop (Both Weekly and Daily Scenario 1)
+  const barW_1 = { scenario: "1", color: "R", code: "1" }
+  const qChop = Model.stratHtfQuality(null, barW_1, barD_1, false)
+  assert.equal(qChop.grade, "C")
+  assert.equal(qChop.status, "COMPRESSION_CHOP")
+  assert.equal(qChop.label, "Grade C (HTF Inside Compression)")
+  assert.equal(qChop.isTrending, false)
+
+  // Case 3: Opposing HTF In-Force (Daily in-force 2u Green against Short trade)
+  const barD_opp = { scenario: "2u", color: "G", code: "2u" }
+  const qOpp = Model.stratHtfQuality(null, barW_2d, barD_opp, false)
+  assert.equal(qOpp.grade, "D")
+  assert.equal(qOpp.status, "OPPOSING_IN_FORCE")
+  assert.equal(qOpp.label, "Grade D (Opposing HTF In-Force)")
+  assert.equal(qOpp.isTrending, false)
+})
+
+test("evaluateStratChecklist enriches Rule 1 and checklist with HTF scenario verification and setup grade", () => {
+  // August 2026: Prior Month low = 150 (Untagged Macro Target)
+  const tM1 = Math.floor(new Date("2026-08-15T14:30:00Z").getTime() / 1000)
+
+  // September 2026:
+  // Week 1: Sep 1 (high 215, low 185) -> Prior Week low = 185
+  // Week 2: Sep 7 (Day 3: high 182, low 178) -> Prior Day low = 178
+  //         Sep 8 (Day 4: open 177, high 177, low 170, cur 174) -> Weekly 2d (<185) & Daily 2d (<178)
+  const tW1 = Math.floor(new Date("2026-09-01T14:30:00Z").getTime() / 1000)
+  const tW2_1 = Math.floor(new Date("2026-09-07T14:30:00Z").getTime() / 1000)
+  const tW2_2 = Math.floor(new Date("2026-09-08T14:30:00Z").getTime() / 1000)
+
+  const daily = [
+    { timestamp: tM1, open: 220, high: 225, low: 150, close: 200 },    // Prior Month (low 150)
+    { timestamp: tW1, open: 200, high: 215, low: 185, close: 190 },    // Prior Week (low 185)
+    { timestamp: tW2_1, open: 182, high: 182, low: 178, close: 180 },  // Prior Day (low 178)
+    { timestamp: tW2_2, open: 177, high: 177, low: 170, close: 174 }   // Current Day (Weekly 2d Red, Daily 2d Red)
+  ]
+
+  // Hourly 60m 2d-Red in-force targeting Prior Month Low 150
+  // p60: high 179, low 175 (trigger 175)
+  // c60: open 175, high 176, low 172, cur=174 -> 2d in-force
+  const hourly = [
+    { timestamp: tW2_2 - 7200, open: 180, high: 181, low: 176, close: 178 },
+    { timestamp: tW2_2 - 3600, open: 178, high: 179, low: 175, close: 177 },
+    { timestamp: tW2_2, open: 175, high: 176, low: 172, close: 174 }
+  ]
+
+  const quote = { regularMarketPrice: 174 }
+  const res = Model.evaluateStratChecklist("TSLA", hourly, daily, quote)
+
+  assert.equal(res.direction, "SHORT")
+  assert.equal(res.bar1D.scenario, "2d")
+  assert.equal(res.bar1D.color, "R")
+  assert.equal(res.bar1W.scenario, "2d")
+  assert.equal(res.bar1W.color, "R")
+
+  // HTF Quality Grade is A+ (Macro Expansion: both Weekly and Daily actively in-force 2d)
+  assert.equal(res.htfQuality.grade, "A+")
+  assert.equal(res.htfQuality.status, "MACRO_EXPANSION")
+  assert.equal(res.htfQuality.isTrending, true)
+
+  // Target locked to Prior Month Low 150 with room to run
+  assert.equal(res.targetName, "1M Low")
+  assert.equal(res.targetPrice, 150)
+  assert.equal(res.isTargetHit, false)
+
+  // Rule 1 details include timeframe scenarios and setup grade
+  const r1 = res.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, true)
+  assert.match(r1.detail, /1W\(2d R\)/)
+  assert.match(r1.detail, /1D\(2d R\)/)
+  assert.match(r1.detail, /60m\(2d R\)/)
+  assert.match(r1.detail, /Grade A\+ \(Macro Expansion\)/)
+
+  // Status tag reflects Grade A+ tradeable
+  assert.match(res.statusTag, /TRADEABLE \(Grade A\+\)/)
+  assert.equal(res.isTradeable, true)
+})
+
 
 
 
