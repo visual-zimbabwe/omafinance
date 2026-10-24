@@ -1458,11 +1458,11 @@ test("stratBarState and stratEntryState classify bar states, failed 2 reversals,
 })
 
 test("evaluateStratChecklist blocks 1-Red inside chop despite full bearish FTFC", () => {
-  // All timeframes Red
+  // All timeframes Red with untagged target 170
   const daily = [
-    { timestamp: 100, open: 200, high: 205, low: 190, close: 195 },
-    { timestamp: 200, open: 195, high: 198, low: 185, close: 188 },
-    { timestamp: 300, open: 190, high: 191, low: 180, close: 182 } // Red
+    { timestamp: 100, open: 200, high: 205, low: 180, close: 195 },
+    { timestamp: 200, open: 195, high: 198, low: 170, close: 188 }, // 1D Low = 170 (Target)
+    { timestamp: 300, open: 190, high: 191, low: 180, close: 182 }  // Red
   ]
   // Hourly: p60 is 185-180, current c60 is 184-181 (Inside 1), open 183, price 182 (Red)
   const hourly = [
@@ -1481,8 +1481,12 @@ test("evaluateStratChecklist blocks 1-Red inside chop despite full bearish FTFC"
   const r6 = res.rules.find(r => r.id === 6)
   assert.equal(r6.passed, false)
   assert.match(r6.detail, /continuity but no trigger/)
-  // Overall setup is BLOCKED from execution
+  // Overall setup is BLOCKED from execution but ARMED waiting for break
   assert.equal(res.isTradeable, false)
+  assert.equal(res.isArmed, true)
+  assert.equal(res.statusTag, "ARMED - 60m Inside (Wait for Break)")
+  assert.equal(res.badgeText, "ARMED")
+  assert.equal(res.badgeTone, "amber")
 })
 
 test("evaluateStratChecklist executes tradeable short on 60m 2d-Red in-force", () => {
@@ -1549,9 +1553,9 @@ test("evaluateStratChecklist triggers tradeable Failed 2u Reversal with tight st
 
 test("evaluateStratChecklist blocks trade when 60m is green against red HTF (profit taking / pullback)", () => {
   const daily = [
-    { timestamp: 100, open: 200, high: 205, low: 190, close: 195 },
-    { timestamp: 200, open: 195, high: 198, low: 185, close: 188 },
-    { timestamp: 300, open: 190, high: 191, low: 175, close: 181 } // Red
+    { timestamp: 100, open: 200, high: 205, low: 180, close: 195 },
+    { timestamp: 200, open: 195, high: 198, low: 170, close: 188 }, // Target 170 untagged
+    { timestamp: 300, open: 190, high: 191, low: 175, close: 181 }  // Red
   ]
   // Hourly: p60 is 185-180. Current c60 opened at 180, price is 183 (Green)
   const hourly = [
@@ -1572,6 +1576,47 @@ test("evaluateStratChecklist blocks trade when 60m is green against red HTF (pro
   assert.match(r6.detail, /against SHORT/)
 
   assert.equal(res.isTradeable, false)
+  assert.equal(res.isArmed, true)
+  assert.equal(res.statusTag, "ARMED - Waiting on 60m Flip to Red")
+  assert.equal(res.badgeText, "ARMED")
+  assert.equal(res.badgeTone, "amber")
+})
+
+test("evaluateStratChecklist prioritizes Macro Consensus (Month + Week) over opposing Day and arms on pullback", () => {
+  // All in Sep 2026:
+  // Sep 1 (Tue): open 200, close 190 (Month Open 200)
+  // Sep 7 (Mon): open 195, close 182 (Week Open 195)
+  // Sep 8 (Tue): open 180, price 184 (Day Open 180 -> Day Green, but Month & Week are Red)
+  const t1 = Math.floor(new Date("2026-09-01T14:30:00Z").getTime() / 1000)
+  const t2 = Math.floor(new Date("2026-09-07T14:30:00Z").getTime() / 1000)
+  const t3 = Math.floor(new Date("2026-09-08T14:30:00Z").getTime() / 1000)
+  const daily = [
+    { timestamp: t1, open: 200, high: 205, low: 188, close: 190 },
+    { timestamp: t2, open: 195, high: 196, low: 180, close: 182 },
+    { timestamp: t3, open: 180, high: 186, low: 181, close: 184 }
+  ]
+  const hourly = [
+    { timestamp: 1000, open: 180, high: 182, low: 179, close: 181 },
+    { timestamp: 2000, open: 181, high: 185, low: 180, close: 183 },
+    { timestamp: 3000, open: 183, high: 184.5, low: 182, close: 184 }
+  ]
+  const quote = { regularMarketPrice: 184 }
+
+  const res = Model.evaluateStratChecklist("AAPL", hourly, daily, quote)
+  // Macro Consensus (Month=R, Week=R) overrides Day=G, locking direction to SHORT
+  assert.equal(res.direction, "SHORT")
+  assert.equal(res.ftfcSummary.m, "R")
+  assert.equal(res.ftfcSummary.w, "R")
+  assert.equal(res.ftfcSummary.d, "G")
+  assert.equal(res.ftfcSummary.h60, "G")
+  assert.equal(res.ftfcSummary.isFTFC, false)
+
+  // Status reflects armed macro trend with pullback in force
+  assert.equal(res.isTradeable, false)
+  assert.equal(res.isArmed, true)
+  assert.equal(res.statusTag, "ARMED - Macro Trend SHORT (Day/60m Pullback)")
+  assert.equal(res.badgeText, "ARMED")
+  assert.equal(res.badgeTone, "amber")
 })
 
 test("evaluateStratChecklist detects run exhaustion when 3+ consecutive uncorrected 2-bars occur", () => {

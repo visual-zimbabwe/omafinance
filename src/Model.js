@@ -3060,7 +3060,25 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
 
   var isBullishFTFC = (col60 === "G" && col1D === "G" && col1W === "G" && col1M === "G")
   var isBearishFTFC = (col60 === "R" && col1D === "R" && col1W === "R" && col1M === "R")
-  var direction = isBullishFTFC ? "LONG" : (isBearishFTFC ? "SHORT" : (col1D === "G" ? "LONG" : (col1D === "R" ? "SHORT" : "CONFLICT")))
+
+  // Macro HTF Consensus: Month and Week take precedence over Day
+  var isMacroBullish = (col1M === "G" && col1W === "G")
+  var isMacroBearish = (col1M === "R" && col1W === "R")
+
+  var direction = "CONFLICT"
+  if (isBullishFTFC) {
+    direction = "LONG"
+  } else if (isBearishFTFC) {
+    direction = "SHORT"
+  } else if (isMacroBullish) {
+    direction = "LONG"
+  } else if (isMacroBearish) {
+    direction = "SHORT"
+  } else if (col1D === "G") {
+    direction = "LONG"
+  } else if (col1D === "R") {
+    direction = "SHORT"
+  }
 
   // 1. FTFC Polarity
   var r1Pass = isBullishFTFC || isBearishFTFC
@@ -3430,10 +3448,52 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   }
 
   var isTradeable = (passedCount === rules.length) && !isTargetHit && !isStoppedOut
+
+  // Armed / Standby State Detection: Macro HTF direction is locked in, but 60m is the gating factor
+  var isFullHtfAligned = isLong ? (col1M === "G" && col1W === "G" && col1D === "G") : (col1M === "R" && col1W === "R" && col1D === "R")
+  var isMacroConsensusAligned = isLong ? (col1M === "G" && col1W === "G") : (col1M === "R" && col1W === "R")
+  var isHtfDominant = isFullHtfAligned || isMacroConsensusAligned
+
+  var isArmed = false
+  var statusTag = ""
+
+  if (isTradeable) {
+    statusTag = "TRADEABLE - All 9 Rules Verified"
+  } else if (isTargetHit) {
+    statusTag = "TARGET HIT (" + (targetName || "T1") + ") - Exhaustion Risk"
+  } else if (isStoppedOut) {
+    statusTag = "INVALIDATED - Stop Loss Breached"
+  } else if (isHtfDominant && !isTargetHit && !isStoppedOut && direction !== "CONFLICT") {
+    var macroColor = isLong ? "G" : "R"
+    var colorWord = isLong ? "Green" : "Red"
+
+    if (col60 !== macroColor) {
+      isArmed = true
+      statusTag = isFullHtfAligned
+        ? ("ARMED - Waiting on 60m Flip to " + colorWord)
+        : ("ARMED - Macro Trend " + direction + " (Day/60m Pullback)")
+    } else if (entryState && entryState.state === "WAIT_INSIDE") {
+      isArmed = true
+      statusTag = "ARMED - 60m Inside (Wait for Break)"
+    } else if (!r5Pass) {
+      isArmed = true
+      statusTag = triggerPrice !== null
+        ? ("ARMED - Approaching 60m Trigger ($" + triggerPrice.toFixed(2) + ")")
+        : "ARMED - Waiting on 60m Trigger"
+    }
+  }
+
+  if (!statusTag) {
+    statusTag = "BLOCKED - " + passedCount + "/9 Rules Met"
+  }
+
   var badgeText = passedCount + "/9"
   var badgeTone = "neutral"
   if (isTradeable) {
     badgeTone = (direction === "SHORT") ? "down" : "up"
+  } else if (isArmed) {
+    badgeTone = "amber"
+    badgeText = "ARMED"
   }
 
   return {
@@ -3445,6 +3505,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     passedCount: passedCount,
     totalRules: rules.length,
     isTradeable: isTradeable,
+    isArmed: isArmed,
+    statusTag: statusTag,
     isTriggered: r5Pass,
     isTargetHit: isTargetHit,
     isStoppedOut: isStoppedOut,

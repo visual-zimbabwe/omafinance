@@ -83,6 +83,8 @@ Item {
                     color: {
                         if (!root.checklistData)
                             return root.dim;
+                        if (root.checklistData.isArmed)
+                            return (Color.accent !== undefined) ? Color.accent : Qt.rgba(0.92, 0.65, 0.15, 1);
                         if (!root.checklistData.isTradeable)
                             return root.dim;
                         return root.checklistData.direction === "SHORT" ? root.downColor : root.upColor;
@@ -100,6 +102,8 @@ Item {
                     if (!root.checklistData)
                         return "";
                     var dir = root.checklistData.direction ? ("[" + root.checklistData.direction + "] ") : "";
+                    if (root.checklistData.statusTag)
+                        return dir + root.checklistData.statusTag;
                     if (root.checklistData.isTargetHit)
                         return dir + "TARGET HIT (" + (root.checklistData.targetName || "T1") + ") - Exhaustion Risk";
                     if (root.checklistData.isStoppedOut)
@@ -113,6 +117,8 @@ Item {
                         return root.checklistData.direction === "SHORT" ? root.downColor : root.upColor;
                     if (root.checklistData.isStoppedOut)
                         return root.downColor;
+                    if (root.checklistData.isArmed)
+                        return (Color.accent !== undefined) ? Color.accent : Qt.rgba(0.92, 0.65, 0.15, 1);
                     if (!root.checklistData.isTradeable)
                         return root.dim;
                     return root.checklistData.direction === "SHORT" ? root.downColor : root.upColor;
