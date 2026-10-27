@@ -513,6 +513,73 @@ test("grid cells provide live 9-rule Strat checklist text status on execution ti
   assert.match(grid, /discordAlertPayload/)
 })
 
+test("candlestick chart renders extended-hours price line and right-scale badge when session is outside regular hours", () => {
+  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const detail = fs.readFileSync(source("FinanceDetailView.qml"), "utf8")
+
+  assert.match(chart, /property var extendedPrice:\s*null/)
+  assert.match(chart, /onExtendedPriceChanged:\s*refreshGeometry\(\)/)
+  assert.match(chart, /var extVal = Model\.finiteOrNull\(root\.extendedPrice\)/)
+  assert.match(chart, /yExtended:\s*hasExtended \? priceToY\(extVal\) : null/)
+  assert.match(chart, /g\.extendedPrice >= g\.lastClose/)
+  assert.match(cell, /extendedPrice:\s*\(root\.quote && root\.quote\.hasExtended && root\.quote\.session !== "regular" && root\.quote\.session !== "live"\) \? root\.quote\.extendedPrice : null/)
+  assert.match(detail, /extendedPrice:\s*\(controller\.sessionQuote && controller\.sessionQuote\.hasExtended && controller\.sessionQuote\.session !== "regular" && controller\.sessionQuote\.session !== "live"\) \? controller\.sessionQuote\.extendedPrice : null/)
+})
+
+test("candlestick chart supports 30m timeframe, followLatest auto-scroll, and draggable trigger/target price levels with custom text and price", () => {
+  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
+
+  assert.match(cell, /model:\s*\["30",\s*"60",\s*"1D",\s*"1W",\s*"1M",\s*"1Y"\]/)
+  assert.match(chart, /property bool followLatest:\s*true/)
+  assert.match(chart, /var vStart = root\.followLatest \? maxStart : Math\.max\(0, Math\.min\(maxStart, root\.viewStart\)\)/)
+  assert.match(chart, /property var priceLevels:\s*\[\]/)
+  assert.match(chart, /function resolveLevelEndpoints\(lvl,\s*g\)/)
+  assert.match(chart, /Model\.resolveLevelAnchorIndex\(lvl,\s*all,\s*root\.rangeKey\)/)
+  assert.match(chart, /function hitTestLevel\(px,\s*py\)/)
+  assert.match(chart, /function startLevelEdit\(index\)/)
+  assert.match(chart, /function commitLevelEdit\(\)/)
+  assert.match(chart, /id:\s*levelEditOverlay/)
+  assert.match(chart, /id:\s*levelTextInput/)
+  assert.match(chart, /customTxt \+ " · " \+ priceStr/)
+  assert.match(cell, /readonly property bool editingLevel:\s*chart\.editingLevel/)
+  assert.match(cell, /signal priceLevelsModified\(string sym,\s*var nextLevels\)/)
+  assert.match(grid, /property var symbolLevels:\s*\(\{\}\)/)
+  assert.match(grid, /function updateSymbolLevels\(sym,\s*nextLevels\)/)
+  assert.match(grid, /activeCell\.editingLevel/)
+})
+
+test("grid window and panel persist cellTimeframes across state and layouts and support multi-timeframe bar replay", () => {
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+
+  assert.match(panel, /property var gridTimeframes:/)
+  assert.match(panel, /property var gridZooms:/)
+  assert.match(panel, /cellTimeframes:\s*initialTfs/)
+  assert.match(panel, /cellZooms:\s*initialZooms/)
+  assert.match(panel, /gridWin\.cellTimeframes/)
+  assert.match(panel, /gridWin\.cellZooms/)
+  assert.match(grid, /property var cellZooms:/)
+  assert.match(grid, /function setZoomForCell\(index,\s*newZoom\)/)
+  assert.match(cell, /property int zoomCount:\s*-1/)
+  assert.match(chart, /property int configuredZoom:\s*-1/)
+  assert.match(chart, /signal zoomChangedManually\(int nextViewCount\)/)
+  assert.match(grid, /property real replayCutoffTs:\s*0/)
+  assert.match(grid, /Model\.buildReplayCandles/)
+  assert.match(grid, /Model\.buildReplayQuote/)
+  assert.match(grid, /function stepReplay\(dir\)/)
+  assert.match(cell, /property real replayCutoffTs:\s*0/)
+  assert.match(cell, /signal replayRequested\(real timestamp\)/)
+  assert.match(chart, /signal replayRequested\(real timestamp\)/)
+})
+
+
+
+
 
 
 

@@ -425,6 +425,7 @@ Column {
             anchors.fill: parent
             symbol: controller.detailSymbol
             candles: controller.rangeChart && controller.rangeChart.candles ? controller.rangeChart.candles : []
+            extendedPrice: (controller.sessionQuote && controller.sessionQuote.hasExtended && controller.sessionQuote.session !== "regular" && controller.sessionQuote.session !== "live") ? controller.sessionQuote.extendedPrice : null
             upColor: controller.upColor
             downColor: controller.downColor
             fontFamily: controller.contentFontFamily

@@ -1769,6 +1769,224 @@ test("evaluateStratChecklist enriches Rule 1 and checklist with HTF scenario ver
   assert.equal(res.isTradeable, true)
 })
 
+test("30m timeframe is supported across chartSpec, parseInterval, mergePeriodCandles, and formatCandleTime", () => {
+  assert.ok(Model.chartRanges().includes("30"))
+  assert.deepEqual(Model.chartSpec("30"), { range: "1mo", interval: "30m" })
+  assert.equal(Model.parseInterval("30"), "30")
+  assert.equal(Model.parseInterval("30m"), "30")
+  assert.equal(Model.parseInterval("30min"), "30")
+  assert.equal(Model.rangeCaption("30"), "30-Minute Candles (1 Month)")
+
+  // Verify 30m mergePeriodCandles merges trailing intra-bar snapshot tick without crossing 1800s boundaries
+  const baseTs = 1776864600 // 09:30 EDT
+  const raw30 = [
+    { timestamp: baseTs, open: 277.0, high: 278.2, low: 276.8, close: 278.0, volume: 120000 },
+    { timestamp: baseTs + 1800, open: 278.0, high: 279.0, low: 277.9, close: 278.5, volume: 95000 },
+    { timestamp: baseTs + 2400, open: 278.8, high: 278.8, low: 278.8, close: 278.8, volume: 0 }
+  ]
+  const merged = Model.mergePeriodCandles(raw30, "30")
+  assert.equal(merged.length, 2)
+  assert.equal(merged[1].timestamp, baseTs + 1800)
+  assert.equal(merged[1].close, 278.8)
+  assert.equal(merged[1].high, 279.0)
+
+  const formatted = Model.formatCandleTime(baseTs, "30")
+  assert.ok(formatted.includes(":30"))
+})
+
+test("HTF price levels cascade to LTF and anchor to the exact LTF bar that printed the HTF OHLC", () => {
+  // Visibility hierarchy: HTF shows on same and LTF, but not on higher TF
+  const lvl1D = { sourceTf: "1D", anchorTs: 1776864600, ohlcField: "high", price: 280.5 }
+  assert.equal(Model.isLevelVisibleOnTimeframe(lvl1D, "1W"), false)
+  assert.equal(Model.isLevelVisibleOnTimeframe(lvl1D, "1D"), true)
+  assert.equal(Model.isLevelVisibleOnTimeframe(lvl1D, "60"), true)
+  assert.equal(Model.isLevelVisibleOnTimeframe(lvl1D, "30"), true)
+
+  const lvl60 = { sourceTf: "60", anchorTs: 1776864600, ohlcField: "low", price: 276.2 }
+  assert.equal(Model.isLevelVisibleOnTimeframe(lvl60, "1D"), false)
+  assert.equal(Model.isLevelVisibleOnTimeframe(lvl60, "60"), true)
+  assert.equal(Model.isLevelVisibleOnTimeframe(lvl60, "30"), true)
+
+  // 30m bars across two hours of the same session (baseTs = 09:30 EDT)
+  const baseTs = 1776864600
+  const candles30 = [
+    { timestamp: baseTs - 86400, open: 274.0, high: 275.0, low: 273.5, close: 274.5 }, // [0] prior day
+    { timestamp: baseTs, open: 277.0, high: 278.2, low: 276.8, close: 278.0 },         // [1] 09:30 (1D Open)
+    { timestamp: baseTs + 1800, open: 278.0, high: 279.4, low: 276.2, close: 278.9 },  // [2] 10:00 (09:30 60m Low & High)
+    { timestamp: baseTs + 3600, open: 278.9, high: 280.5, low: 278.5, close: 280.1 },  // [3] 10:30 (1D High = 280.5)
+    { timestamp: baseTs + 5400, open: 280.1, high: 280.2, low: 279.0, close: 279.8 }   // [4] 11:00 (1D Close)
+  ]
+
+  // 1D High (280.5) was printed on 30m bar index 3 (10:30)
+  assert.equal(Model.resolveLevelAnchorIndex(lvl1D, candles30, "30"), 3)
+
+  // 1D Open was printed on 30m bar index 1 (09:30, first bar of session)
+  assert.equal(Model.resolveLevelAnchorIndex({ sourceTf: "1D", anchorTs: baseTs, ohlcField: "open", price: 277.0 }, candles30, "30"), 1)
+
+  // 1D Close was printed on 30m bar index 4 (11:00, last bar of session)
+  assert.equal(Model.resolveLevelAnchorIndex({ sourceTf: "1D", anchorTs: baseTs, ohlcField: "close", price: 279.8 }, candles30, "30"), 4)
+
+  // 60m bar at 09:30 (baseTs) spans [1] (09:30) and [2] (10:00); its Low (276.2) was printed on [2] (10:00)
+  assert.equal(Model.resolveLevelAnchorIndex(lvl60, candles30, "30"), 2)
+})
+
+test("parseState, serializeState, parseLayouts, and saveLayout persist rearranged cell timeframes and gridMode", () => {
+  const customTfs = ["30", "60", "1D", "1W", "1M"]
+  const layouts = Model.saveLayout({}, "morning-strat", [
+    { symbol: "IWM", workspace: 2, timeframes: customTfs, gridMode: "2+3" },
+    { symbol: "SPY", workspace: 2 }
+  ], 2)
+
+  assert.deepEqual(layouts["morning-strat"].windows[0], {
+    symbol: "IWM",
+    workspace: 2,
+    timeframes: customTfs,
+    gridMode: "2+3"
+  })
+  assert.deepEqual(layouts["morning-strat"].windows[1], {
+    symbol: "SPY",
+    workspace: 2
+  })
+
+  const rawState = Model.serializeState(
+    ["IWM", "SPY"],
+    ["IWM"],
+    "1D",
+    "2+3",
+    { symbol: true, timeframe: false, crosshair: true, time: true },
+    ["IWM", "IWM", "IWM", "IWM", "IWM"],
+    {},
+    layouts,
+    "equal",
+    "1Y",
+    false,
+    "",
+    customTfs
+  )
+  const parsed = Model.parseState(rawState)
+  assert.deepEqual(parsed.gridTimeframes, customTfs)
+  assert.deepEqual(parsed.layouts["morning-strat"].windows[0].timeframes, customTfs)
+  assert.equal(parsed.layouts["morning-strat"].windows[0].gridMode, "2+3")
+})
+
+test("buildReplayCandles, buildReplayQuote, and stepReplayCutoff exclude cutoff bar and reconstruct HTF bars", () => {
+  // Simulate IWM intraday session:
+  // Prior day: 2026-04-21 (1776778200 = 13:30 UTC / 06:30 PT)
+  // Current day: 2026-04-22 (1776864600 = 13:30 UTC / 06:30 PT)
+  const day1Open = 1776778200
+  const day2Open = 1776864600
+  const t0730 = day2Open + 3600   // 07:30 PT
+  const t0800 = day2Open + 5400   // 08:00 PT
+  const t0830 = day2Open + 7200   // 08:30 PT (cutoff: exclude 08:30 and later, leaving 08:00 at close)
+  const t0900 = day2Open + 9000   // 09:00 PT
+  const t0930 = day2Open + 10800  // 09:30 PT
+
+  const candles30 = [
+    { timestamp: day1Open, open: 274.0, high: 275.5, low: 273.5, close: 275.0, volume: 1000 },
+    { timestamp: day2Open, open: 276.0, high: 276.8, low: 275.8, close: 276.5, volume: 1200 }, // 06:30
+    { timestamp: day2Open + 1800, open: 276.5, high: 277.0, low: 276.0, close: 276.2, volume: 1100 }, // 07:00
+    { timestamp: t0730, open: 276.2, high: 277.5, low: 276.1, close: 277.4, volume: 1500 },    // 07:30
+    { timestamp: t0800, open: 277.4, high: 278.2, low: 277.2, close: 278.0, volume: 1800 },    // 08:00 (last included before 08:30)
+    { timestamp: t0830, open: 278.0, high: 279.6, low: 277.9, close: 279.4, volume: 2200 },    // 08:30 (excluded!)
+    { timestamp: t0900, open: 279.4, high: 280.5, low: 279.1, close: 280.2, volume: 2500 },    // 09:00 (excluded!)
+    { timestamp: t0930, open: 280.2, high: 281.0, low: 280.0, close: 280.8, volume: 1900 }     // 09:30 (excluded!)
+  ]
+
+  // 60m bars aligned on the hour (08:00 covers 08:00 and 08:30 30m bars)
+  const candles60 = [
+    { timestamp: day1Open, open: 274.0, high: 275.5, low: 273.5, close: 275.0, volume: 1000 },
+    { timestamp: day2Open, open: 276.0, high: 277.0, low: 275.8, close: 276.2, volume: 2300 },
+    { timestamp: t0730, open: 276.2, high: 277.5, low: 276.1, close: 277.4, volume: 1500 },
+    { timestamp: t0800, open: 277.4, high: 279.6, low: 277.2, close: 279.4, volume: 4000 }, // includes 08:30 spike to 279.6
+    { timestamp: t0900, open: 279.4, high: 281.0, low: 279.1, close: 280.8, volume: 4400 }
+  ]
+
+  const candles1D = [
+    { timestamp: day1Open, open: 274.0, high: 275.5, low: 273.5, close: 275.0, volume: 1000 },
+    { timestamp: day2Open, open: 276.0, high: 281.0, low: 275.8, close: 280.8, volume: 12200 } // full day high 281.0, close 280.8
+  ]
+
+  const candles1W = [
+    { timestamp: day1Open, open: 274.0, high: 281.0, low: 273.5, close: 280.8, volume: 13200 }
+  ]
+
+  // 1. 30m replay at cutoff = t0830 excludes t0830, t0900, t0930 and leaves t0800 at close (278.0)
+  const replay30 = Model.buildReplayCandles("30", candles30, candles30, candles60, candles1D, t0830)
+  assert.equal(replay30.length, 5)
+  assert.equal(replay30[replay30.length - 1].timestamp, t0800)
+  assert.equal(replay30[replay30.length - 1].close, 278.0)
+
+  // 2. 60m replay at cutoff = t0830 excludes t0900 and reconstructs t0800 60m bar using only the 08:00 30m bar
+  const replay60 = Model.buildReplayCandles("60", candles60, candles30, candles60, candles1D, t0830)
+  assert.equal(replay60.length, 4)
+  assert.equal(replay60[replay60.length - 1].timestamp, t0800)
+  assert.equal(replay60[replay60.length - 1].high, 278.2) // 08:30 spike to 279.6 excluded
+  assert.equal(replay60[replay60.length - 1].close, 278.0)
+
+  // 3. 1D replay at cutoff = t0830 reconstructs today's 1D bar up to 08:00 close (278.0, high 278.2)
+  const replay1D = Model.buildReplayCandles("1D", candles1D, candles30, candles60, candles1D, t0830)
+  assert.equal(replay1D.length, 2)
+  assert.equal(replay1D[1].open, 276.0)
+  assert.equal(replay1D[1].high, 278.2)
+  assert.equal(replay1D[1].low, 275.8)
+  assert.equal(replay1D[1].close, 278.0)
+
+  // 4. 1W replay at cutoff = t0830 combines Day 1 completed 1D bar + Day 2 pre-08:30 30m bars
+  const replay1W = Model.buildReplayCandles("1W", candles1W, candles30, candles60, candles1D, t0830)
+  assert.equal(replay1W.length, 1)
+  assert.equal(replay1W[0].open, 274.0)
+  assert.equal(replay1W[0].high, 278.2)
+  assert.equal(replay1W[0].low, 273.5)
+  assert.equal(replay1W[0].close, 278.0)
+
+  // 5. Synthetic replay quote reflects 08:00 close (278.0) and suppresses extended hours
+  const liveQuote = { symbol: "IWM", price: 280.8, regularPrice: 280.8, dayHigh: 281.0, dayLow: 275.8, hasExtended: true, extendedPrice: 281.5, session: "post" }
+  const replayQuote = Model.buildReplayQuote(liveQuote, candles30, candles60, candles1D, t0830)
+  assert.equal(replayQuote.price, 278.0)
+  assert.equal(replayQuote.regularPrice, 278.0)
+  assert.equal(replayQuote.hasExtended, false)
+  assert.equal(replayQuote.session, "regular")
+
+  // 6. Stepping backward (-1) from t0830 moves cutoff to t0800; stepping forward (+1) moves to t0900
+  assert.equal(Model.stepReplayCutoff(candles30, t0830, -1), t0800)
+  assert.equal(Model.stepReplayCutoff(candles30, t0830, 1), t0900)
+  assert.equal(Model.stepReplayCutoff(candles30, t0930, 1), 0) // stepping past last bar exits replay
+})
+
+test("parseState, serializeState, parseLayouts, and saveLayout persist per-cell zoom counts", () => {
+  const customTfs = ["30", "60", "1D", "1W", "1M"]
+  const customZooms = [8, 8, 16, 11, 8]
+  const layouts = Model.saveLayout({}, "Main", [
+    { symbol: "SPY", workspace: 2, timeframes: customTfs, zooms: customZooms, gridMode: "2+3" },
+    { symbol: "QQQ", workspace: 2, timeframes: customTfs, zooms: [8, 8, 8, 8, 8], gridMode: "2+3" }
+  ], 2)
+
+  const raw = Model.serializeState(
+    ["SPY", "QQQ"],
+    ["SPY"],
+    "1D",
+    "2+3",
+    { symbol: true, timeframe: false, crosshair: true, time: true },
+    ["SPY", "SPY", "SPY", "SPY", "SPY"],
+    {},
+    layouts,
+    "equal",
+    "1Y",
+    false,
+    "",
+    customTfs,
+    [8, 8, 8, 8, 8]
+  )
+  const parsed = Model.parseState(raw)
+  assert.deepEqual(parsed.gridZooms, [8, 8, 8, 8, 8])
+  assert.deepEqual(parsed.layouts.Main.windows[0].zooms, [8, 8, 16, 11, 8])
+  assert.deepEqual(parsed.layouts.Main.windows[1].zooms, [8, 8, 8, 8, 8])
+})
+
+
+
+
+
 
 
 
