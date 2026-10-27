@@ -26,6 +26,7 @@ FloatingWindow {
     property int activeCellIndex: 0
     property var cellSymbols: ["AAPL", "AAPL", "AAPL", "AAPL", "AAPL"]
     property var cellTimeframes: ["60", "1D", "1W", "1M", "1Y"]
+    property var cellZooms: [-1, -1, -1, -1, -1]
 
     // Split Ratios
     property real rowSplitRatio: 0.5
@@ -37,6 +38,8 @@ FloatingWindow {
     // Quotes and Candles Cache
     property var quotes: ({})
     property var chartCache: ({})
+    property var symbolLevels: ({})
+    property real replayCutoffTs: 0
     property var pendingFetches: []
     property bool fetching: false
     property int quoteFailureCount: 0
@@ -45,6 +48,28 @@ FloatingWindow {
     readonly property int chartRefreshMs: Model.backoffDelay(15000, chartFailureCount, 120000)
     property bool quoteRefreshPending: false
     signal stateSaveRequested(string mode, var sync, var symbols, var splits)
+
+    function setReplayCutoff(ts) {
+        root.replayCutoffTs = (isFinite(ts) && ts > 0) ? ts : 0;
+    }
+
+    function stepReplay(dir) {
+        var sym = symbolForCell(root.activeCellIndex);
+        var tf = timeframeForCell(root.activeCellIndex);
+        var raw = root.chartCache[cacheKey(sym, tf)] || [];
+        if (raw.length < 2) {
+            raw = root.chartCache[cacheKey(sym, "30")] || root.chartCache[cacheKey(sym, "60")] || [];
+        }
+        root.replayCutoffTs = Model.stepReplayCutoff(raw, root.replayCutoffTs, dir);
+    }
+
+    function updateSymbolLevels(sym, nextLevels) {
+        if (!sym)
+            return;
+        var nextMap = Object.assign({}, root.symbolLevels);
+        nextMap[sym] = nextLevels || [];
+        root.symbolLevels = nextMap;
+    }
 
     title: root.mainSymbol ? "Omafinance Grid - " + root.mainSymbol : "Omafinance Grid"
     color: Color.background
@@ -108,13 +133,40 @@ FloatingWindow {
         return defaults[index] || "1D";
     }
 
+    function zoomForCell(index) {
+        if (root.cellZooms && isFinite(root.cellZooms[index]) && root.cellZooms[index] >= 5)
+            return Math.round(root.cellZooms[index]);
+        return -1;
+    }
+
+    function setZoomForCell(index, newZoom) {
+        var updated = [];
+        for (var i = 0; i < 5; i++) {
+            var z = (root.cellZooms && isFinite(root.cellZooms[i]) && root.cellZooms[i] >= 5) ? Math.round(root.cellZooms[i]) : -1;
+            updated.push(z);
+        }
+        updated[index] = (isFinite(newZoom) && newZoom >= 5) ? Math.round(newZoom) : -1;
+        root.cellZooms = updated;
+        saveGridState();
+    }
+
     function cacheKey(sym, tf) {
         return sym + "_" + tf;
     }
 
     function getCandles(sym, tf) {
         var key = cacheKey(sym, tf);
-        return root.chartCache[key] || [];
+        var raw = root.chartCache[key] || [];
+        if (root.replayCutoffTs <= 0)
+            return raw;
+        return Model.buildReplayCandles(tf, raw, root.chartCache[cacheKey(sym, "30")] || [], root.chartCache[cacheKey(sym, "60")] || [], root.chartCache[cacheKey(sym, "1D")] || [], root.replayCutoffTs);
+    }
+
+    function getQuote(sym) {
+        var q = root.quotes[sym] || null;
+        if (root.replayCutoffTs <= 0)
+            return q;
+        return Model.buildReplayQuote(q, root.chartCache[cacheKey(sym, "30")] || [], root.chartCache[cacheKey(sym, "60")] || [], root.chartCache[cacheKey(sym, "1D")] || [], root.replayCutoffTs);
     }
 
     function requestChartFetch(sym, tf, force) {
@@ -186,9 +238,9 @@ FloatingWindow {
                 nextCache[key] = parsed.candles;
                 root.chartCache = nextCache;
 
-                if (parsed.quote) {
+                if (parsed.symbol && (!root.quotes[root.currentFetchSymbol] || root.currentFetchRange === "60" || root.currentFetchRange === "30")) {
                     var nextQuotes = Object.assign({}, root.quotes);
-                    nextQuotes[root.currentFetchSymbol] = parsed.quote;
+                    nextQuotes[root.currentFetchSymbol] = parsed;
                     root.quotes = nextQuotes;
                 }
                 root.chartFailureCount = 0;
@@ -219,6 +271,8 @@ FloatingWindow {
     property var signalStates: ({})
 
     function notifyStratTradeable(chk) {
+        if (root.replayCutoffTs > 0)
+            return;
         if (!chk || !chk.symbol || !chk.direction || !chk.setupTimeframe)
             return;
 
@@ -251,9 +305,9 @@ FloatingWindow {
             }
 
             body = "9/9 rules verified on " + chk.setupTimeframe + " setup.\n" + parts.join(" | ");
-        }
+        } else
         // 2. Target Hit: was in-force / triggered, and now reached target
-        else if (chk.isTargetHit && currentState === "TRIGGERED") {
+        if (chk.isTargetHit && currentState === "TRIGGERED") {
             eventType = "TARGET_HIT";
             title = "The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]";
             var tName = chk.targetName || "Target 1";
@@ -263,9 +317,9 @@ FloatingWindow {
             } else {
                 body = tName + tPriceStr + " reached on " + chk.setupTimeframe + " setup.\nExhaustion risk — take profit / trail stops.";
             }
-        }
+        } else
         // 3. Stop Breached: was in-force / triggered, and now stopped out
-        else if (chk.isStoppedOut && currentState === "TRIGGERED") {
+        if (chk.isStoppedOut && currentState === "TRIGGERED") {
             eventType = "STOPPED";
             title = "The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]";
             var sPriceStr = chk.stopPrice != null ? (" $" + Number(chk.stopPrice).toFixed(2)) : "";
@@ -318,6 +372,7 @@ FloatingWindow {
             var sym1 = symbolForCell(root.activeCellIndex);
             var tf1 = timeframeForCell(root.activeCellIndex);
             requestChartFetch(sym1, tf1, isForced);
+            requestChartFetch(sym1, "30", isForced);
             requestChartFetch(sym1, "60", isForced);
             requestChartFetch(sym1, "1D", isForced);
             return;
@@ -327,6 +382,7 @@ FloatingWindow {
             var sym = symbolForCell(i);
             var tf = timeframeForCell(i);
             requestChartFetch(sym, tf, isForced);
+            requestChartFetch(sym, "30", isForced);
             requestChartFetch(sym, "60", isForced);
             requestChartFetch(sym, "1D", isForced);
         }
@@ -508,6 +564,7 @@ FloatingWindow {
     }
 
     onMainSymbolChanged: {
+        root.replayCutoffTs = 0;
         refreshQuotes();
         refreshAllCharts();
     }
@@ -528,7 +585,7 @@ FloatingWindow {
 
         Keys.onPressed: function (event) {
             var activeCell = root.getActiveCellItem();
-            var inputActive = activeCell && (activeCell.searching || activeCell.changingInterval);
+            var inputActive = activeCell && (activeCell.searching || activeCell.changingInterval || activeCell.editingLevel);
 
             if (inputActive) {
                 if (event.key === Qt.Key_Escape) {
@@ -536,12 +593,19 @@ FloatingWindow {
                         activeCell.dismissSearch();
                     else if (activeCell.changingInterval)
                         activeCell.dismissIntervalInput();
+                    else if (activeCell.editingLevel)
+                        activeCell.dismissLevelEdit();
                     event.accepted = true;
                 }
                 return;
             }
 
             if (event.key === Qt.Key_Escape) {
+                if (root.replayCutoffTs > 0) {
+                    root.setReplayCutoff(0);
+                    event.accepted = true;
+                    return;
+                }
                 if (root.gridExpanded) {
                     root.gridExpanded = false;
                     event.accepted = true;
@@ -554,6 +618,21 @@ FloatingWindow {
                     root.visible = false;
                     event.accepted = true;
                 }
+            } else if (event.key === Qt.Key_Left && root.replayCutoffTs > 0) {
+                root.stepReplay(-1);
+                event.accepted = true;
+            } else if (event.key === Qt.Key_Right && root.replayCutoffTs > 0) {
+                root.stepReplay(1);
+                event.accepted = true;
+            } else if (event.key === Qt.Key_R) {
+                if (activeCell && activeCell.activeHoverCandle && isFinite(activeCell.activeHoverCandle.timestamp)) {
+                    root.setReplayCutoff(activeCell.activeHoverCandle.timestamp);
+                } else if (root.replayCutoffTs > 0) {
+                    root.setReplayCutoff(0);
+                } else {
+                    root.stepReplay(-1);
+                }
+                event.accepted = true;
             } else if (event.key === Qt.Key_Tab) {
                 var maxIdx = root.gridMode === "2+3" ? 4 : (root.gridMode === "2x2" ? 3 : 0);
                 root.activeCellIndex = (root.activeCellIndex + 1) % (maxIdx + 1);
@@ -660,7 +739,12 @@ FloatingWindow {
                                         onClicked: {
                                             root.gridMode = modelData;
                                             if (!root.syncTimeframe) {
-                                                root.cellTimeframes = Model.gridTimeframes(modelData);
+                                                var defaults = Model.gridTimeframes(modelData);
+                                                var nextTfs = [];
+                                                for (var ti = 0; ti < 5; ti++) {
+                                                    nextTfs.push((root.cellTimeframes && root.cellTimeframes[ti]) ? root.cellTimeframes[ti] : (defaults[ti] || "1D"));
+                                                }
+                                                root.cellTimeframes = nextTfs;
                                             }
                                             root.gridExpanded = false;
                                             root.refreshQuotes();
@@ -678,6 +762,91 @@ FloatingWindow {
                         onHoveredChanged: {
                             if (!hovered)
                                 root.gridExpanded = false;
+                        }
+                    }
+                }
+
+                // Replay Control (Center-Left, Zero-Chrome)
+                Row {
+                    id: replayControlRow
+                    anchors.left: gridLayoutRow.right
+                    anchors.leftMargin: Style.space(20)
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(6)
+
+                    readonly property color replayAmber: Qt.rgba(0.92, 0.65, 0.15, 1)
+                    readonly property string activeSym: root.symbolForCell(root.activeCellIndex)
+                    readonly property string badgeTime: Model.formatReplayBadgeTime(root.replayCutoffTs, root.chartCache[root.cacheKey(activeSym, "30")] || [], root.chartCache[root.cacheKey(activeSym, "60")] || [], root.chartCache[root.cacheKey(activeSym, "1D")] || [])
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: root.replayCutoffTs > 0 ? ("REPLAY [" + replayControlRow.badgeTime + "]") : "REPLAY [OFF]"
+                        color: root.replayCutoffTs > 0 ? replayControlRow.replayAmber : root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: root.replayCutoffTs > 0
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (root.replayCutoffTs > 0)
+                                    root.setReplayCutoff(0);
+                                else
+                                    root.stepReplay(-1);
+                            }
+                        }
+                    }
+
+                    Text {
+                        visible: root.replayCutoffTs > 0
+                        textFormat: Text.PlainText
+                        text: "◀"
+                        color: replayControlRow.replayAmber
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.stepReplay(-1)
+                        }
+                    }
+
+                    Text {
+                        visible: root.replayCutoffTs > 0
+                        textFormat: Text.PlainText
+                        text: "▶"
+                        color: replayControlRow.replayAmber
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.stepReplay(1)
+                        }
+                    }
+
+                    Text {
+                        visible: root.replayCutoffTs > 0
+                        textFormat: Text.PlainText
+                        text: "✕"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.setReplayCutoff(0)
                         }
                     }
                 }
@@ -822,10 +991,13 @@ FloatingWindow {
                         cellIndex: root.activeCellIndex
                         symbol: root.symbolForCell(root.activeCellIndex)
                         timeframe: root.timeframeForCell(root.activeCellIndex)
-                        quote: root.quotes[symbol] || null
+                        zoomCount: root.zoomForCell(root.activeCellIndex)
+                        quote: root.getQuote(symbol)
                         candles: root.getCandles(symbol, timeframe)
                         hourlyCandles: root.getCandles(symbol, "60")
                         dailyCandles: root.getCandles(symbol, "1D")
+                        priceLevels: root.symbolLevels[symbol] || []
+                        replayCutoffTs: root.replayCutoffTs
                         activeFocusCell: true
 
                         onFocusRequested: function (idx) {
@@ -840,8 +1012,17 @@ FloatingWindow {
                         onTimeframeChangedManually: function (idx, tf) {
                             root.setTimeframeForCell(idx, tf);
                         }
+                        onZoomChangedManually: function (idx, z) {
+                            root.setZoomForCell(idx, z);
+                        }
                         onStratTradeableDetected: function (chk) {
                             root.notifyStratTradeable(chk);
+                        }
+                        onPriceLevelsModified: function (sym, nextLevels) {
+                            root.updateSymbolLevels(sym, nextLevels);
+                        }
+                        onReplayRequested: function (ts) {
+                            root.setReplayCutoff(ts);
                         }
                     }
                 }
@@ -872,10 +1053,13 @@ FloatingWindow {
                             height: parent.height
                             symbol: root.symbolForCell(0)
                             timeframe: root.timeframeForCell(0)
-                            quote: root.quotes[symbol] || null
+                            zoomCount: root.zoomForCell(0)
+                            quote: root.getQuote(symbol)
                             candles: root.getCandles(symbol, timeframe)
                             hourlyCandles: root.getCandles(symbol, "60")
                             dailyCandles: root.getCandles(symbol, "1D")
+                            priceLevels: root.symbolLevels[symbol] || []
+                            replayCutoffTs: root.replayCutoffTs
                             activeFocusCell: root.activeCellIndex === 0
 
                             onFocusRequested: function (idx) {
@@ -890,6 +1074,9 @@ FloatingWindow {
                             onTimeframeChangedManually: function (idx, tf) {
                                 root.setTimeframeForCell(idx, tf);
                             }
+                            onZoomChangedManually: function (idx, z) {
+                                root.setZoomForCell(idx, z);
+                            }
                             onCrosshairMoved: function (ts, pr, c) {
                                 root.handleCrosshairMoved(0, ts, pr, c);
                             }
@@ -898,6 +1085,12 @@ FloatingWindow {
                             }
                             onStratTradeableDetected: function (chk) {
                                 root.notifyStratTradeable(chk);
+                            }
+                            onPriceLevelsModified: function (sym, nextLevels) {
+                                root.updateSymbolLevels(sym, nextLevels);
+                            }
+                            onReplayRequested: function (ts) {
+                                root.setReplayCutoff(ts);
                             }
                         }
 
@@ -923,10 +1116,13 @@ FloatingWindow {
                             height: parent.height
                             symbol: root.symbolForCell(1)
                             timeframe: root.timeframeForCell(1)
-                            quote: root.quotes[symbol] || null
+                            zoomCount: root.zoomForCell(1)
+                            quote: root.getQuote(symbol)
                             candles: root.getCandles(symbol, timeframe)
                             hourlyCandles: root.getCandles(symbol, "60")
                             dailyCandles: root.getCandles(symbol, "1D")
+                            priceLevels: root.symbolLevels[symbol] || []
+                            replayCutoffTs: root.replayCutoffTs
                             activeFocusCell: root.activeCellIndex === 1
 
                             onFocusRequested: function (idx) {
@@ -941,6 +1137,9 @@ FloatingWindow {
                             onTimeframeChangedManually: function (idx, tf) {
                                 root.setTimeframeForCell(idx, tf);
                             }
+                            onZoomChangedManually: function (idx, z) {
+                                root.setZoomForCell(idx, z);
+                            }
                             onCrosshairMoved: function (ts, pr, c) {
                                 root.handleCrosshairMoved(1, ts, pr, c);
                             }
@@ -949,6 +1148,12 @@ FloatingWindow {
                             }
                             onStratTradeableDetected: function (chk) {
                                 root.notifyStratTradeable(chk);
+                            }
+                            onPriceLevelsModified: function (sym, nextLevels) {
+                                root.updateSymbolLevels(sym, nextLevels);
+                            }
+                            onReplayRequested: function (ts) {
+                                root.setReplayCutoff(ts);
                             }
                         }
                     }
@@ -992,10 +1197,13 @@ FloatingWindow {
                                 height: parent.height
                                 symbol: root.symbolForCell(2)
                                 timeframe: root.timeframeForCell(2)
-                                quote: root.quotes[symbol] || null
+                                zoomCount: root.zoomForCell(2)
+                                quote: root.getQuote(symbol)
                                 candles: root.getCandles(symbol, timeframe)
                                 hourlyCandles: root.getCandles(symbol, "60")
                                 dailyCandles: root.getCandles(symbol, "1D")
+                                priceLevels: root.symbolLevels[symbol] || []
+                                replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 2
 
                                 onFocusRequested: function (idx) {
@@ -1010,6 +1218,9 @@ FloatingWindow {
                                 onTimeframeChangedManually: function (idx, tf) {
                                     root.setTimeframeForCell(idx, tf);
                                 }
+                                onZoomChangedManually: function (idx, z) {
+                                    root.setZoomForCell(idx, z);
+                                }
                                 onCrosshairMoved: function (ts, pr, c) {
                                     root.handleCrosshairMoved(2, ts, pr, c);
                                 }
@@ -1018,6 +1229,12 @@ FloatingWindow {
                                 }
                                 onStratTradeableDetected: function (chk) {
                                     root.notifyStratTradeable(chk);
+                                }
+                                onPriceLevelsModified: function (sym, nextLevels) {
+                                    root.updateSymbolLevels(sym, nextLevels);
+                                }
+                                onReplayRequested: function (ts) {
+                                    root.setReplayCutoff(ts);
                                 }
                             }
 
@@ -1043,10 +1260,13 @@ FloatingWindow {
                                 height: parent.height
                                 symbol: root.symbolForCell(3)
                                 timeframe: root.timeframeForCell(3)
-                                quote: root.quotes[symbol] || null
+                                zoomCount: root.zoomForCell(3)
+                                quote: root.getQuote(symbol)
                                 candles: root.getCandles(symbol, timeframe)
                                 hourlyCandles: root.getCandles(symbol, "60")
                                 dailyCandles: root.getCandles(symbol, "1D")
+                                priceLevels: root.symbolLevels[symbol] || []
+                                replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 3
 
                                 onFocusRequested: function (idx) {
@@ -1061,6 +1281,9 @@ FloatingWindow {
                                 onTimeframeChangedManually: function (idx, tf) {
                                     root.setTimeframeForCell(idx, tf);
                                 }
+                                onZoomChangedManually: function (idx, z) {
+                                    root.setZoomForCell(idx, z);
+                                }
                                 onCrosshairMoved: function (ts, pr, c) {
                                     root.handleCrosshairMoved(3, ts, pr, c);
                                 }
@@ -1069,6 +1292,12 @@ FloatingWindow {
                                 }
                                 onStratTradeableDetected: function (chk) {
                                     root.notifyStratTradeable(chk);
+                                }
+                                onPriceLevelsModified: function (sym, nextLevels) {
+                                    root.updateSymbolLevels(sym, nextLevels);
+                                }
+                                onReplayRequested: function (ts) {
+                                    root.setReplayCutoff(ts);
                                 }
                             }
                         }
@@ -1092,10 +1321,13 @@ FloatingWindow {
                                 height: parent.height
                                 symbol: root.symbolForCell(2)
                                 timeframe: root.timeframeForCell(2)
-                                quote: root.quotes[symbol] || null
+                                zoomCount: root.zoomForCell(2)
+                                quote: root.getQuote(symbol)
                                 candles: root.getCandles(symbol, timeframe)
                                 hourlyCandles: root.getCandles(symbol, "60")
                                 dailyCandles: root.getCandles(symbol, "1D")
+                                priceLevels: root.symbolLevels[symbol] || []
+                                replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 2
 
                                 onFocusRequested: function (idx) {
@@ -1110,6 +1342,9 @@ FloatingWindow {
                                 onTimeframeChangedManually: function (idx, tf) {
                                     root.setTimeframeForCell(idx, tf);
                                 }
+                                onZoomChangedManually: function (idx, z) {
+                                    root.setZoomForCell(idx, z);
+                                }
                                 onCrosshairMoved: function (ts, pr, c) {
                                     root.handleCrosshairMoved(2, ts, pr, c);
                                 }
@@ -1118,6 +1353,12 @@ FloatingWindow {
                                 }
                                 onStratTradeableDetected: function (chk) {
                                     root.notifyStratTradeable(chk);
+                                }
+                                onPriceLevelsModified: function (sym, nextLevels) {
+                                    root.updateSymbolLevels(sym, nextLevels);
+                                }
+                                onReplayRequested: function (ts) {
+                                    root.setReplayCutoff(ts);
                                 }
                             }
 
@@ -1143,10 +1384,13 @@ FloatingWindow {
                                 height: parent.height
                                 symbol: root.symbolForCell(3)
                                 timeframe: root.timeframeForCell(3)
-                                quote: root.quotes[symbol] || null
+                                zoomCount: root.zoomForCell(3)
+                                quote: root.getQuote(symbol)
                                 candles: root.getCandles(symbol, timeframe)
                                 hourlyCandles: root.getCandles(symbol, "60")
                                 dailyCandles: root.getCandles(symbol, "1D")
+                                priceLevels: root.symbolLevels[symbol] || []
+                                replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 3
 
                                 onFocusRequested: function (idx) {
@@ -1161,6 +1405,9 @@ FloatingWindow {
                                 onTimeframeChangedManually: function (idx, tf) {
                                     root.setTimeframeForCell(idx, tf);
                                 }
+                                onZoomChangedManually: function (idx, z) {
+                                    root.setZoomForCell(idx, z);
+                                }
                                 onCrosshairMoved: function (ts, pr, c) {
                                     root.handleCrosshairMoved(3, ts, pr, c);
                                 }
@@ -1169,6 +1416,12 @@ FloatingWindow {
                                 }
                                 onStratTradeableDetected: function (chk) {
                                     root.notifyStratTradeable(chk);
+                                }
+                                onPriceLevelsModified: function (sym, nextLevels) {
+                                    root.updateSymbolLevels(sym, nextLevels);
+                                }
+                                onReplayRequested: function (ts) {
+                                    root.setReplayCutoff(ts);
                                 }
                             }
 
@@ -1194,10 +1447,13 @@ FloatingWindow {
                                 height: parent.height
                                 symbol: root.symbolForCell(4)
                                 timeframe: root.timeframeForCell(4)
-                                quote: root.quotes[symbol] || null
+                                zoomCount: root.zoomForCell(4)
+                                quote: root.getQuote(symbol)
                                 candles: root.getCandles(symbol, timeframe)
                                 hourlyCandles: root.getCandles(symbol, "60")
                                 dailyCandles: root.getCandles(symbol, "1D")
+                                priceLevels: root.symbolLevels[symbol] || []
+                                replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 4
 
                                 onFocusRequested: function (idx) {
@@ -1212,6 +1468,9 @@ FloatingWindow {
                                 onTimeframeChangedManually: function (idx, tf) {
                                     root.setTimeframeForCell(idx, tf);
                                 }
+                                onZoomChangedManually: function (idx, z) {
+                                    root.setZoomForCell(idx, z);
+                                }
                                 onCrosshairMoved: function (ts, pr, c) {
                                     root.handleCrosshairMoved(4, ts, pr, c);
                                 }
@@ -1220,6 +1479,12 @@ FloatingWindow {
                                 }
                                 onStratTradeableDetected: function (chk) {
                                     root.notifyStratTradeable(chk);
+                                }
+                                onPriceLevelsModified: function (sym, nextLevels) {
+                                    root.updateSymbolLevels(sym, nextLevels);
+                                }
+                                onReplayRequested: function (ts) {
+                                    root.setReplayCutoff(ts);
                                 }
                             }
                         }

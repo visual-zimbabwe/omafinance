@@ -34,6 +34,8 @@ Panel {
             time: true
         })
     property var gridSymbols: []
+    property var gridTimeframes: ["60", "1D", "1W", "1M", "1Y"]
+    property var gridZooms: [-1, -1, -1, -1, -1]
     property var gridSplits: ({})
     property var activeGridWindows: []
     property string breadthWeightMode: "equal"
@@ -311,7 +313,9 @@ Panel {
         if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
             root.bar.setCenterHoverRevealSuppressed(value);
         else if (root.bar && "centerHoverRevealSuppressed" in root.bar) {
-            try { root.bar.centerHoverRevealSuppressed = value; } catch (e) {}
+            try {
+                root.bar.centerHoverRevealSuppressed = value;
+            } catch (e) {}
         }
     }
 
@@ -369,7 +373,7 @@ Panel {
     }
 
     function persist() {
-        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, breadthWeightMode, breadthSortTimeframe, breadthSortAsc, discordWebhook));
+        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, breadthWeightMode, breadthSortTimeframe, breadthSortAsc, discordWebhook, gridTimeframes, gridZooms));
     }
 
     function persistSettings(values) {
@@ -476,6 +480,10 @@ Panel {
             gridSync = state.gridSync;
         if (state.gridSymbols)
             gridSymbols = state.gridSymbols;
+        if (state.gridTimeframes && state.gridTimeframes.length > 0)
+            gridTimeframes = state.gridTimeframes;
+        if (state.gridZooms && state.gridZooms.length > 0)
+            gridZooms = state.gridZooms;
         if (state.gridSplits)
             gridSplits = state.gridSplits;
         if (state.layouts)
@@ -1320,7 +1328,9 @@ Panel {
                 root.detailHoldingsStratLoading = false;
             }
             if (root.detailSymbol && Model.isSpdrSector(root.detailSymbol) && root.holdingsStratFetchSymbol !== root.detailSymbol)
-                Qt.callLater(function () { root.fetchHoldingsStrat(root.detailSymbol); });
+                Qt.callLater(function () {
+                    root.fetchHoldingsStrat(root.detailSymbol);
+                });
         }
         stdout: StdioCollector {
             id: holdingsStratStdout
@@ -1412,6 +1422,9 @@ Panel {
         }
         function openBreadth(): void {
             root.openSectorBreadth();
+        }
+        function openLayout(name: string): void {
+            root.loadLayout(name);
         }
         function close(): void {
             root.close();
@@ -1720,8 +1733,7 @@ Panel {
                         }
                     }
                 }
-            } catch (e) {
-            }
+            } catch (e) {}
 
             parsed.sort(function (a, b) {
                 if (Math.abs(a.y - b.y) > 50)
@@ -1731,12 +1743,26 @@ Panel {
 
             var windowsList = [];
             var targetWs = 2;
+            function findActiveGridWindow(symName) {
+                if (!root.activeGridWindows)
+                    return null;
+                for (var wi = 0; wi < root.activeGridWindows.length; wi++) {
+                    var winItem = root.activeGridWindows[wi];
+                    if (winItem && winItem.visible && winItem.mainSymbol === symName)
+                        return winItem;
+                }
+                return null;
+            }
             if (parsed.length > 0) {
                 targetWs = parsed[0].workspace;
                 for (var j = 0; j < parsed.length; j++) {
+                    var matchedWin = findActiveGridWindow(parsed[j].symbol);
                     windowsList.push({
                         symbol: parsed[j].symbol,
-                        workspace: parsed[j].workspace
+                        workspace: parsed[j].workspace,
+                        timeframes: (matchedWin && matchedWin.cellTimeframes) ? matchedWin.cellTimeframes.slice() : (root.gridTimeframes ? root.gridTimeframes.slice() : ["60", "1D", "1W", "1M", "1Y"]),
+                        zooms: (matchedWin && matchedWin.cellZooms) ? matchedWin.cellZooms.slice() : (root.gridZooms ? root.gridZooms.slice() : [-1, -1, -1, -1, -1]),
+                        gridMode: (matchedWin && matchedWin.gridMode) ? matchedWin.gridMode : root.gridMode
                     });
                 }
             } else if (root.activeGridWindows && root.activeGridWindows.length > 0) {
@@ -1745,7 +1771,10 @@ Panel {
                     if (w && w.visible && w.mainSymbol) {
                         windowsList.push({
                             symbol: w.mainSymbol,
-                            workspace: targetWs
+                            workspace: targetWs,
+                            timeframes: w.cellTimeframes ? w.cellTimeframes.slice() : (root.gridTimeframes ? root.gridTimeframes.slice() : ["60", "1D", "1W", "1M", "1Y"]),
+                            zooms: w.cellZooms ? w.cellZooms.slice() : (root.gridZooms ? root.gridZooms.slice() : [-1, -1, -1, -1, -1]),
+                            gridMode: w.gridMode || root.gridMode
                         });
                     }
                 }
@@ -1789,14 +1818,21 @@ Panel {
         root.closeAllGrids();
 
         var ws = layout.workspace || 2;
-        hyprctlWorkspaceProc.command = ["hyprctl", "dispatch", "workspace", String(ws)];
+        hyprctlWorkspaceProc.command = ["hyprctl", "dispatch", 'hl.dsp.focus({ workspace = "' + String(ws) + '" })'];
         hyprctlWorkspaceProc.running = true;
 
         var syms = [];
         for (var i = 0; i < windows.length; i++) {
-            var sym = typeof windows[i] === "string" ? windows[i] : (windows[i] ? windows[i].symbol : "");
-            if (sym)
-                syms.push(sym);
+            var winSpec = windows[i];
+            var sym = typeof winSpec === "string" ? winSpec : (winSpec ? winSpec.symbol : "");
+            if (sym) {
+                syms.push({
+                    symbol: sym,
+                    timeframes: (winSpec && typeof winSpec === "object" && Array.isArray(winSpec.timeframes)) ? winSpec.timeframes.slice() : null,
+                    zooms: (winSpec && typeof winSpec === "object" && Array.isArray(winSpec.zooms)) ? winSpec.zooms.slice() : null,
+                    gridMode: (winSpec && typeof winSpec === "object" && winSpec.gridMode) ? winSpec.gridMode : null
+                });
+            }
         }
 
         layoutSpawnTimer.stop();
@@ -1826,10 +1862,18 @@ Panel {
     }
 
     function openGrid(symbol) {
-        var sym = symbol || detailSymbol || (watchlist.length > 0 ? watchlist[0] : "AAPL");
+        var cfg = (typeof symbol === "object" && symbol !== null) ? symbol : null;
+        var sym = (typeof symbol === "object" && symbol !== null) ? symbol.symbol : symbol;
+        sym = sym || detailSymbol || (watchlist.length > 0 ? watchlist[0] : "AAPL");
         for (var i = 0; i < root.activeGridWindows.length; i++) {
             var existing = root.activeGridWindows[i];
             if (existing && existing.visible && existing.mainSymbol === sym) {
+                if (cfg && cfg.gridMode)
+                    existing.gridMode = cfg.gridMode;
+                if (cfg && cfg.timeframes && cfg.timeframes.length > 0)
+                    existing.cellTimeframes = cfg.timeframes.slice();
+                if (cfg && cfg.zooms && cfg.zooms.length > 0)
+                    existing.cellZooms = cfg.zooms.slice();
                 if (typeof existing.raise === "function")
                     existing.raise();
                 if (typeof existing.requestActivate === "function")
@@ -1845,7 +1889,10 @@ Panel {
         }
 
         var currentSplits = root.gridSplits || ({});
-        var currentMode = root.gridMode || "2x2";
+        var currentMode = (cfg && cfg.gridMode) ? cfg.gridMode : (root.gridMode || "2x2");
+        var initialTfs = (cfg && cfg.timeframes && cfg.timeframes.length > 0) ? cfg.timeframes.slice() : ((root.gridTimeframes && root.gridTimeframes.length > 0) ? root.gridTimeframes.slice() : Model.gridTimeframes(currentMode));
+        var initialZooms = (cfg && cfg.zooms && cfg.zooms.length > 0) ? cfg.zooms.slice() : ((root.gridZooms && root.gridZooms.length > 0) ? root.gridZooms.slice() : [-1, -1, -1, -1, -1]);
+        var botRatios = (currentSplits["2+3"] && Array.isArray(currentSplits["2+3"].colBotRatios)) ? currentSplits["2+3"].colBotRatios : [0.333, 0.333, 0.334];
         var win = gridWindowComponent.createObject(root, {
             mainSymbol: sym,
             watchlist: root.watchlist,
@@ -1856,9 +1903,13 @@ Panel {
             syncCrosshair: root.gridSync ? root.gridSync.crosshair !== false : true,
             syncTime: root.gridSync ? root.gridSync.time !== false : true,
             cellSymbols: [sym, sym, sym, sym, sym],
+            cellTimeframes: initialTfs,
+            cellZooms: initialZooms,
             rowSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].rowRatio ? currentSplits[currentMode].rowRatio : 0.5,
             topColSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].colTopRatio ? currentSplits[currentMode].colTopRatio : 0.5,
-            botColSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].colBotRatio ? currentSplits[currentMode].colBotRatio : 0.5
+            botColSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].colBotRatio ? currentSplits[currentMode].colBotRatio : 0.5,
+            botCol1Ratio: botRatios[0] || 0.333,
+            botCol2Ratio: botRatios[1] || 0.333
         });
 
         if (win) {
@@ -1925,6 +1976,37 @@ Panel {
                 root.gridMode = mode;
                 root.gridSync = sync;
                 root.gridSymbols = symbols;
+                if (gridWin.cellTimeframes && gridWin.cellTimeframes.length > 0)
+                    root.gridTimeframes = gridWin.cellTimeframes.slice();
+                if (gridWin.cellZooms && gridWin.cellZooms.length > 0)
+                    root.gridZooms = gridWin.cellZooms.slice();
+                if (root.activeLayoutName && root.layouts && root.layouts[root.activeLayoutName]) {
+                    var curLayout = root.layouts[root.activeLayoutName];
+                    if (curLayout && Array.isArray(curLayout.windows)) {
+                        var nextWins = [];
+                        for (var li = 0; li < curLayout.windows.length; li++) {
+                            var lw = curLayout.windows[li];
+                            if (lw && lw.symbol === gridWin.mainSymbol) {
+                                nextWins.push({
+                                    symbol: lw.symbol,
+                                    workspace: lw.workspace || curLayout.workspace || 2,
+                                    timeframes: (gridWin.cellTimeframes && gridWin.cellTimeframes.length > 0) ? gridWin.cellTimeframes.slice() : lw.timeframes,
+                                    zooms: (gridWin.cellZooms && gridWin.cellZooms.length > 0) ? gridWin.cellZooms.slice() : lw.zooms,
+                                    gridMode: mode || lw.gridMode
+                                });
+                            } else {
+                                nextWins.push(lw);
+                            }
+                        }
+                        var nextLayouts = Object.assign({}, root.layouts);
+                        nextLayouts[root.activeLayoutName] = {
+                            name: curLayout.name || root.activeLayoutName,
+                            workspace: curLayout.workspace || 2,
+                            windows: nextWins
+                        };
+                        root.layouts = nextLayouts;
+                    }
+                }
                 var nextSplits = Object.assign({}, root.gridSplits || ({}));
                 nextSplits[mode] = splits[mode];
                 root.gridSplits = nextSplits;

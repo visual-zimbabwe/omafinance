@@ -8,6 +8,7 @@ Item {
 
     property string symbol: ""
     property var candles: []
+    property var extendedPrice: null
     property color upColor: Color.foreground
     property color downColor: Color.foreground
     property color gridColor: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.08)
@@ -30,9 +31,23 @@ Item {
 
     signal crosshairMoved(real timestamp, real price, var candle)
     signal crosshairCleared
+    signal priceLevelsModified(var nextLevels)
+    signal replayRequested(real timestamp)
+    signal zoomChangedManually(int nextViewCount)
 
+    property int configuredZoom: -1
     property int viewStart: 0
     property int viewCount: -1
+    property bool followLatest: true
+
+    onConfiguredZoomChanged: {
+        var target = (root.configuredZoom >= 8) ? root.configuredZoom : -1;
+        if (root.viewCount !== target) {
+            root.viewCount = target;
+            root.followLatest = true;
+            root.refreshGeometry();
+        }
+    }
     property real dragStartX: 0
     property int dragStartViewStart: 0
     property int dragStartViewCount: 0
@@ -41,10 +56,26 @@ Item {
     property bool dragging: false
     property bool isShiftDrag: false
 
+    property string _lastLevelSymbol: ""
+    property bool externalLevels: false
+    property var priceLevels: []
+    property int hoveredLevelIndex: -1
+    property string hoveredLevelPart: ""
+    property int draggingLevelIndex: -1
+    property string levelDragMode: ""
+    property int levelDragAnchorIdx: 0
+    property real levelDragStartX: 0
+    property real levelDragStartIdx1: 0
+    property real levelDragStartIdx2: 0
+    property bool levelDragMoved: false
+    property int editingLevelIndex: -1
+    readonly property bool editingLevel: editingLevelIndex >= 0
+
     property bool hovering: false
     property bool hoveringScale: false
     property int hoveredTickIndex: -1
     property real hoverPrice: 0
+    property string hoverOhlcField: "close"
     property int hoverIndex: -1
     property var hoverCandle: null
     property real hoverX: 0
@@ -54,9 +85,191 @@ Item {
     property var cachedGeometry: null
 
     function resetZoom() {
+        if (symbol !== _lastLevelSymbol) {
+            _lastLevelSymbol = symbol;
+            clearLevels();
+        }
         viewStart = 0;
-        viewCount = -1;
+        viewCount = (root.configuredZoom >= 8) ? root.configuredZoom : -1;
+        followLatest = true;
         refreshGeometry();
+    }
+
+    function followLatestEdge() {
+        followLatest = true;
+        refreshGeometry();
+    }
+
+    function setPriceLevels(next) {
+        if (!root.externalLevels)
+            root.priceLevels = next;
+        root.priceLevelsModified(next);
+        refreshGeometry();
+    }
+
+    function globalIndexToX(globalIdx, g) {
+        if (!g)
+            return 0;
+        return g.left + (globalIdx - g.vStart + 0.5) * g.slotW;
+    }
+
+    function xToGlobalIndex(px, g) {
+        if (!g || g.slotW <= 0)
+            return 0;
+        return g.vStart + (px - g.left) / g.slotW - 0.5;
+    }
+
+    function resolveLevelEndpoints(lvl, g) {
+        if (!lvl || !g || !g.allCandles || g.allCandles.length === 0)
+            return null;
+        if (!Model.isLevelVisibleOnTimeframe(lvl, root.rangeKey))
+            return null;
+
+        var all = g.allCandles;
+        var total = all.length;
+        var anchorIdx = Model.resolveLevelAnchorIndex(lvl, all, root.rangeKey);
+        var tfOff = (lvl.offsets && lvl.offsets[root.rangeKey]) ? lvl.offsets[root.rangeKey] : null;
+
+        var idx1 = (tfOff && tfOff.startDelta !== undefined) ? (anchorIdx + tfOff.startDelta) : anchorIdx;
+        var idx2 = (tfOff && tfOff.endDelta !== undefined) ? (anchorIdx + tfOff.endDelta) : (total - 1 + 0.45);
+
+        var rawX1 = globalIndexToX(idx1, g);
+        var rawX2 = globalIndexToX(idx2, g);
+        var leftX = Math.min(rawX1, rawX2);
+        var rightX = Math.max(rawX1, rawX2);
+
+        if (rightX < g.left || leftX > g.right)
+            return null;
+
+        var drawX1 = Math.max(g.left, Math.min(g.right, leftX));
+        var drawX2 = Math.max(g.left, Math.min(g.right, rightX));
+
+        return {
+            anchorIdx: anchorIdx,
+            idx1: idx1,
+            idx2: idx2,
+            rawX1: rawX1,
+            rawX2: rawX2,
+            drawX1: drawX1,
+            drawX2: drawX2
+        };
+    }
+
+    function priceToYVal(price, g) {
+        if (!g || g.innerH <= 0 || !g.logSpan)
+            return 0;
+        var lp = Math.log(Math.max(0.00001, price));
+        return g.top + g.innerH * (1 - (lp - g.logMin) / g.logSpan);
+    }
+
+    function levelToneColor(tone) {
+        if (tone === "up")
+            return root.upColor;
+        if (tone === "down")
+            return root.downColor;
+        return Color.foreground;
+    }
+
+    function hitTestLevel(px, py) {
+        var g = cachedGeometry;
+        if (!g || !root.priceLevels || root.priceLevels.length === 0 || g.innerW <= 0)
+            return null;
+        var bestIdx = -1;
+        var bestDist = Style.space(7);
+        var bestPart = "move";
+        var handleRadius = Style.space(8);
+        for (var i = root.priceLevels.length - 1; i >= 0; i--) {
+            var lvl = root.priceLevels[i];
+            var ep = resolveLevelEndpoints(lvl, g);
+            if (!ep)
+                continue;
+            var ly = priceToYVal(lvl.price, g);
+            if (ly < g.top - Style.space(6) || ly > g.bot + Style.space(6))
+                continue;
+            var leftX = ep.drawX1;
+            var rightX = ep.drawX2;
+            if (px < leftX - handleRadius || px > rightX + handleRadius)
+                continue;
+            var dy = Math.abs(py - ly);
+            if (dy <= bestDist) {
+                bestDist = dy;
+                bestIdx = i;
+                if (Math.abs(px - leftX) <= handleRadius)
+                    bestPart = (ep.rawX1 <= ep.rawX2) ? "x1" : "x2";
+                else if (Math.abs(px - rightX) <= handleRadius)
+                    bestPart = (ep.rawX2 >= ep.rawX1) ? "x2" : "x1";
+                else
+                    bestPart = "move";
+            }
+        }
+        if (bestIdx < 0)
+            return null;
+        return {
+            index: bestIdx,
+            part: bestPart
+        };
+    }
+
+    function startLevelEdit(index) {
+        if (index < 0 || index >= root.priceLevels.length)
+            return;
+        root.editingLevelIndex = index;
+        levelTextInput.text = root.priceLevels[index].text || "";
+        levelTextInput.forceActiveFocus();
+        levelTextInput.selectAll();
+        canvas.requestPaint();
+    }
+
+    function commitLevelEdit() {
+        if (root.editingLevelIndex >= 0 && root.editingLevelIndex < root.priceLevels.length) {
+            var next = root.priceLevels.slice();
+            var item = Object.assign({}, next[root.editingLevelIndex]);
+            item.text = levelTextInput.text.trim();
+            next[root.editingLevelIndex] = item;
+            root.setPriceLevels(next);
+        }
+        root.editingLevelIndex = -1;
+        canvas.requestPaint();
+    }
+
+    function dismissLevelEdit() {
+        root.editingLevelIndex = -1;
+        canvas.requestPaint();
+    }
+
+    function cycleEditingLevelTone() {
+        if (root.editingLevelIndex < 0 || root.editingLevelIndex >= root.priceLevels.length)
+            return;
+        var next = root.priceLevels.slice();
+        var item = Object.assign({}, next[root.editingLevelIndex]);
+        var cur = item.tone || "fg";
+        item.tone = (cur === "fg") ? "up" : (cur === "up" ? "down" : "fg");
+        next[root.editingLevelIndex] = item;
+        root.setPriceLevels(next);
+    }
+
+    function removeLevel(index) {
+        if (index < 0 || index >= root.priceLevels.length)
+            return;
+        var next = root.priceLevels.slice();
+        next.splice(index, 1);
+        if (root.editingLevelIndex === index)
+            root.editingLevelIndex = -1;
+        else if (root.editingLevelIndex > index)
+            root.editingLevelIndex -= 1;
+        root.hoveredLevelIndex = -1;
+        root.hoveredLevelPart = "";
+        root.setPriceLevels(next);
+    }
+
+    function clearLevels() {
+        if (!root.externalLevels)
+            root.priceLevels = [];
+        root.editingLevelIndex = -1;
+        root.hoveredLevelIndex = -1;
+        root.hoveredLevelPart = "";
+        root.draggingLevelIndex = -1;
+        canvas.requestPaint();
     }
 
     function yToPrice(y) {
@@ -137,6 +350,7 @@ Item {
         var top = topPad;
         var bot = Math.max(top + 1, h - botPad);
         var unset = {
+            allCandles: [],
             candles: [],
             strats: [],
             min: 0,
@@ -163,7 +377,10 @@ Item {
             yOpens: [],
             yHighs: [],
             yLows: [],
-            yCloses: []
+            yCloses: [],
+            lastClose: null,
+            extendedPrice: null,
+            yExtended: null
         };
         if (total === 0)
             return unset;
@@ -171,7 +388,7 @@ Item {
         var minBars = 8;
         var vCount = (root.viewCount > 0 && root.viewCount < total) ? Math.max(minBars, root.viewCount) : total;
         var maxStart = Math.max(0, total - vCount);
-        var vStart = Math.max(0, Math.min(maxStart, root.viewStart));
+        var vStart = root.followLatest ? maxStart : Math.max(0, Math.min(maxStart, root.viewStart));
 
         var list = all.slice(vStart, vStart + vCount);
         if (list.length === 0)
@@ -194,6 +411,31 @@ Item {
                 min = list[i].low;
             if (list[i].high > max)
                 max = list[i].high;
+        }
+
+        var candleMin = min;
+        var candleMax = max;
+        if (root.priceLevels && root.priceLevels.length > 0) {
+            for (var pli = 0; pli < root.priceLevels.length; pli++) {
+                var pl = root.priceLevels[pli];
+                if (pl && Model.isLevelVisibleOnTimeframe(pl, root.rangeKey) && isFinite(pl.price) && pl.price > 0) {
+                    if (pl.price >= candleMin * 0.85 && pl.price <= candleMax * 1.15) {
+                        if (pl.price < min)
+                            min = pl.price;
+                        if (pl.price > max)
+                            max = pl.price;
+                    }
+                }
+            }
+        }
+
+        var extVal = Model.finiteOrNull(root.extendedPrice);
+        var hasExtended = (extVal !== null && extVal > 0 && (vStart + vCount >= total));
+        if (hasExtended) {
+            if (extVal < min)
+                min = extVal;
+            if (extVal > max)
+                max = extVal;
         }
 
         // Pure Logarithmic Coordinate Transformation
@@ -321,7 +563,7 @@ Item {
         // Bottom Time Scale Axis Ticks
         var timeTicks = [];
         if (root.showTimeScale && list.length > 0 && innerW > 0) {
-            var minTimeSpacing = root.rangeKey === "60" ? Style.space(68) : Style.space(55);
+            var minTimeSpacing = (root.rangeKey === "60" || root.rangeKey === "30") ? Style.space(68) : Style.space(55);
             var maxTimeTicks = Math.max(2, Math.floor(innerW / minTimeSpacing));
             var stepT = Math.max(1, Math.ceil(list.length / maxTimeTicks));
             var lastTx = -99999;
@@ -343,6 +585,7 @@ Item {
         }
 
         return {
+            allCandles: all,
             candles: list,
             strats: strats,
             min: min,
@@ -369,7 +612,10 @@ Item {
             yOpens: yOpens,
             yHighs: yHighs,
             yLows: yLows,
-            yCloses: yCloses
+            yCloses: yCloses,
+            lastClose: all[total - 1].close,
+            extendedPrice: hasExtended ? extVal : null,
+            yExtended: hasExtended ? priceToY(extVal) : null
         };
     }
 
@@ -399,6 +645,7 @@ Item {
             hovering = true;
             hoverIndex = -1;
             hoverCandle = null;
+            hoverOhlcField = "scale";
 
             // Find closest psychological tick if within snap distance
             var bestTick = -1;
@@ -457,26 +704,31 @@ Item {
 
         var bestY = cY;
         var bestPrice = hoverCandle ? hoverCandle.close : 0;
+        var bestField = "close";
         var minDist = cDist;
 
         if (oDist < minDist) {
             minDist = oDist;
             bestY = oY;
             bestPrice = hoverCandle ? hoverCandle.open : 0;
+            bestField = "open";
         }
-        if (hDist < minDist) {
+        if (hDist <= minDist) {
             minDist = hDist;
             bestY = hY;
             bestPrice = hoverCandle ? hoverCandle.high : 0;
+            bestField = "high";
         }
-        if (lDist < minDist) {
+        if (lDist <= minDist) {
             minDist = lDist;
             bestY = lY;
             bestPrice = hoverCandle ? hoverCandle.low : 0;
+            bestField = "low";
         }
 
         hoverY = bestY;
         hoverPrice = bestPrice;
+        hoverOhlcField = bestField;
         hovering = true;
 
         if (wasHoveringScale)
@@ -578,6 +830,93 @@ Item {
                 ctx.fillRect(bodyLeft, bodyTop, Math.max(1, Math.round(cW)), bodyHeight);
             }
 
+            // Extended-Hours (Pre-Market / After-Hours) Horizontal Price Line
+            var hasExt = (g.extendedPrice !== null && g.yExtended !== null && g.lastClose !== null);
+            var isExtUp = hasExt ? (g.extendedPrice >= g.lastClose) : false;
+            var extColor = isExtUp ? root.upColor : root.downColor;
+            if (hasExt && g.yExtended >= g.top && g.yExtended <= g.bot) {
+                var extLineY = Math.round(g.yExtended) + 0.5;
+                ctx.save();
+                ctx.lineWidth = 1;
+                ctx.globalAlpha = 0.85;
+                ctx.strokeStyle = extColor;
+                if (ctx.setLineDash)
+                    ctx.setLineDash([2, 3]);
+                ctx.beginPath();
+                ctx.moveTo(g.left, extLineY);
+                ctx.lineTo(g.right, extLineY);
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            // User-Drawn Trigger / Target Price Level Lines
+            if (root.priceLevels && root.priceLevels.length > 0 && g.innerW > 0) {
+                for (var li = 0; li < root.priceLevels.length; li++) {
+                    var lvl = root.priceLevels[li];
+                    var ep = root.resolveLevelEndpoints(lvl, g);
+                    if (!ep)
+                        continue;
+
+                    var lyRaw = root.priceToYVal(lvl.price, g);
+                    if (lyRaw < g.top - Style.space(6) || lyRaw > g.bot + Style.space(6))
+                        continue;
+
+                    var ly = Math.round(lyRaw) + 0.5;
+                    var lx1 = ep.drawX1;
+                    var lx2 = ep.drawX2;
+                    var isLvlActive = (li === root.hoveredLevelIndex || li === root.draggingLevelIndex || li === root.editingLevelIndex);
+                    var lvlColor = root.levelToneColor(lvl.tone);
+
+                    ctx.save();
+                    ctx.strokeStyle = lvlColor;
+                    ctx.lineWidth = isLvlActive ? 1.5 : 1;
+                    ctx.globalAlpha = isLvlActive ? 1.0 : 0.9;
+                    ctx.beginPath();
+                    ctx.moveTo(Math.round(lx1), ly);
+                    ctx.lineTo(Math.round(lx2), ly);
+                    ctx.stroke();
+
+                    // Endpoint Drag Handles when hovered, dragging, or editing
+                    if (isLvlActive) {
+                        var r = Style.space(3);
+                        ctx.fillStyle = lvlColor;
+                        ctx.beginPath();
+                        ctx.arc(Math.round(lx1), ly, r, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.beginPath();
+                        ctx.arc(Math.round(lx2), ly, r, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    // Inline Label: Custom Trigger/Target Text + Formatted Price
+                    if (li !== root.editingLevelIndex) {
+                        var priceStr = Model.formatPrice(lvl.price, root.currency, root.priceHint);
+                        var customTxt = (lvl.text !== undefined && lvl.text !== null) ? String(lvl.text).trim() : "";
+                        var fullLabel = customTxt.length > 0 ? (customTxt + " · " + priceStr) : priceStr;
+
+                        ctx.font = "bold " + Style.font.bodySmall + "px " + root.fontFamily;
+                        var textW = ctx.measureText(fullLabel).width;
+                        var padX = Style.space(4);
+                        var pillW = textW + padX * 2;
+                        var pillH = Style.space(14);
+                        var preferredX = Math.max(lx1 + Style.space(2), lx2 - pillW - Style.space(2));
+                        var pillX = Math.max(g.left + Style.space(2), Math.min(g.right - pillW - Style.space(2), Math.round(preferredX)));
+                        var pillY = (ly - pillH - Style.space(2) >= g.top) ? Math.round(ly - pillH - Style.space(2)) : Math.round(ly + Style.space(2));
+
+                        ctx.globalAlpha = 0.84;
+                        ctx.fillStyle = Color.background;
+                        ctx.fillRect(pillX, pillY, pillW, pillH);
+
+                        ctx.globalAlpha = 1.0;
+                        ctx.fillStyle = lvlColor;
+                        ctx.textAlign = "left";
+                        ctx.textBaseline = "middle";
+                        ctx.fillText(fullLabel, pillX + padX, pillY + pillH / 2);
+                    }
+                    ctx.restore();
+                }
+            }
+
             // Latest Price Marker in Right Price Scale Gutter
             if (root.showPriceScale && len > 0) {
                 var lastC = g.candles[len - 1];
@@ -589,15 +928,35 @@ Item {
                 var badgeH = Style.space(16);
                 var badgeX = g.right + Style.space(2);
                 var badgeY = Math.max(g.top, Math.min(g.bot - badgeH, Math.round(lastY - badgeH / 2)));
+                var extBadgeY = hasExt ? Math.max(g.top, Math.min(g.bot - badgeH, Math.round(g.yExtended - badgeH / 2))) : -99999;
+                var drawRthBadge = !hasExt || Math.abs(extBadgeY - badgeY) >= badgeH + 2;
 
-                ctx.fillStyle = badgeColor;
-                ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+                if (drawRthBadge) {
+                    ctx.save();
+                    if (hasExt)
+                        ctx.globalAlpha = 0.55;
+                    ctx.fillStyle = badgeColor;
+                    ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
 
-                ctx.font = "bold " + Style.font.bodySmall + "px " + root.fontFamily;
-                ctx.fillStyle = Color.background;
-                ctx.textAlign = "center";
-                ctx.textBaseline = "middle";
-                ctx.fillText(lastLabel, badgeX + badgeW / 2, badgeY + badgeH / 2);
+                    ctx.font = "bold " + Style.font.bodySmall + "px " + root.fontFamily;
+                    ctx.fillStyle = Color.background;
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(lastLabel, badgeX + badgeW / 2, badgeY + badgeH / 2);
+                    ctx.restore();
+                }
+
+                if (hasExt) {
+                    var extLabel = Model.formatPrice(g.extendedPrice, root.currency, root.priceHint);
+                    ctx.fillStyle = extColor;
+                    ctx.fillRect(badgeX, extBadgeY, badgeW, badgeH);
+
+                    ctx.font = "bold " + Style.font.bodySmall + "px " + root.fontFamily;
+                    ctx.fillStyle = Color.background;
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(extLabel, badgeX + badgeW / 2, extBadgeY + badgeH / 2);
+                }
             }
 
             // Bottom Time Scale Axis Ticks
@@ -619,6 +978,8 @@ Item {
     onSymbolChanged: resetZoom()
     onRangeKeyChanged: resetZoom()
     onCandlesChanged: refreshGeometry()
+    onExtendedPriceChanged: refreshGeometry()
+    onPriceLevelsChanged: refreshGeometry()
     onUpColorChanged: canvas.requestPaint()
     onDownColorChanged: canvas.requestPaint()
     onGridColorChanged: canvas.requestPaint()
@@ -642,16 +1003,86 @@ Item {
         hoverEnabled: true
         preventStealing: true
         acceptedButtons: Qt.LeftButton | Qt.RightButton
-        cursorShape: root.dragging ? Qt.ClosedHandCursor : (enabled ? Qt.CrossCursor : Qt.ArrowCursor)
+        cursorShape: {
+            if (root.draggingLevelIndex >= 0)
+                return (root.levelDragMode === "x1" || root.levelDragMode === "x2") ? Qt.SizeHorCursor : Qt.ClosedHandCursor;
+            if (root.hoveredLevelIndex >= 0)
+                return (root.hoveredLevelPart === "x1" || root.hoveredLevelPart === "x2") ? Qt.SizeHorCursor : Qt.PointingHandCursor;
+            if (root.dragging)
+                return Qt.ClosedHandCursor;
+            return enabled ? Qt.CrossCursor : Qt.ArrowCursor;
+        }
 
         onPressed: function (mouse) {
+            var g = root.cachedGeometry;
+            if (mouse.button === Qt.RightButton) {
+                var rightHit = root.hitTestLevel(mouse.x, mouse.y);
+                if (rightHit) {
+                    root.removeLevel(rightHit.index);
+                    return;
+                }
+                root.updateHover(mouse.x, mouse.y);
+                if (g && g.innerW > 0 && root.hoverPrice > 0) {
+                    if (root.editingLevel)
+                        root.commitLevelEdit();
+                    var anchorTs = (!root.hoveringScale && root.hoverCandle) ? root.hoverCandle.timestamp : (g.candles.length > 0 ? g.candles[0].timestamp : 0);
+                    var ohlcField = root.hoveringScale ? "scale" : root.hoverOhlcField;
+                    var nextLevels = root.priceLevels ? root.priceLevels.slice() : [];
+                    nextLevels.push({
+                        price: root.hoverPrice,
+                        sourceTf: root.rangeKey,
+                        anchorTs: anchorTs,
+                        ohlcField: ohlcField,
+                        text: "",
+                        tone: "fg",
+                        offsets: ({})
+                    });
+                    root.setPriceLevels(nextLevels);
+                    root.startLevelEdit(nextLevels.length - 1);
+                }
+                return;
+            }
+
             if (mouse.button === Qt.LeftButton) {
+                if (root.editingLevel)
+                    root.commitLevelEdit();
+
+                if (mouse.modifiers & Qt.AltModifier) {
+                    root.updateHover(mouse.x, mouse.y);
+                    if (!root.hoveringScale && root.hoverCandle && isFinite(root.hoverCandle.timestamp)) {
+                        root.replayRequested(root.hoverCandle.timestamp);
+                        return;
+                    }
+                }
+
+                var leftHit = root.hitTestLevel(mouse.x, mouse.y);
+                if (leftHit && g && g.innerW > 0) {
+                    var targetLvl = root.priceLevels[leftHit.index];
+                    var ep = root.resolveLevelEndpoints(targetLvl, g);
+                    if (ep) {
+                        root.draggingLevelIndex = leftHit.index;
+                        root.levelDragMode = leftHit.part;
+                        root.levelDragStartX = mouse.x;
+                        root.levelDragAnchorIdx = ep.anchorIdx;
+                        var startIdx1 = ep.idx1;
+                        var startIdx2 = ep.idx2;
+                        if (leftHit.part === "x1" && (ep.rawX1 < g.left || ep.rawX1 > g.right))
+                            startIdx1 = root.xToGlobalIndex(ep.drawX1, g);
+                        if (leftHit.part === "x2" && (ep.rawX2 < g.left || ep.rawX2 > g.right))
+                            startIdx2 = root.xToGlobalIndex(ep.drawX2, g);
+                        root.levelDragStartIdx1 = startIdx1;
+                        root.levelDragStartIdx2 = startIdx2;
+                        root.levelDragMoved = false;
+                        canvas.requestPaint();
+                        return;
+                    }
+                }
+
                 root.dragging = true;
                 root.isShiftDrag = (mouse.modifiers & Qt.ShiftModifier) || (mouse.modifiers & Qt.ControlModifier);
                 root.dragStartX = mouse.x;
                 var all = root.validCandles();
                 var total = all.length;
-                var g = root.cachedGeometry;
                 root.dragStartViewStart = g ? g.vStart : 0;
                 root.dragStartViewCount = (g && g.vCount) ? g.vCount : total;
                 var innerW = g ? g.innerW : Math.max(1, root.width - root.scaleGutterWidth);
@@ -662,10 +1093,47 @@ Item {
         }
 
         onPositionChanged: function (mouse) {
-            if (root.dragging && root.cachedGeometry) {
+            var g = root.cachedGeometry;
+            if (root.draggingLevelIndex >= 0 && g && g.innerW > 0) {
+                var clampedX = Math.max(g.left, Math.min(g.right, mouse.x));
+                var dx = clampedX - root.levelDragStartX;
+                if (Math.abs(mouse.x - root.levelDragStartX) >= 2)
+                    root.levelDragMoved = true;
+                var dBars = dx / Math.max(1, g.slotW);
+                var nextLevels = root.priceLevels.slice();
+                var item = Object.assign({}, nextLevels[root.draggingLevelIndex]);
+                var nextOffsets = Object.assign({}, item.offsets || {});
+                var minBarsSpan = Math.max(0.25, 12 / Math.max(1, g.slotW));
+                var nextIdx1 = root.levelDragStartIdx1;
+                var nextIdx2 = root.levelDragStartIdx2;
+
+                if (root.levelDragMode === "x1") {
+                    nextIdx1 = root.levelDragStartIdx1 + dBars;
+                    if (Math.abs(nextIdx2 - nextIdx1) < minBarsSpan)
+                        nextIdx1 = nextIdx2 >= root.levelDragStartIdx1 ? nextIdx2 - minBarsSpan : nextIdx2 + minBarsSpan;
+                } else if (root.levelDragMode === "x2") {
+                    nextIdx2 = root.levelDragStartIdx2 + dBars;
+                    if (Math.abs(nextIdx2 - nextIdx1) < minBarsSpan)
+                        nextIdx2 = nextIdx1 <= root.levelDragStartIdx2 ? nextIdx1 + minBarsSpan : nextIdx1 - minBarsSpan;
+                } else {
+                    nextIdx1 = root.levelDragStartIdx1 + dBars;
+                    nextIdx2 = root.levelDragStartIdx2 + dBars;
+                }
+
+                nextOffsets[root.rangeKey] = {
+                    startDelta: nextIdx1 - root.levelDragAnchorIdx,
+                    endDelta: nextIdx2 - root.levelDragAnchorIdx
+                };
+                item.offsets = nextOffsets;
+                nextLevels[root.draggingLevelIndex] = item;
+                root.setPriceLevels(nextLevels);
+                root.updateHover(mouse.x, mouse.y);
+                return;
+            }
+
+            if (root.dragging && g) {
                 var all = root.validCandles();
                 var total = all.length;
-                var g = root.cachedGeometry;
 
                 if (root.isShiftDrag && total > 8) {
                     // Shift+Drag = Zoom
@@ -677,29 +1145,56 @@ Item {
 
                     root.viewCount = nextCount >= total ? -1 : nextCount;
                     root.viewStart = nextCount >= total ? 0 : nextStart;
+                    root.followLatest = (nextCount >= total) || (nextStart >= Math.max(0, total - nextCount));
                     root.refreshGeometry();
-                } else if (g && g.totalCandles > g.vCount) {
+                    root.zoomChangedManually(root.viewCount);
+                } else if (g.totalCandles > g.vCount) {
                     // Normal Drag = PAN (Move left/right through time)
                     var deltaX = mouse.x - root.dragStartX;
                     var shiftBars = Math.round(deltaX / Math.max(1, g.slotW));
                     var maxStart = Math.max(0, g.totalCandles - g.vCount);
                     var nextStart = Math.max(0, Math.min(maxStart, root.dragStartViewStart - shiftBars));
 
-                    if (nextStart !== root.viewStart) {
+                    if (nextStart !== root.viewStart || root.followLatest !== (nextStart >= maxStart)) {
                         root.viewStart = nextStart;
+                        root.followLatest = (nextStart >= maxStart);
                         root.refreshGeometry();
                     }
+                }
+            } else {
+                var hoverHit = root.hitTestLevel(mouse.x, mouse.y);
+                var nextHoverIdx = hoverHit ? hoverHit.index : -1;
+                var nextHoverPart = hoverHit ? hoverHit.part : "";
+                if (nextHoverIdx !== root.hoveredLevelIndex || nextHoverPart !== root.hoveredLevelPart) {
+                    root.hoveredLevelIndex = nextHoverIdx;
+                    root.hoveredLevelPart = nextHoverPart;
+                    canvas.requestPaint();
                 }
             }
             root.updateHover(mouse.x, mouse.y);
         }
 
         onReleased: function (mouse) {
+            if (root.draggingLevelIndex >= 0) {
+                var releasedIdx = root.draggingLevelIndex;
+                var wasMoved = root.levelDragMoved;
+                root.draggingLevelIndex = -1;
+                root.levelDragMode = "";
+                root.levelDragMoved = false;
+                if (!wasMoved)
+                    root.startLevelEdit(releasedIdx);
+                else
+                    canvas.requestPaint();
+                return;
+            }
             root.dragging = false;
             root.isShiftDrag = false;
         }
 
         onCanceled: {
+            root.draggingLevelIndex = -1;
+            root.levelDragMode = "";
+            root.levelDragMoved = false;
             root.dragging = false;
             root.isShiftDrag = false;
         }
@@ -730,8 +1225,9 @@ Item {
                         bars = delta > 0 ? 1 : -1;
                     var maxStart = Math.max(0, g.totalCandles - g.vCount);
                     var nextStart = Math.max(0, Math.min(maxStart, curStart + bars));
-                    if (nextStart !== root.viewStart) {
+                    if (nextStart !== root.viewStart || root.followLatest !== (nextStart >= maxStart)) {
                         root.viewStart = nextStart;
+                        root.followLatest = (nextStart >= maxStart);
                         root.refreshGeometry();
                     }
                 }
@@ -749,22 +1245,142 @@ Item {
                     var nextStart = isAtLatestBar ? Math.max(0, total - nextCount) : Math.max(0, Math.min(total - nextCount, Math.round(anchorBar - ratio * nextCount)));
                     root.viewCount = nextCount;
                     root.viewStart = nextStart;
+                    root.followLatest = (nextStart >= Math.max(0, total - nextCount));
                     root.refreshGeometry();
+                    root.zoomChangedManually(root.viewCount);
                 } else if (wheel.angleDelta.y < 0) {
                     // Zoom OUT: increase visible bar count, expanding symmetrically or outward from right edge
                     var nextCount = Math.min(total, curCount + deltaBars);
                     var nextStart = isAtLatestBar ? Math.max(0, total - nextCount) : Math.max(0, Math.min(total - nextCount, Math.round(anchorBar - ratio * nextCount)));
                     root.viewCount = nextCount >= total ? -1 : nextCount;
                     root.viewStart = nextCount >= total ? 0 : nextStart;
+                    root.followLatest = (nextCount >= total) || (nextStart >= Math.max(0, total - nextCount));
                     root.refreshGeometry();
+                    root.zoomChangedManually(root.viewCount);
                 }
             }
             wheel.accepted = true;
         }
 
         onExited: {
-            if (!root.dragging)
+            if (root.hoveredLevelIndex !== -1) {
+                root.hoveredLevelIndex = -1;
+                root.hoveredLevelPart = "";
+                canvas.requestPaint();
+            }
+            if (!root.dragging && root.draggingLevelIndex < 0)
                 root.clearHover();
+        }
+    }
+
+    // Inline Trigger / Target Level Text Editor Overlay
+    Rectangle {
+        id: levelEditOverlay
+        visible: root.editingLevel && root.cachedGeometry !== null
+        readonly property var activeLvl: (root.editingLevelIndex >= 0 && root.editingLevelIndex < root.priceLevels.length) ? root.priceLevels[root.editingLevelIndex] : null
+        readonly property var activeEp: (activeLvl && root.cachedGeometry) ? root.resolveLevelEndpoints(activeLvl, root.cachedGeometry) : null
+        readonly property real lvlY: (activeLvl && root.cachedGeometry) ? root.priceToYVal(activeLvl.price, root.cachedGeometry) : 0
+        readonly property real lvlRightX: activeEp ? activeEp.drawX2 : (root.cachedGeometry ? root.cachedGeometry.right : root.width)
+        readonly property int minX: root.cachedGeometry ? (root.cachedGeometry.left + Style.space(4)) : root.pad
+        readonly property int maxX: Math.max(minX, (root.cachedGeometry ? root.cachedGeometry.right : (root.width - root.pad)) - width - Style.space(4))
+        x: Math.max(minX, Math.min(maxX, Math.round(lvlRightX - width)))
+        y: {
+            if (!root.cachedGeometry)
+                return root.pad;
+            var aboveY = Math.round(lvlY - height - Style.space(4));
+            return aboveY >= root.cachedGeometry.top ? aboveY : Math.round(lvlY + Style.space(4));
+        }
+        width: Math.min(Math.max(Style.space(160), levelEditRow.implicitWidth + Style.space(14)), Math.max(Style.space(120), (root.cachedGeometry ? root.cachedGeometry.innerW : root.width) - Style.space(8)))
+        height: Style.space(22)
+        radius: Style.space(3)
+        color: Color.popups.background
+        border.width: 1
+        border.color: activeLvl ? root.levelToneColor(activeLvl.tone) : Color.foreground
+        z: 35
+
+        Row {
+            id: levelEditRow
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(6)
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(6)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(6)
+
+            Rectangle {
+                id: toneDot
+                width: Style.space(7)
+                height: Style.space(7)
+                radius: width / 2
+                anchors.verticalCenter: parent.verticalCenter
+                color: levelEditOverlay.activeLvl ? root.levelToneColor(levelEditOverlay.activeLvl.tone) : Color.foreground
+
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(3)
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.cycleEditingLevelTone()
+                }
+            }
+
+            Item {
+                width: Math.max(Style.space(76), Math.min(Style.space(180), levelTextInput.contentWidth + Style.space(12)))
+                height: parent.height
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: levelTextInput.text.length === 0
+                    text: "Label (Tab=color)..."
+                    color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.4)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                }
+
+                TextInput {
+                    id: levelTextInput
+                    anchors.fill: parent
+                    verticalAlignment: TextInput.AlignVCenter
+                    color: levelEditOverlay.activeLvl ? root.levelToneColor(levelEditOverlay.activeLvl.tone) : Color.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
+                    clip: true
+                    selectByMouse: true
+
+                    onTextEdited: {
+                        if (root.editingLevelIndex >= 0 && root.editingLevelIndex < root.priceLevels.length) {
+                            var next = root.priceLevels.slice();
+                            var item = Object.assign({}, next[root.editingLevelIndex]);
+                            item.text = text;
+                            next[root.editingLevelIndex] = item;
+                            root.setPriceLevels(next);
+                        }
+                    }
+
+                    Keys.onPressed: function (event) {
+                        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                            root.commitLevelEdit();
+                            event.accepted = true;
+                        } else if (event.key === Qt.Key_Escape) {
+                            root.dismissLevelEdit();
+                            event.accepted = true;
+                        } else if (event.key === Qt.Key_Tab) {
+                            root.cycleEditingLevelTone();
+                            event.accepted = true;
+                        }
+                    }
+                }
+            }
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                text: levelEditOverlay.activeLvl ? ("· " + Model.formatPrice(levelEditOverlay.activeLvl.price, root.currency, root.priceHint)) : ""
+                color: levelEditOverlay.activeLvl ? root.levelToneColor(levelEditOverlay.activeLvl.tone) : Color.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+            }
         }
     }
 
