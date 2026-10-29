@@ -1902,11 +1902,13 @@ function computeStratBinaryDetails(candles, liveQuote) {
   var curClose = Number(cur.close)
   if (liveQuote && isFinite(Number(liveQuote.price))) {
     curClose = Number(liveQuote.price)
+    if (curClose > curHigh) curHigh = curClose
+    if (curClose < curLow) curLow = curClose
     if (isFinite(Number(liveQuote.dayHigh)) && Number(liveQuote.dayHigh) > curHigh) curHigh = Number(liveQuote.dayHigh)
     if (isFinite(Number(liveQuote.dayLow)) && Number(liveQuote.dayLow) < curLow) curLow = Number(liveQuote.dayLow)
   }
 
-  var sc_cur = stratScenario(cur, p1)
+  var sc_cur = stratScenario({ high: curHigh, low: curLow }, p1)
   var sc_p1 = p2 ? stratScenario(p1, p2) : "-"
   var sc_p2 = (p2 && p3) ? stratScenario(p2, p3) : "-"
 
@@ -1921,10 +1923,23 @@ function computeStratBinaryDetails(candles, liveQuote) {
   // 3. Signal
   var sBit = "0"
   var signalType = null
+  var t1Price = null
   var targetPrice = null
   var isBullish = false
 
-  if (sc_p1 === "2d" && sc_cur === "2u") {
+  if (sc_p2 === "1" && sc_p1 === "2d" && sc_cur === "2u") {
+    sBit = "1"
+    signalType = "1-2d-2u Bullish RevStrat"
+    isBullish = true
+    t1Price = p2 ? Number(p2.high) : null
+    targetPrice = p3 ? Number(p3.high) : t1Price
+  } else if (sc_p2 === "1" && sc_p1 === "2u" && sc_cur === "2d") {
+    sBit = "1"
+    signalType = "1-2u-2d Bearish RevStrat"
+    isBullish = false
+    t1Price = p2 ? Number(p2.low) : null
+    targetPrice = p3 ? Number(p3.low) : t1Price
+  } else if (sc_p1 === "2d" && sc_cur === "2u") {
     sBit = "1"
     signalType = "2d-2u Bullish Reversal"
     isBullish = true
@@ -1954,7 +1969,7 @@ function computeStratBinaryDetails(candles, liveQuote) {
       sBit = "1"
       signalType = "2d-1-2d Bearish Continuation"
       isBullish = false
-      targetPrice = p3 ? Number(p3.low) : (p2 ? Number(p2.low) : null)
+      targetPrice = p3 ? Number(p3.low) : (p2 ? Number(p3.low) : null)
     }
   }
 
@@ -2013,8 +2028,12 @@ function computeStratBinaryDetails(candles, liveQuote) {
   if (signalType) {
     ttLines.push("• Setup: " + signalType)
     ttLines.push("• Status: " + statusDesc)
-    if (isFinite(targetPrice)) {
-      ttLines.push("• Target: $" + targetPrice.toFixed(2) + (mBit === "0" ? " (Hit)" : " (Open)"))
+    if (t1Price !== null && isFinite(t1Price) && isFinite(targetPrice)) {
+      var hitT1 = tBit === "1" && (isBullish ? (curHigh >= t1Price) : (curLow <= t1Price))
+      ttLines.push("• T1 (Inside): $" + t1Price.toFixed(2) + (hitT1 ? " (Hit)" : " (Open)"))
+      ttLines.push("• T2 (Mother): $" + targetPrice.toFixed(2) + (mBit === "0" && tBit === "1" ? " (Hit)" : " (Open)"))
+    } else if (isFinite(targetPrice)) {
+      ttLines.push("• Target: $" + targetPrice.toFixed(2) + (mBit === "0" && tBit === "1" ? " (Hit)" : " (Open)"))
     }
   }
   var tooltip = ttLines.join("\n")
@@ -2025,7 +2044,9 @@ function computeStratBinaryDetails(candles, liveQuote) {
     tooltip: tooltip,
     isBullish: isBullish,
     signalType: signalType,
-    statusDesc: statusDesc
+    statusDesc: statusDesc,
+    t1Price: (t1Price !== null && isFinite(t1Price)) ? t1Price : null,
+    targetPrice: (targetPrice !== null && isFinite(targetPrice)) ? targetPrice : null
   }
 }
 
@@ -3273,6 +3294,303 @@ function resolveDominoHtfSignal(tfLabel, isLong, candles) {
   }
 }
 
+function resolveUntaggedHtfTargets(isLong, setupTf, daily, weekly, monthly, entryBaseline, priorTodayExtreme) {
+  var dList = Array.isArray(daily) ? daily : []
+  var wList = Array.isArray(weekly) ? weekly : []
+  var mList = Array.isArray(monthly) ? monthly : []
+
+  var bound = finiteOrNull(entryBaseline)
+  var todayExt = finiteOrNull(priorTodayExtreme)
+  if (todayExt !== null) {
+    if (bound === null) {
+      bound = todayExt
+    } else if (isLong && todayExt > bound) {
+      bound = todayExt
+    } else if (!isLong && todayExt < bound) {
+      bound = todayExt
+    }
+  }
+  if (bound === null) return []
+
+  var p1D = dList.length > 1 ? dList[dList.length - 2] : null
+  var c1D = dList.length > 0 ? dList[dList.length - 1] : null
+  var p1W = wList.length > 1 ? wList[wList.length - 2] : null
+  var p1M = mList.length > 1 ? mList[mList.length - 2] : null
+
+  var closedDaily = dList.length > 1 ? dList.slice(0, dList.length - 1) : []
+  var closedWeekly = wList.length > 1 ? wList.slice(0, wList.length - 1) : []
+
+  var priorWtdExtreme = null
+  var priorMtdExtreme = null
+  if (c1D && isFinite(c1D.timestamp) && c1D.timestamp >= 86400 * 7) {
+    var curWeekStart = periodStartUtc(c1D.timestamp, "1W")
+    var curMonthStart = periodStartUtc(c1D.timestamp, "1M")
+    for (var pi = 0; pi < closedDaily.length; pi++) {
+      var pc = closedDaily[pi]
+      if (!pc || !isFinite(pc.timestamp)) continue
+      var pVal = isLong ? Number(pc.high) : Number(pc.low)
+      if (!isFinite(pVal)) continue
+      if (periodStartUtc(pc.timestamp, "1W") === curWeekStart) {
+        if (priorWtdExtreme === null || (isLong ? pVal > priorWtdExtreme : pVal < priorWtdExtreme)) {
+          priorWtdExtreme = pVal
+        }
+      }
+      if (periodStartUtc(pc.timestamp, "1M") === curMonthStart) {
+        if (priorMtdExtreme === null || (isLong ? pVal > priorMtdExtreme : pVal < priorMtdExtreme)) {
+          priorMtdExtreme = pVal
+        }
+      }
+    }
+  }
+
+  var wBound = bound
+  if (priorWtdExtreme !== null) {
+    if (isLong && priorWtdExtreme > wBound) wBound = priorWtdExtreme
+    if (!isLong && priorWtdExtreme < wBound) wBound = priorWtdExtreme
+  }
+  var mBound = bound
+  if (priorMtdExtreme !== null) {
+    if (isLong && priorMtdExtreme > mBound) mBound = priorMtdExtreme
+    if (!isLong && priorMtdExtreme < mBound) mBound = priorMtdExtreme
+  }
+
+  var raw = []
+
+  // 1. Primary immediate period boundaries (1D, 1W, 1M) if untagged
+  if (setupTf === "60" && p1D) {
+    var p1DVal = isLong ? Number(p1D.high) : Number(p1D.low)
+    if (isFinite(p1DVal) && (isLong ? p1DVal > bound : p1DVal < bound)) {
+      var dDom = resolveDominoHtfSignal("Daily", isLong, dList)
+      raw.push({
+        name: isLong ? "1D High" : "1D Low",
+        price: p1DVal,
+        timeframe: "1D",
+        kind: "primary",
+        priority: 1,
+        dominoSignal: dDom ? dDom.signalName : null,
+        dominoScenario: dDom ? dDom.scenarioTriggered : null,
+        isReversal: dDom ? dDom.isReversal : false
+      })
+    }
+  }
+  if (p1W) {
+    var p1WVal = isLong ? Number(p1W.high) : Number(p1W.low)
+    if (isFinite(p1WVal) && (isLong ? p1WVal > wBound : p1WVal < wBound)) {
+      var wDom = resolveDominoHtfSignal("Weekly", isLong, wList)
+      raw.push({
+        name: isLong ? "1W High" : "1W Low",
+        price: p1WVal,
+        timeframe: "1W",
+        kind: "primary",
+        priority: 2,
+        dominoSignal: wDom ? wDom.signalName : null,
+        dominoScenario: wDom ? wDom.scenarioTriggered : null,
+        isReversal: wDom ? wDom.isReversal : false
+      })
+    }
+  }
+  if (p1M) {
+    var p1MVal = isLong ? Number(p1M.high) : Number(p1M.low)
+    if (isFinite(p1MVal) && (isLong ? p1MVal > mBound : p1MVal < mBound)) {
+      var mDom = resolveDominoHtfSignal("Monthly", isLong, mList)
+      raw.push({
+        name: isLong ? "1M High" : "1M Low",
+        price: p1MVal,
+        timeframe: "1M",
+        kind: "primary",
+        priority: 3,
+        dominoSignal: mDom ? mDom.signalName : null,
+        dominoScenario: mDom ? mDom.scenarioTriggered : null,
+        isReversal: mDom ? mDom.isReversal : false
+      })
+    }
+  }
+
+  // 2. Current-period prior-session WTD / MTD extremes
+  if (priorWtdExtreme !== null && (isLong ? priorWtdExtreme > bound : priorWtdExtreme < bound)) {
+    raw.push({
+      name: isLong ? "WTD High" : "WTD Low",
+      price: priorWtdExtreme,
+      timeframe: "1W",
+      kind: "wtd",
+      priority: 7,
+      dominoSignal: null,
+      dominoScenario: null,
+      isReversal: false
+    })
+  }
+  if (priorMtdExtreme !== null && (isLong ? priorMtdExtreme > bound : priorMtdExtreme < bound)) {
+    raw.push({
+      name: isLong ? "MTD High" : "MTD Low",
+      price: priorMtdExtreme,
+      timeframe: "1M",
+      kind: "mtd",
+      priority: 6,
+      dominoSignal: null,
+      dominoScenario: null,
+      isReversal: false
+    })
+  }
+
+  // 3. Untagged lookback Daily swing pivots (last 60 completed trading days)
+  var dCount = closedDaily.length
+  var dMinIdx = Math.max(0, dCount - 60)
+  var runDailyBound = bound
+  if (dCount > 0) {
+    var lastDVal = isLong ? Number(closedDaily[dCount - 1].high) : Number(closedDaily[dCount - 1].low)
+    if (isFinite(lastDVal)) {
+      if (isLong && lastDVal > runDailyBound) runDailyBound = lastDVal
+      if (!isLong && lastDVal < runDailyBound) runDailyBound = lastDVal
+    }
+  }
+  for (var di = dCount - 2; di >= dMinIdx; di--) {
+    var dc = closedDaily[di]
+    if (!dc) continue
+    var dVal = isLong ? Number(dc.high) : Number(dc.low)
+    if (!isFinite(dVal)) continue
+    if (isLong ? dVal > runDailyBound : dVal < runDailyBound) {
+      runDailyBound = dVal
+      var hasLeftD = di > 0 && closedDaily[di - 1]
+      var leftDVal = hasLeftD ? (isLong ? Number(closedDaily[di - 1].high) : Number(closedDaily[di - 1].low)) : null
+      var isSwingD = !hasLeftD || !isFinite(leftDVal) || (isLong ? dVal >= leftDVal : dVal <= leftDVal)
+      if (isSwingD) {
+        raw.push({
+          name: isLong ? "1D Pivot High" : "1D Pivot Low",
+          price: dVal,
+          timeframe: "1D",
+          kind: "pivot1D",
+          priority: 5,
+          dominoSignal: null,
+          dominoScenario: null,
+          isReversal: false
+        })
+      }
+    }
+  }
+
+  // 4. Untagged lookback Weekly swing pivots (last 26 completed weeks)
+  var wCount = closedWeekly.length
+  var wMinIdx = Math.max(0, wCount - 26)
+  var runWeeklyBound = wBound
+  if (wCount > 0) {
+    var lastWVal = isLong ? Number(closedWeekly[wCount - 1].high) : Number(closedWeekly[wCount - 1].low)
+    if (isFinite(lastWVal)) {
+      if (isLong && lastWVal > runWeeklyBound) runWeeklyBound = lastWVal
+      if (!isLong && lastWVal < runWeeklyBound) runWeeklyBound = lastWVal
+    }
+  }
+  for (var wi = wCount - 2; wi >= wMinIdx; wi--) {
+    var wc = closedWeekly[wi]
+    if (!wc) continue
+    var wVal = isLong ? Number(wc.high) : Number(wc.low)
+    if (!isFinite(wVal)) continue
+    if (isLong ? wVal > runWeeklyBound : wVal < runWeeklyBound) {
+      runWeeklyBound = wVal
+      var hasLeftW = wi > 0 && closedWeekly[wi - 1]
+      var leftWVal = hasLeftW ? (isLong ? Number(closedWeekly[wi - 1].high) : Number(closedWeekly[wi - 1].low)) : null
+      var isSwingW = !hasLeftW || !isFinite(leftWVal) || (isLong ? wVal >= leftWVal : wVal <= leftWVal)
+      if (isSwingW) {
+        raw.push({
+          name: isLong ? "1W Pivot High" : "1W Pivot Low",
+          price: wVal,
+          timeframe: "1W",
+          kind: "pivot1W",
+          priority: 4,
+          dominoSignal: null,
+          dominoScenario: null,
+          isReversal: false
+        })
+      }
+    }
+  }
+
+  if (raw.length === 0) return []
+
+  // Sort by proximity to entry (ascending for LONG, descending for SHORT)
+  raw.sort(function(a, b) {
+    var diff = isLong ? (a.price - b.price) : (b.price - a.price)
+    if (Math.abs(diff) >= 0.005) return diff
+    return (a.priority || 99) - (b.priority || 99)
+  })
+
+  // Cluster & merge confluent levels within $0.005
+  var clusters = []
+  for (var ci = 0; ci < raw.length; ci++) {
+    var item = raw[ci]
+    var lastCluster = clusters.length > 0 ? clusters[clusters.length - 1] : null
+    if (lastCluster && Math.abs(item.price - lastCluster[0].price) < 0.005) {
+      lastCluster.push(item)
+    } else {
+      clusters.push([item])
+    }
+  }
+
+  var merged = []
+  for (var gi = 0; gi < clusters.length; gi++) {
+    var grp = clusters[gi]
+    var bestPrimary = null
+    var hasPivot1D = false
+    var hasPivot1W = false
+    var hasMtd = false
+    var hasWtd = false
+    for (var mj = 0; mj < grp.length; mj++) {
+      var cand = grp[mj]
+      if (cand.kind === "primary") {
+        if (!bestPrimary || cand.priority < bestPrimary.priority) bestPrimary = cand
+      } else if (cand.kind === "pivot1D") {
+        hasPivot1D = true
+      } else if (cand.kind === "pivot1W") {
+        hasPivot1W = true
+      } else if (cand.kind === "mtd") {
+        hasMtd = true
+      } else if (cand.kind === "wtd") {
+        hasWtd = true
+      }
+    }
+
+    if (bestPrimary) {
+      merged.push({
+        name: bestPrimary.name,
+        price: bestPrimary.price,
+        timeframe: bestPrimary.timeframe,
+        dominoSignal: bestPrimary.dominoSignal,
+        dominoScenario: bestPrimary.dominoScenario,
+        isReversal: bestPrimary.isReversal
+      })
+    } else {
+      var dirSuffix = isLong ? "High" : "Low"
+      var pivotName = "1D Pivot " + dirSuffix
+      var pivotTf = "1D"
+      if (hasPivot1D && hasPivot1W) {
+        pivotName = "1D/1W Pivot " + dirSuffix
+        pivotTf = "1W"
+      } else if (hasPivot1W) {
+        pivotName = "1W Pivot " + dirSuffix
+        pivotTf = "1W"
+      } else if (hasPivot1D) {
+        pivotName = "1D Pivot " + dirSuffix
+        pivotTf = "1D"
+      } else if (hasMtd) {
+        pivotName = "MTD " + dirSuffix
+        pivotTf = "1M"
+      } else if (hasWtd) {
+        pivotName = "WTD " + dirSuffix
+        pivotTf = "1W"
+      }
+      merged.push({
+        name: pivotName,
+        price: grp[0].price,
+        timeframe: pivotTf,
+        dominoSignal: null,
+        dominoScenario: null,
+        isReversal: false
+      })
+    }
+  }
+
+  return merged.slice(0, 4)
+}
+
 function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, nowDate) {
   var sym = normalizeSymbol(symbol)
   var hourly = Array.isArray(hourlyCandles) ? hourlyCandles : []
@@ -3532,41 +3850,45 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
   }
 
-  if (isLong) {
-    if (setupTf === "60" && p1D && triggerPrice !== null && Number(p1D.high) > triggerPrice) {
-      var dDom = resolveDominoHtfSignal("Daily", true, daily)
-      targets.push({
-        name: "1D High",
-        price: Number(p1D.high),
-        timeframe: "1D",
-        dominoSignal: dDom ? dDom.signalName : null,
-        dominoScenario: dDom ? dDom.scenarioTriggered : null,
-        isReversal: dDom ? dDom.isReversal : false
-      })
+  // Inception entry baseline (accounts for opening gaps past prior trigger) + earlier closed 60m bars today
+  var entryBaseline = null
+  if (triggerPrice !== null && isFinite(triggerPrice)) {
+    entryBaseline = Number(triggerPrice)
+    if (setupTf === "60" && c60 && isFinite(Number(c60.open))) {
+      var c60OpenVal = Number(c60.open)
+      entryBaseline = isLong ? Math.max(entryBaseline, c60OpenVal) : Math.min(entryBaseline, c60OpenVal)
+    } else if (setupTf === "1D" && c1D && isFinite(Number(c1D.open))) {
+      var c1DOpenVal = Number(c1D.open)
+      entryBaseline = isLong ? Math.max(entryBaseline, c1DOpenVal) : Math.min(entryBaseline, c1DOpenVal)
     }
-    if (p1W && triggerPrice !== null && Number(p1W.high) > triggerPrice) {
-      var wDom = resolveDominoHtfSignal("Weekly", true, weekly)
-      targets.push({
-        name: "1W High",
-        price: Number(p1W.high),
-        timeframe: "1W",
-        dominoSignal: wDom ? wDom.signalName : null,
-        dominoScenario: wDom ? wDom.scenarioTriggered : null,
-        isReversal: wDom ? wDom.isReversal : false
-      })
+  }
+
+  var priorTodayExtreme = null
+  if (setupTf === "60" && c60 && c1D && isFinite(c60.timestamp) && isFinite(c1D.timestamp)) {
+    var c60DayStart = periodStartUtc(c60.timestamp, "1D")
+    for (var hk = 0; hk < hourly.length - 1; hk++) {
+      var hc = hourly[hk]
+      if (!hc || !isFinite(hc.timestamp)) continue
+      if (hc.timestamp >= c1D.timestamp && periodStartUtc(hc.timestamp, "1D") === c60DayStart) {
+        var hVal = isLong ? Number(hc.high) : Number(hc.low)
+        if (isFinite(hVal)) {
+          if (priorTodayExtreme === null || (isLong ? hVal > priorTodayExtreme : hVal < priorTodayExtreme)) {
+            priorTodayExtreme = hVal
+          }
+        }
+      }
     }
-    if (p1M && triggerPrice !== null && Number(p1M.high) > triggerPrice) {
-      var mDom = resolveDominoHtfSignal("Monthly", true, monthly)
-      targets.push({
-        name: "1M High",
-        price: Number(p1M.high),
-        timeframe: "1M",
-        dominoSignal: mDom ? mDom.signalName : null,
-        dominoScenario: mDom ? mDom.scenarioTriggered : null,
-        isReversal: mDom ? mDom.isReversal : false
-      })
+  }
+
+  if (entryBaseline !== null) {
+    var htfTargets = resolveUntaggedHtfTargets(isLong, setupTf, daily, weekly, monthly, entryBaseline, priorTodayExtreme)
+    for (var hti = 0; hti < htfTargets.length && targets.length < 4; hti++) {
+      targets.push(htfTargets[hti])
     }
-    if (targets.length === 0) {
+  }
+
+  if (targets.length === 0) {
+    if (isLong) {
       if (p1D && Number(p1D.high) > 0) {
         var dDom0 = resolveDominoHtfSignal("Daily", true, daily)
         targets.push({ name: "1D High", price: Number(p1D.high), timeframe: "1D", dominoSignal: dDom0 ? dDom0.signalName : null, isReversal: dDom0 ? dDom0.isReversal : false })
@@ -3577,43 +3899,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
         var mDom0 = resolveDominoHtfSignal("Monthly", true, monthly)
         targets.push({ name: "1M High", price: Number(p1M.high), timeframe: "1M", dominoSignal: mDom0 ? mDom0.signalName : null, isReversal: mDom0 ? mDom0.isReversal : false })
       }
-    }
-  } else {
-    // Bearish / Short
-    if (setupTf === "60" && p1D && triggerPrice !== null && Number(p1D.low) < triggerPrice) {
-      var dDomBear = resolveDominoHtfSignal("Daily", false, daily)
-      targets.push({
-        name: "1D Low",
-        price: Number(p1D.low),
-        timeframe: "1D",
-        dominoSignal: dDomBear ? dDomBear.signalName : null,
-        dominoScenario: dDomBear ? dDomBear.scenarioTriggered : null,
-        isReversal: dDomBear ? dDomBear.isReversal : false
-      })
-    }
-    if (p1W && triggerPrice !== null && Number(p1W.low) < triggerPrice) {
-      var wDomBear = resolveDominoHtfSignal("Weekly", false, weekly)
-      targets.push({
-        name: "1W Low",
-        price: Number(p1W.low),
-        timeframe: "1W",
-        dominoSignal: wDomBear ? wDomBear.signalName : null,
-        dominoScenario: wDomBear ? wDomBear.scenarioTriggered : null,
-        isReversal: wDomBear ? wDomBear.isReversal : false
-      })
-    }
-    if (p1M && triggerPrice !== null && Number(p1M.low) < triggerPrice) {
-      var mDomBear = resolveDominoHtfSignal("Monthly", false, monthly)
-      targets.push({
-        name: "1M Low",
-        price: Number(p1M.low),
-        timeframe: "1M",
-        dominoSignal: mDomBear ? mDomBear.signalName : null,
-        dominoScenario: mDomBear ? mDomBear.scenarioTriggered : null,
-        isReversal: mDomBear ? mDomBear.isReversal : false
-      })
-    }
-    if (targets.length === 0) {
+    } else {
       if (p1D && Number(p1D.low) > 0) {
         var dDomBear0 = resolveDominoHtfSignal("Daily", false, daily)
         targets.push({ name: "1D Low", price: Number(p1D.low), timeframe: "1D", dominoSignal: dDomBear0 ? dDomBear0.signalName : null, isReversal: dDomBear0 ? dDomBear0.isReversal : false })
@@ -3656,11 +3942,13 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     if (isLong) {
       if (currentPrice >= targetPrice) isTargetHit = true
       if (c60 && Number(c60.high) >= targetPrice) isTargetHit = true
-      if (c1D && Number(c1D.high) >= targetPrice) isTargetHit = true
+      if (liveQuote && finiteOrNull(liveQuote.dayHigh) !== null && Number(liveQuote.dayHigh) >= targetPrice) isTargetHit = true
+      if ((setupTf === "1D" || !c60) && c1D && Number(c1D.high) >= targetPrice) isTargetHit = true
     } else {
       if (currentPrice <= targetPrice) isTargetHit = true
       if (c60 && Number(c60.low) <= targetPrice) isTargetHit = true
-      if (c1D && Number(c1D.low) <= targetPrice) isTargetHit = true
+      if (liveQuote && finiteOrNull(liveQuote.dayLow) !== null && Number(liveQuote.dayLow) <= targetPrice) isTargetHit = true
+      if ((setupTf === "1D" || !c60) && c1D && Number(c1D.low) <= targetPrice) isTargetHit = true
     }
   }
 
@@ -4536,6 +4824,7 @@ if (typeof module !== "undefined") {
     formatNetDelta: formatNetDelta,
     stratRuleRationales: stratRuleRationales,
     resolveDominoHtfSignal: resolveDominoHtfSignal,
+    resolveUntaggedHtfTargets: resolveUntaggedHtfTargets,
     evaluateStratChecklist: evaluateStratChecklist,
     discordAlertPayload: discordAlertPayload,
     stratLivePrice: stratLivePrice,
