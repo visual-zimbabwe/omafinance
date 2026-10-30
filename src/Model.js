@@ -4773,6 +4773,21 @@ function mapReplayStepInterval(step) {
   return String(step)
 }
 
+function nodeCommand(scriptPath, extraArgs) {
+  var cmd = [
+    "bash", "-c",
+    "export PATH=\"$HOME/.local/share/mise/shims:$HOME/.local/share/mise/installs/node/latest/bin:$HOME/.local/bin:$PATH\"; exec node \"$@\"",
+    "--",
+    scriptPath
+  ];
+  if (extraArgs && extraArgs.length > 0) {
+    for (var i = 0; i < extraArgs.length; i++) {
+      cmd.push(extraArgs[i]);
+    }
+  }
+  return cmd;
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -4887,7 +4902,8 @@ if (typeof module !== "undefined") {
     buildReplayQuote: buildReplayQuote,
     stepReplayCutoff: stepReplayCutoff,
     formatReplayBadgeTime: formatReplayBadgeTime,
-    mapReplayStepInterval: mapReplayStepInterval
+    mapReplayStepInterval: mapReplayStepInterval,
+    nodeCommand: nodeCommand
   }
 }
 

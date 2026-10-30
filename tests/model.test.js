@@ -2215,4 +2215,16 @@ test("replay step interval mapping, chartSpec, and custom timeframes", () => {
   assert.equal(Model.stepReplayCutoff(raw5m, 1900, 1), 0)
 })
 
+test("nodeCommand wraps script execution in bash with mise and local bin PATH", () => {
+  const cmd = Model.nodeCommand("/path/to/script.js", ["arg1", "arg2"])
+  assert.equal(cmd[0], "bash")
+  assert.equal(cmd[1], "-c")
+  assert.match(cmd[2], /mise\/shims/)
+  assert.match(cmd[2], /exec node "\$@"/)
+  assert.equal(cmd[3], "--")
+  assert.equal(cmd[4], "/path/to/script.js")
+  assert.equal(cmd[5], "arg1")
+  assert.equal(cmd[6], "arg2")
+})
+
 

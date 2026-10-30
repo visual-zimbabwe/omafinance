@@ -759,7 +759,7 @@ Panel {
         root.detailHoldingsStratLoading = true;
         var home = Quickshell.env("HOME");
         var scriptPath = home + "/.config/omarchy/plugins/mohamedmansour.finance/scripts/fetch-holdings-strat.js";
-        holdingsStratProc.command = ["node", scriptPath, target];
+        holdingsStratProc.command = Model.nodeCommand(scriptPath, [target]);
         holdingsStratProc.running = true;
     }
 
