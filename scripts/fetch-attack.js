@@ -103,8 +103,10 @@ async function run() {
     const etfCandles = dailyMap[b.symbol];
     if (etfCandles && etfCandles.length >= 2) {
       metrics.etfAttack = Model.detectStratAttack(etfCandles);
+      metrics.wtd = Model.extractWtdDailyCandles(etfCandles, null, metrics.etfAttack.triggerPrice, metrics.etfAttack.direction);
     } else {
       metrics.etfAttack = { attackType: "none", direction: "neutral", state: "none", label: "-" };
+      metrics.wtd = { candles: [], weekHigh: 0, weekLow: 0, triggerPrice: 0, triggerDirection: "neutral" };
     }
 
     evaluatedBaskets.push(metrics);

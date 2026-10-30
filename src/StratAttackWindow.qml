@@ -296,7 +296,11 @@ FloatingWindow {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             if (root.controller)
-                                root.controller.openDetail(attackPill.modelData.symbol);
+                                root.controller.openGrid({
+                                    symbol: attackPill.modelData.symbol,
+                                    gridMode: "2+3",
+                                    timeframes: ["60", "1D", "1W", "1M", "1Y"]
+                                });
                         }
                     }
                 }
@@ -334,7 +338,7 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(80)
+                            width: Style.space(60)
                             text: "BASKET"
                             color: root.dim
                             font.family: root.fontFamily
@@ -343,7 +347,7 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(60)
+                            width: Style.space(45)
                             text: "BAR"
                             color: root.dim
                             font.family: root.fontFamily
@@ -353,6 +357,15 @@ FloatingWindow {
 
                         Text {
                             width: Style.space(90)
+                            text: "WTD BARS"
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            font.bold: true
+                        }
+
+                        Text {
+                            width: Style.space(80)
                             horizontalAlignment: Text.AlignRight
                             text: "LIVE PRICE"
                             color: root.dim
@@ -362,7 +375,7 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(90)
+                            width: Style.space(80)
                             horizontalAlignment: Text.AlignRight
                             text: "TRIGGER"
                             color: root.dim
@@ -372,7 +385,7 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(100)
+                            width: Style.space(85)
                             horizontalAlignment: Text.AlignRight
                             text: "DISTANCE"
                             color: root.dim
@@ -382,7 +395,7 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(220)
+                            width: Style.space(160)
                             text: "COMPANY NAME"
                             color: root.dim
                             font.family: root.fontFamily
@@ -438,7 +451,7 @@ FloatingWindow {
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(60)
+                                width: Style.space(45)
                                 text: laggardRow.modelData.scenario ? String(laggardRow.modelData.scenario).toUpperCase() : "-"
                                 color: laggardRow.modelData.color === "G" ? root.upColor : (laggardRow.modelData.color === "R" ? root.downColor : root.dim)
                                 font.family: root.fontFamily
@@ -446,9 +459,18 @@ FloatingWindow {
                                 font.bold: true
                             }
 
-                            Text {
+                            WtdCandlesStrip {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: Style.space(90)
+                                height: Style.space(28)
+                                wtdData: laggardRow.modelData.wtd
+                                upColor: root.upColor
+                                downColor: root.downColor
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Style.space(80)
                                 horizontalAlignment: Text.AlignRight
                                 text: laggardRow.modelData.price ? "$" + laggardRow.modelData.price.toFixed(2) : "-"
                                 color: root.foreground
@@ -458,7 +480,7 @@ FloatingWindow {
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(90)
+                                width: Style.space(80)
                                 horizontalAlignment: Text.AlignRight
                                 text: laggardRow.modelData.triggerPrice ? "$" + laggardRow.modelData.triggerPrice.toFixed(2) : "-"
                                 color: Color.accent
@@ -469,7 +491,7 @@ FloatingWindow {
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(100)
+                                width: Style.space(85)
                                 horizontalAlignment: Text.AlignRight
                                 text: (laggardRow.modelData.distToTriggerPct != null) ? laggardRow.modelData.distToTriggerPct.toFixed(2) + "% away" : "-"
                                 color: root.warningColor
@@ -480,7 +502,7 @@ FloatingWindow {
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(220)
+                                width: Style.space(160)
                                 text: laggardRow.modelData.name || ""
                                 color: root.dim
                                 font.family: root.fontFamily
@@ -496,7 +518,11 @@ FloatingWindow {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 if (root.controller)
-                                    root.controller.openDetail(laggardRow.modelData.symbol);
+                                    root.controller.openGrid({
+                                        symbol: laggardRow.modelData.symbol,
+                                        gridMode: "2+3",
+                                        timeframes: ["60", "1D", "1W", "1M", "1Y"]
+                                    });
                             }
                         }
                     }
@@ -578,7 +604,7 @@ FloatingWindow {
                         Text {
                             width: Style.space(90)
                             horizontalAlignment: Text.AlignRight
-                            text: "ETF BAR"
+                            text: "WTD BARS"
                             color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -690,15 +716,13 @@ FloatingWindow {
                                     font.pixelSize: Style.font.bodySmall
                                 }
 
-                                Text {
+                                WtdCandlesStrip {
                                     anchors.verticalCenter: parent.verticalCenter
                                     width: Style.space(90)
-                                    horizontalAlignment: Text.AlignRight
-                                    text: (basketBlock.modelData.etfAttack && basketBlock.modelData.etfAttack.attackType !== "none") ? basketBlock.modelData.etfAttack.attackType.toUpperCase() : "-"
-                                    color: (basketBlock.modelData.etfAttack && basketBlock.modelData.etfAttack.direction === "bullish") ? root.upColor : ((basketBlock.modelData.etfAttack && basketBlock.modelData.etfAttack.direction === "bearish") ? root.downColor : root.dim)
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    font.bold: true
+                                    height: Style.space(26)
+                                    wtdData: basketBlock.modelData.wtd
+                                    upColor: root.upColor
+                                    downColor: root.downColor
                                 }
                             }
 
@@ -716,59 +740,247 @@ FloatingWindow {
                                 }
                                 onDoubleClicked: {
                                     if (root.controller)
-                                        root.controller.openDetail(basketBlock.modelData.symbol);
+                                        root.controller.openGrid({
+                                            symbol: basketBlock.modelData.symbol,
+                                            gridMode: "2+3",
+                                            timeframes: ["60", "1D", "1W", "1M", "1Y"]
+                                        });
                                 }
                             }
                         }
 
-                        // Expanded Section showing Attacking Constituents
+                        // Expanded Section showing Attacking Constituents and Laggards with WTD bars
                         Column {
-                            visible: root.expandedBasketSymbol === basketBlock.modelData.symbol && basketBlock.modelData.attackConstituents && basketBlock.modelData.attackConstituents.length > 0
+                            visible: root.expandedBasketSymbol === basketBlock.modelData.symbol
                             width: parent.width
                             anchors.leftMargin: Style.space(24)
-                            spacing: Style.space(3)
+                            spacing: Style.space(10)
 
-                            Text {
-                                text: "ATTACKING CONSTITUENTS (" + (basketBlock.modelData.attackConstituents ? basketBlock.modelData.attackConstituents.length : 0) + "):"
-                                color: Color.accent
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                font.bold: true
+                            // 1. Attacking Constituents Section
+                            Column {
+                                visible: basketBlock.modelData.attackConstituents && basketBlock.modelData.attackConstituents.length > 0
+                                width: parent.width
+                                spacing: Style.space(4)
+
+                                Row {
+                                    spacing: Style.space(6)
+                                    Text {
+                                        text: "ATTACKING CONSTITUENTS (" + (basketBlock.modelData.attackConstituents ? basketBlock.modelData.attackConstituents.length : 0) + "):"
+                                        color: Color.accent
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                        font.bold: true
+                                    }
+                                    Text {
+                                        text: "· Click any stock to open 5-timeframe Grid"
+                                        color: root.dim
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                    }
+                                }
+
+                                Flow {
+                                    width: parent.width - Style.space(40)
+                                    spacing: Style.space(8)
+
+                                    Repeater {
+                                        model: basketBlock.modelData.attackConstituents
+
+                                        Rectangle {
+                                            id: cCard
+                                            required property var modelData
+                                            width: Style.space(250)
+                                            height: Style.space(52)
+                                            radius: Style.space(6)
+                                            color: cCardArea.containsMouse ? Style.hoverFillFor(Color.background, 0.5) : Style.hoverFillFor(Color.background, 0.2)
+                                            border.color: cCardArea.containsMouse ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+                                            border.width: 1
+
+                                            Row {
+                                                anchors.fill: parent
+                                                anchors.margins: Style.space(6)
+                                                spacing: Style.space(8)
+
+                                                Column {
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    width: Style.space(126)
+                                                    spacing: Style.space(2)
+
+                                                    Row {
+                                                        spacing: Style.space(6)
+                                                        Text {
+                                                            text: cCard.modelData.symbol
+                                                            color: root.foreground
+                                                            font.family: root.fontFamily
+                                                            font.pixelSize: Style.font.body
+                                                            font.bold: true
+                                                        }
+                                                        Text {
+                                                            text: cCard.modelData.pctVal ? cCard.modelData.pctVal.toFixed(1) + "%" : ""
+                                                            color: root.dim
+                                                            font.family: root.fontFamily
+                                                            font.pixelSize: Style.font.caption
+                                                            visible: cCard.modelData.pctVal > 0
+                                                        }
+                                                    }
+
+                                                    Row {
+                                                        spacing: Style.space(4)
+                                                        Rectangle {
+                                                            anchors.verticalCenter: parent.verticalCenter
+                                                            width: attackLbl.implicitWidth + Style.space(6)
+                                                            height: Style.space(16)
+                                                            radius: Style.space(3)
+                                                            color: Style.hoverFillFor(cCard.modelData.direction === "bullish" ? root.upColor : root.downColor, 0.25)
+                                                            Text {
+                                                                id: attackLbl
+                                                                anchors.centerIn: parent
+                                                                text: cCard.modelData.attackType
+                                                                color: cCard.modelData.direction === "bullish" ? root.upColor : root.downColor
+                                                                font.family: root.fontFamily
+                                                                font.pixelSize: Style.font.caption
+                                                                font.bold: true
+                                                            }
+                                                        }
+
+                                                        Text {
+                                                            anchors.verticalCenter: parent.verticalCenter
+                                                            text: cCard.modelData.price ? "$" + cCard.modelData.price.toFixed(2) : ""
+                                                            color: root.dim
+                                                            font.family: root.fontFamily
+                                                            font.pixelSize: Style.font.caption
+                                                        }
+                                                    }
+                                                }
+
+                                                WtdCandlesStrip {
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    width: Style.space(96)
+                                                    height: Style.space(38)
+                                                    wtdData: cCard.modelData.wtd
+                                                    upColor: root.upColor
+                                                    downColor: root.downColor
+                                                }
+                                            }
+
+                                            MouseArea {
+                                                id: cCardArea
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: {
+                                                    if (root.controller)
+                                                        root.controller.openGrid({
+                                                            symbol: cCard.modelData.symbol,
+                                                            gridMode: "2+3",
+                                                            timeframes: ["60", "1D", "1W", "1M", "1Y"]
+                                                        });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
-                            Flow {
-                                width: parent.width - Style.space(40)
-                                spacing: Style.space(6)
+                            // 2. Basket Laggards Section (if any)
+                            Column {
+                                visible: basketBlock.modelData.laggards && basketBlock.modelData.laggards.length > 0
+                                width: parent.width
+                                spacing: Style.space(4)
 
-                                Repeater {
-                                    model: basketBlock.modelData.attackConstituents
+                                Row {
+                                    spacing: Style.space(6)
+                                    Text {
+                                        text: "BASKET LAGGARDS (" + (basketBlock.modelData.laggards ? basketBlock.modelData.laggards.length : 0) + "):"
+                                        color: root.warningColor
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                        font.bold: true
+                                    }
+                                    Text {
+                                        text: "· Un-triggered stocks near breakout"
+                                        color: root.dim
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                    }
+                                }
 
-                                    Rectangle {
-                                        id: cPill
-                                        required property var modelData
-                                        width: cPillText.implicitWidth + Style.space(12)
-                                        height: Style.space(22)
-                                        radius: Style.space(4)
-                                        color: Style.hoverFillFor(cPill.modelData.direction === "bullish" ? root.upColor : root.downColor, 0.15)
-                                        border.color: cPill.modelData.direction === "bullish" ? root.upColor : root.downColor
-                                        border.width: 1
+                                Flow {
+                                    width: parent.width - Style.space(40)
+                                    spacing: Style.space(8)
 
-                                        Text {
-                                            id: cPillText
-                                            anchors.centerIn: parent
-                                            text: cPill.modelData.symbol + " (" + cPill.modelData.attackType + ")"
-                                            color: root.foreground
-                                            font.family: root.fontFamily
-                                            font.pixelSize: Style.font.caption
-                                            font.bold: true
-                                        }
+                                    Repeater {
+                                        model: basketBlock.modelData.laggards
 
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: {
-                                                if (root.controller)
-                                                    root.controller.openDetail(cPill.modelData.symbol);
+                                        Rectangle {
+                                            id: lCard
+                                            required property var modelData
+                                            width: Style.space(250)
+                                            height: Style.space(52)
+                                            radius: Style.space(6)
+                                            color: lCardArea.containsMouse ? Style.hoverFillFor(Color.background, 0.5) : Style.hoverFillFor(Color.background, 0.2)
+                                            border.color: lCardArea.containsMouse ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+                                            border.width: 1
+
+                                            Row {
+                                                anchors.fill: parent
+                                                anchors.margins: Style.space(6)
+                                                spacing: Style.space(8)
+
+                                                Column {
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    width: Style.space(126)
+                                                    spacing: Style.space(2)
+
+                                                    Row {
+                                                        spacing: Style.space(6)
+                                                        Text {
+                                                            text: lCard.modelData.symbol
+                                                            color: root.foreground
+                                                            font.family: root.fontFamily
+                                                            font.pixelSize: Style.font.body
+                                                            font.bold: true
+                                                        }
+                                                        Text {
+                                                            text: (lCard.modelData.distToTriggerPct != null) ? lCard.modelData.distToTriggerPct.toFixed(1) + "% away" : ""
+                                                            color: root.warningColor
+                                                            font.family: root.fontFamily
+                                                            font.pixelSize: Style.font.caption
+                                                            font.bold: true
+                                                        }
+                                                    }
+
+                                                    Text {
+                                                        text: (lCard.modelData.price ? "$" + lCard.modelData.price.toFixed(2) : "") + " | Trig " + (lCard.modelData.triggerPrice ? "$" + lCard.modelData.triggerPrice.toFixed(2) : "-")
+                                                        color: root.dim
+                                                        font.family: root.fontFamily
+                                                        font.pixelSize: Style.font.caption
+                                                    }
+                                                }
+
+                                                WtdCandlesStrip {
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    width: Style.space(96)
+                                                    height: Style.space(38)
+                                                    wtdData: lCard.modelData.wtd
+                                                    upColor: root.upColor
+                                                    downColor: root.downColor
+                                                }
+                                            }
+
+                                            MouseArea {
+                                                id: lCardArea
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: {
+                                                    if (root.controller)
+                                                        root.controller.openGrid({
+                                                            symbol: lCard.modelData.symbol,
+                                                            gridMode: "2+3",
+                                                            timeframes: ["60", "1D", "1W", "1M", "1Y"]
+                                                        });
+                                                }
                                             }
                                         }
                                     }

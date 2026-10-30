@@ -19,7 +19,8 @@ const qmlFiles = [
   "GridCell.qml",
   "GridWindow.qml",
   "SectorBreadthWindow.qml",
-  "StratAttackWindow.qml"
+  "StratAttackWindow.qml",
+  "WtdCandlesStrip.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
@@ -616,6 +617,9 @@ test("panel, list view, and detail view integrate StratAttackWindow and attack s
   assert.match(attackWin, /property var topBullish:/)
   assert.match(attackWin, /property var topBearish:/)
   assert.match(attackWin, /property var topLaggards:/)
+  assert.match(attackWin, /WtdCandlesStrip\s*\{/)
+  assert.match(attackWin, /gridMode:\s*"2\+3"/)
+  assert.match(attackWin, /root\.controller\.openGrid/)
 })
 
 test("fetch-attack runner exists and produces structured basket attack output", () => {

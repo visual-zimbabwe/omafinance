@@ -3377,6 +3377,68 @@ function allAttackBasketsList() {
   ]
 }
 
+function extractWtdDailyCandles(candles, liveQuote, triggerPrice, triggerDirection) {
+  if (!Array.isArray(candles) || candles.length === 0) {
+    return { candles: [], weekHigh: 0, weekLow: 0, triggerPrice: 0, triggerDirection: "neutral" }
+  }
+
+  var cList = candles.slice()
+  var n = cList.length
+  var lastC = Object.assign({}, cList[n - 1])
+  var livePx = stratLivePrice(liveQuote)
+  if (livePx !== null && isFinite(livePx)) {
+    lastC.close = livePx
+    if (lastC.high === null || livePx > lastC.high) lastC.high = livePx
+    if (lastC.low === null || livePx < lastC.low) lastC.low = livePx
+  }
+  cList[n - 1] = lastC
+
+  var dLast = new Date(lastC.timestamp * 1000)
+  var dayOfWeek = dLast.getUTCDay()
+  var daysSinceMon = (dayOfWeek + 6) % 7
+  var monMidnight = new Date(dLast.getTime() - daysSinceMon * 86400 * 1000)
+  monMidnight.setUTCHours(0, 0, 0, 0)
+  var monTs = Math.floor(monMidnight.getTime() / 1000)
+
+  var weekBars = cList.filter(function(c) { return c && c.timestamp >= monTs; })
+  if (weekBars.length === 0) weekBars = [lastC]
+
+  var dayMap = ["Sun", "M", "T", "W", "Th", "F", "Sat"]
+  var wtdCandles = []
+  for (var i = 0; i < weekBars.length; i++) {
+    var c = weekBars[i]
+    var idx = cList.indexOf(c)
+    var prev = idx > 0 ? cList[idx - 1] : null
+    var sc = prev ? stratScenario(c, prev) : "-"
+    var d = new Date(c.timestamp * 1000)
+    wtdCandles.push({
+      day: dayMap[d.getUTCDay()] || "-",
+      timestamp: c.timestamp,
+      open: Number(c.open),
+      high: Number(c.high),
+      low: Number(c.low),
+      close: Number(c.close),
+      color: (Number(c.close) >= Number(c.open)) ? "G" : "R",
+      scenario: sc,
+      prevHigh: prev ? Number(prev.high) : null,
+      prevLow: prev ? Number(prev.low) : null
+    })
+  }
+
+  var highs = weekBars.map(function(c) { return Number(c.high); })
+  var lows = weekBars.map(function(c) { return Number(c.low); })
+  var weekHigh = Math.max.apply(null, highs)
+  var weekLow = Math.min.apply(null, lows)
+
+  return {
+    candles: wtdCandles,
+    weekHigh: weekHigh,
+    weekLow: weekLow,
+    triggerPrice: triggerPrice || null,
+    triggerDirection: triggerDirection || "neutral"
+  }
+}
+
 function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings, dailyCandlesMap, liveQuotesMap) {
   var list = Array.isArray(holdings) ? holdings : []
   var total = 0
@@ -3418,7 +3480,8 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
         direction: "bullish",
         consecutiveCount: attack.consecutiveCount,
         triggerPrice: attack.triggerPrice,
-        price: price
+        price: price,
+        wtd: extractWtdDailyCandles(candles, quote, attack.triggerPrice, "bullish")
       })
     } else if (attack.direction === "bearish") {
       countAttack2d++
@@ -3430,7 +3493,8 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
         direction: "bearish",
         consecutiveCount: attack.consecutiveCount,
         triggerPrice: attack.triggerPrice,
-        price: price
+        price: price,
+        wtd: extractWtdDailyCandles(candles, quote, attack.triggerPrice, "bearish")
       })
     } else {
       var trigHigh = Number(cPrev.high)
@@ -3474,12 +3538,26 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
   var relevantLaggards = []
   if (pct2u >= pct2d) {
     relevantLaggards = laggards.filter(function(l) { return l.distToHighPct >= 0 && l.distToHighPct <= 3.5 }).map(function(l) {
-      return Object.assign({}, l, { direction: "bullish", distToTriggerPct: l.distToHighPct, triggerPrice: l.triggerHigh })
+      var lCandles = dailyCandlesMap ? dailyCandlesMap[l.symbol] : null
+      var lQuote = liveQuotesMap ? liveQuotesMap[l.symbol] : null
+      return Object.assign({}, l, {
+        direction: "bullish",
+        distToTriggerPct: l.distToHighPct,
+        triggerPrice: l.triggerHigh,
+        wtd: extractWtdDailyCandles(lCandles, lQuote, l.triggerHigh, "bullish")
+      })
     })
     relevantLaggards.sort(function(a, b) { return a.distToTriggerPct - b.distToTriggerPct })
   } else {
     relevantLaggards = laggards.filter(function(l) { return l.distToLowPct >= 0 && l.distToLowPct <= 3.5 }).map(function(l) {
-      return Object.assign({}, l, { direction: "bearish", distToTriggerPct: l.distToLowPct, triggerPrice: l.triggerLow })
+      var lCandles2 = dailyCandlesMap ? dailyCandlesMap[l.symbol] : null
+      var lQuote2 = liveQuotesMap ? liveQuotesMap[l.symbol] : null
+      return Object.assign({}, l, {
+        direction: "bearish",
+        distToTriggerPct: l.distToLowPct,
+        triggerPrice: l.triggerLow,
+        wtd: extractWtdDailyCandles(lCandles2, lQuote2, l.triggerLow, "bearish")
+      })
     })
     relevantLaggards.sort(function(a, b) { return a.distToTriggerPct - b.distToTriggerPct })
   }
@@ -5331,6 +5409,7 @@ if (typeof module !== "undefined") {
     computeBasketAttackMetrics: computeBasketAttackMetrics,
     computeAllAttackBaskets: computeAllAttackBaskets,
     sortAttackBaskets: sortAttackBaskets,
+    extractWtdDailyCandles: extractWtdDailyCandles,
     stratRuleRationales: stratRuleRationales,
     resolveDominoHtfSignal: resolveDominoHtfSignal,
     resolveUntaggedHtfTargets: resolveUntaggedHtfTargets,
