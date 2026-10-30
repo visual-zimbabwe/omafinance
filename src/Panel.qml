@@ -42,6 +42,7 @@ Panel {
     property string breadthSortTimeframe: "1Y"
     property bool breadthSortAsc: false
     property var activeBreadthWindow: null
+    property var activeAttackWindow: null
     property var sectorsHoldings: ({})
     property var breadthEqualMetrics: []
     property var breadthCapMetrics: []
@@ -1956,6 +1957,24 @@ Panel {
         }
     }
 
+    function openStratAttack() {
+        if (root.activeAttackWindow && root.activeAttackWindow.visible) {
+            if (typeof root.activeAttackWindow.raise === "function")
+                root.activeAttackWindow.raise();
+            if (typeof root.activeAttackWindow.requestActivate === "function")
+                root.activeAttackWindow.requestActivate();
+            return;
+        }
+
+        var win = stratAttackWindowComponent.createObject(root, {
+            controller: root
+        });
+
+        if (win) {
+            root.activeAttackWindow = win;
+        }
+    }
+
     Component {
         id: sectorBreadthWindowComponent
         SectorBreadthWindow {
@@ -1973,6 +1992,21 @@ Panel {
                 if (!visible) {
                     root.activeBreadthWindow = null;
                     breadthWin.destroy();
+                }
+            }
+        }
+    }
+
+    Component {
+        id: stratAttackWindowComponent
+        StratAttackWindow {
+            id: attackWin
+            visible: true
+
+            onVisibleChanged: {
+                if (!visible) {
+                    root.activeAttackWindow = null;
+                    attackWin.destroy();
                 }
             }
         }

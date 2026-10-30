@@ -2381,5 +2381,160 @@ test("parseNportXml resolves international holdings via ISIN and custom mappings
   assert.equal(parsed.holdings[1].relativeRatio, 0.5)
 })
 
+test("detectStratAttack detects 2u-2u, 2u-2u-2u, 2d-2d, 2d-2d-2d and in-force vs confirmed states", () => {
+  assert.equal(Model.detectStratAttack([]).attackType, "none")
+  assert.equal(Model.detectStratAttack([{ open: 10, high: 12, low: 9, close: 11 }]).attackType, "none")
+
+  // Setup candles for 2u-2u bullish attack:
+  const c2 = { open: 100, high: 105, low: 95, close: 102 }
+  const c1 = { open: 101, high: 110, low: 98, close: 108 }
+  const c0 = { open: 109, high: 115, low: 107, close: 114 }
+
+  const res2u = Model.detectStratAttack([c2, c1, c0])
+  assert.equal(res2u.attackType, "2u-2u")
+  assert.equal(res2u.direction, "bullish")
+  assert.equal(res2u.consecutiveCount, 2)
+  assert.equal(res2u.triggerPrice, 110)
+  assert.equal(res2u.label, "2u-2u Attack")
+
+  // Setup candles for 2u-2u-2u triple bullish attack:
+  const c3 = { open: 90, high: 95, low: 88, close: 92 }
+  const c2Triple = { open: 93, high: 102, low: 91, close: 100 }
+  const c1Triple = { open: 101, high: 110, low: 99, close: 108 }
+  const c0Triple = { open: 109, high: 116, low: 107, close: 115 }
+
+  const resTriple = Model.detectStratAttack([c3, c2Triple, c1Triple, c0Triple])
+  assert.equal(resTriple.attackType, "2u-2u-2u")
+  assert.equal(resTriple.direction, "bullish")
+  assert.equal(resTriple.consecutiveCount, 3)
+  assert.equal(resTriple.triggerPrice, 110)
+
+  // Setup candles for 2d-2d bearish attack:
+  const c2Bear = { open: 100, high: 105, low: 95, close: 98 }
+  const c1Bear = { open: 97, high: 99, low: 88, close: 90 }
+  const c0Bear = { open: 89, high: 91, low: 82, close: 84 }
+
+  const res2d = Model.detectStratAttack([c2Bear, c1Bear, c0Bear])
+  assert.equal(res2d.attackType, "2d-2d")
+  assert.equal(res2d.direction, "bearish")
+  assert.equal(res2d.consecutiveCount, 2)
+  assert.equal(res2d.triggerPrice, 88)
+  assert.equal(res2d.label, "2d-2d Attack")
+
+  // In-force detection via live quote:
+  const liveQuoteInForce = { regularMarketPrice: 112 }
+  const resInForce = Model.detectStratAttack([c2, c1, c0], liveQuoteInForce)
+  assert.equal(resInForce.state, "in-force")
+
+  const liveQuotePullback = { regularMarketPrice: 109.5 }
+  const resPullback = Model.detectStratAttack([c2, c1, c0], liveQuotePullback)
+  assert.equal(resPullback.state, "confirmed")
+})
+
+test("allAttackBasketsList returns core indices, sectors, and thematic ETFs", () => {
+  const baskets = Model.allAttackBasketsList()
+  assert.ok(Array.isArray(baskets))
+  assert.equal(baskets.length, 25)
+
+  const symbols = baskets.map(b => b.symbol)
+  assert.ok(symbols.includes("SPY"))
+  assert.ok(symbols.includes("QQQ"))
+  assert.ok(symbols.includes("XLK"))
+  assert.ok(symbols.includes("SMH"))
+  assert.ok(symbols.includes("XBI"))
+})
+
+test("computeBasketAttackMetrics and sortAttackBaskets evaluate group attacks and laggards", () => {
+  const holdings = [
+    { symbol: "AAA", name: "Alpha Inc", pctVal: 40 },
+    { symbol: "BBB", name: "Beta Corp", pctVal: 30 },
+    { symbol: "CCC", name: "Gamma Ltd", pctVal: 20 },
+    { symbol: "DDD", name: "Delta Co", pctVal: 10 }
+  ]
+
+  const c2Bull = { open: 100, high: 105, low: 95, close: 102 }
+  const c1Bull = { open: 101, high: 110, low: 98, close: 108 }
+  const c0Bull = { open: 109, high: 115, low: 107, close: 114 }
+
+  const c1CCC = { open: 92, high: 100, low: 90, close: 97 }
+  const c0CCC = { open: 96, high: 99, low: 95, close: 98.5 }
+
+  const c1DDD = { open: 100, high: 105, low: 95, close: 98 }
+  const c0DDD = { open: 96, high: 97, low: 88, close: 90 }
+
+  const dailyMap = {
+    "AAA": [c2Bull, c1Bull, c0Bull],
+    "BBB": [c2Bull, c1Bull, c0Bull],
+    "CCC": [c1CCC, c0CCC],
+    "DDD": [c1DDD, c0DDD]
+  }
+
+  const liveQuotes = {
+    "AAA": { regularMarketPrice: 114 },
+    "BBB": { regularMarketPrice: 114 },
+    "CCC": { regularMarketPrice: 98.5 },
+    "DDD": { regularMarketPrice: 90 }
+  }
+
+  const metrics = Model.computeBasketAttackMetrics("MOCK", "Mock ETF", "Sector", holdings, dailyMap, liveQuotes)
+
+  assert.equal(metrics.symbol, "MOCK")
+  assert.equal(metrics.totalHoldings, 4)
+  assert.equal(metrics.count2u, 2)
+  assert.equal(metrics.countAttack2u, 2)
+  assert.equal(metrics.pctAttack2u, 50)
+  assert.equal(metrics.count2d, 1)
+  assert.equal(metrics.pctAttack2d, 0)
+  assert.equal(metrics.netAttackDelta, 50)
+  assert.equal(metrics.attackConstituents.length, 2)
+  assert.equal(metrics.attackConstituents[0].symbol, "AAA")
+  assert.ok(metrics.attackConstituents[0].wtd)
+  assert.ok(Array.isArray(metrics.attackConstituents[0].wtd.candles))
+
+  assert.equal(metrics.laggards.length, 1)
+  assert.equal(metrics.laggards[0].symbol, "CCC")
+  assert.equal(metrics.laggards[0].direction, "bullish")
+  assert.ok(metrics.laggards[0].distToTriggerPct > 0 && metrics.laggards[0].distToTriggerPct < 3.5)
+  assert.ok(metrics.laggards[0].wtd)
+  assert.ok(Array.isArray(metrics.laggards[0].wtd.candles))
+
+  const b1 = { symbol: "B1", netAttackDelta: 80, pctAttack2u: 80, pctAttack2d: 0, pct2u: 90, pct2d: 10 }
+  const b2 = { symbol: "B2", netAttackDelta: -50, pctAttack2u: 10, pctAttack2d: 60, pct2u: 20, pct2d: 80 }
+  const sortedDesc = Model.sortAttackBaskets([b2, b1], "attack", false)
+  assert.equal(sortedDesc[0].symbol, "B1")
+  assert.equal(sortedDesc[1].symbol, "B2")
+
+  const sortedAsc = Model.sortAttackBaskets([b2, b1], "attack", true)
+  assert.equal(sortedAsc[0].symbol, "B2")
+  assert.equal(sortedAsc[1].symbol, "B1")
+})
+
+test("extractWtdDailyCandles extracts Week-To-Date daily bars, scenarios, and week extremes", () => {
+  assert.equal(Model.extractWtdDailyCandles([]).candles.length, 0)
+
+  const cFri = { timestamp: 1792762200, open: 100, high: 102, low: 99, close: 101 }
+  const cMon = { timestamp: 1793021400, open: 101, high: 105, low: 100, close: 104 }
+  const cTue = { timestamp: 1793107800, open: 104, high: 110, low: 103, close: 109 }
+
+  const resTue = Model.extractWtdDailyCandles([cFri, cMon, cTue], null, 105, "bullish")
+  assert.equal(resTue.candles.length, 2, "Tuesday should have exactly 2 WTD bars (Mon, Tue)")
+  assert.equal(resTue.candles[0].day, "M")
+  assert.equal(resTue.candles[1].day, "T")
+  assert.equal(resTue.candles[0].scenario, "2u")
+  assert.equal(resTue.candles[1].scenario, "2u")
+  assert.equal(resTue.candles[0].color, "G")
+  assert.equal(resTue.candles[1].color, "G")
+  assert.equal(resTue.weekHigh, 110)
+  assert.equal(resTue.weekLow, 100)
+  assert.equal(resTue.triggerPrice, 105)
+  assert.equal(resTue.triggerDirection, "bullish")
+
+  const liveQuote = { regularMarketPrice: 112 }
+  const resLive = Model.extractWtdDailyCandles([cFri, cMon, cTue], liveQuote, 105, "bullish")
+  assert.equal(resLive.candles[1].close, 112)
+  assert.equal(resLive.candles[1].high, 112)
+  assert.equal(resLive.weekHigh, 112)
+})
+
 
 
