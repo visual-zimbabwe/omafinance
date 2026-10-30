@@ -18,7 +18,8 @@ const qmlFiles = [
   "GridSplitter.qml",
   "GridCell.qml",
   "GridWindow.qml",
-  "SectorBreadthWindow.qml"
+  "SectorBreadthWindow.qml",
+  "StratAttackWindow.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
@@ -588,6 +589,47 @@ test("grid window and panel persist cellTimeframes across state and layouts and 
   assert.match(cell, /signal replayRequested\(real timestamp\)/)
   assert.match(chart, /signal replayRequested\(real timestamp\)/)
 })
+
+test("panel, list view, and detail view integrate StratAttackWindow and attack scanner", () => {
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+  const listView = fs.readFileSync(source("FinanceListView.qml"), "utf8")
+  const detailView = fs.readFileSync(source("FinanceDetailView.qml"), "utf8")
+  const attackWin = fs.readFileSync(source("StratAttackWindow.qml"), "utf8")
+
+  assert.match(panel, /property var activeAttackWindow:\s*null/)
+  assert.match(panel, /function openStratAttack\(\)/)
+  assert.match(panel, /stratAttackWindowComponent\.createObject/)
+  assert.match(panel, /id:\s*stratAttackWindowComponent/)
+  assert.match(panel, /StratAttackWindow\s*\{/)
+
+  assert.match(listView, /id:\s*attackBtn/)
+  assert.match(listView, /tooltipText:\s*"TheStrat Attack Scanner"/)
+  assert.match(listView, /controller\.openStratAttack\(\)/)
+
+  assert.match(detailView, /id:\s*holdingsAttackLink/)
+  assert.match(detailView, /controller\.openStratAttack\(\)/)
+
+  assert.match(attackWin, /title:\s*"Omafinance - TheStrat Attack Scanner"/)
+  assert.match(attackWin, /Model\.nodeCommand\(scriptPath\)/)
+  assert.match(attackWin, /id:\s*attackRunnerProc/)
+  assert.match(attackWin, /property var attackData:/)
+  assert.match(attackWin, /property var topBullish:/)
+  assert.match(attackWin, /property var topBearish:/)
+  assert.match(attackWin, /property var topLaggards:/)
+})
+
+test("fetch-attack runner exists and produces structured basket attack output", () => {
+  const scriptPath = path.join(root, "scripts", "fetch-attack.js")
+  assert.ok(fs.existsSync(scriptPath), "scripts/fetch-attack.js should exist")
+  const code = fs.readFileSync(scriptPath, "utf8")
+  assert.match(code, /Model\.allAttackBasketsList\(\)/)
+  assert.match(code, /resolveEtfHoldings/)
+  assert.match(code, /Model\.computeBasketAttackMetrics/)
+  assert.match(code, /topBullishAttacks/)
+  assert.match(code, /topBearishAttacks/)
+  assert.match(code, /topLaggards/)
+})
+
 
 
 

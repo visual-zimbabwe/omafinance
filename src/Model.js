@@ -3271,6 +3271,282 @@ function formatNetDelta(val) {
   return sign + n.toFixed(1) + "%"
 }
 
+function detectStratAttack(candles, liveQuote) {
+  var emptyResult = {
+    attackType: "none",
+    direction: "neutral",
+    state: "none",
+    consecutiveCount: 0,
+    triggerPrice: null,
+    label: "-"
+  }
+  if (!Array.isArray(candles) || candles.length < 2) return emptyResult
+
+  var n = candles.length
+  var c0 = Object.assign({}, candles[n - 1])
+  var c1 = candles[n - 2]
+  var c2 = n >= 3 ? candles[n - 3] : null
+  var c3 = n >= 4 ? candles[n - 4] : null
+
+  var livePx = stratLivePrice(liveQuote)
+  if (livePx !== null && isFinite(livePx)) {
+    c0.close = livePx
+    if (c0.high === null || livePx > c0.high) c0.high = livePx
+    if (c0.low === null || livePx < c0.low) c0.low = livePx
+  }
+
+  var s1 = stratScenario(c1, c2)
+  var color1 = (c1.close >= c1.open) ? "G" : "R"
+
+  var s0 = stratScenario(c0, c1)
+  var color0 = (c0.close >= c0.open) ? "G" : "R"
+
+  var s2 = c2 && c3 ? stratScenario(c2, c3) : "-"
+  var color2 = c2 ? ((c2.close >= c2.open) ? "G" : "R") : "-"
+
+  // 1. Bullish Attack (2u-2u / 2u-2u-2u)
+  if (s1 === "2u" && color1 === "G") {
+    var hasBrokenHigh = Number(c0.high) > Number(c1.high)
+    var isGreenToday = color0 === "G"
+    var inForce = livePx !== null ? (livePx > Number(c1.high) && livePx >= Number(c0.open)) : (hasBrokenHigh && isGreenToday)
+
+    if (hasBrokenHigh && isGreenToday) {
+      var isTriple = (s2 === "2u" && color2 === "G")
+      var attackType = isTriple ? "2u-2u-2u" : "2u-2u"
+      return {
+        attackType: attackType,
+        direction: "bullish",
+        state: inForce ? "in-force" : "confirmed",
+        consecutiveCount: isTriple ? 3 : 2,
+        triggerPrice: Number(c1.high),
+        label: attackType + " Attack"
+      }
+    }
+  }
+
+  // 2. Bearish Attack (2d-2d / 2d-2d-2d)
+  if (s1 === "2d" && color1 === "R") {
+    var hasBrokenLow = Number(c0.low) < Number(c1.low)
+    var isRedToday = color0 === "R"
+    var inForceDown = livePx !== null ? (livePx < Number(c1.low) && livePx < Number(c0.open)) : (hasBrokenLow && isRedToday)
+
+    if (hasBrokenLow && isRedToday) {
+      var isTripleDown = (s2 === "2d" && color2 === "R")
+      var attackTypeDown = isTripleDown ? "2d-2d-2d" : "2d-2d"
+      return {
+        attackType: attackTypeDown,
+        direction: "bearish",
+        state: inForceDown ? "in-force" : "confirmed",
+        consecutiveCount: isTripleDown ? 3 : 2,
+        triggerPrice: Number(c1.low),
+        label: attackTypeDown + " Attack"
+      }
+    }
+  }
+
+  return emptyResult
+}
+
+function allAttackBasketsList() {
+  return [
+    { symbol: "SPY", name: "S&P 500 Index", category: "Index" },
+    { symbol: "QQQ", name: "Nasdaq 100 Index", category: "Index" },
+    { symbol: "IWM", name: "Russell 2000 Index", category: "Index" },
+    { symbol: "DIA", name: "Dow Jones 30", category: "Index" },
+    { symbol: "XLK", name: "Technology", category: "Sector" },
+    { symbol: "XLF", name: "Financials", category: "Sector" },
+    { symbol: "XLC", name: "Communication Services", category: "Sector" },
+    { symbol: "XLY", name: "Consumer Discretionary", category: "Sector" },
+    { symbol: "XLI", name: "Industrials", category: "Sector" },
+    { symbol: "XLV", name: "Health Care", category: "Sector" },
+    { symbol: "XLE", name: "Energy", category: "Sector" },
+    { symbol: "XLP", name: "Consumer Staples", category: "Sector" },
+    { symbol: "XLB", name: "Materials", category: "Sector" },
+    { symbol: "XLU", name: "Utilities", category: "Sector" },
+    { symbol: "XLRE", name: "Real Estate", category: "Sector" },
+    { symbol: "SMH", name: "Semiconductors", category: "Thematic" },
+    { symbol: "SOXX", name: "Semiconductors iShares", category: "Thematic" },
+    { symbol: "ARKG", name: "Genomics", category: "Thematic" },
+    { symbol: "ARKK", name: "Innovation", category: "Thematic" },
+    { symbol: "XBI", name: "Biotechnology", category: "Thematic" },
+    { symbol: "KRE", name: "Regional Banking", category: "Thematic" },
+    { symbol: "XOP", name: "Oil & Gas Exploration", category: "Thematic" },
+    { symbol: "GDX", name: "Gold Miners", category: "Thematic" },
+    { symbol: "XRT", name: "Retail", category: "Thematic" },
+    { symbol: "ITB", name: "Homebuilders", category: "Thematic" }
+  ]
+}
+
+function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings, dailyCandlesMap, liveQuotesMap) {
+  var list = Array.isArray(holdings) ? holdings : []
+  var total = 0
+  var count2u = 0
+  var count2d = 0
+  var countAttack2u = 0
+  var countAttack2d = 0
+  var attackConstituents = []
+  var laggards = []
+
+  for (var i = 0; i < list.length; i++) {
+    var h = list[i]
+    if (!h || h.delisted) continue
+    var sym = normalizeSymbol(h.symbol)
+    if (!sym) continue
+
+    var candles = dailyCandlesMap ? dailyCandlesMap[sym] : null
+    if (!Array.isArray(candles) || candles.length < 2) continue
+
+    total++
+    var quote = liveQuotesMap ? liveQuotesMap[sym] : null
+    var attack = detectStratAttack(candles, quote)
+    var cLast = candles[candles.length - 1]
+    var cPrev = candles[candles.length - 2]
+    var s0 = stratScenario(cLast, cPrev)
+    var color0 = (cLast.close >= cLast.open) ? "G" : "R"
+    var price = stratLivePrice(quote) || cLast.close
+
+    if (s0 === "2u") count2u++
+    if (s0 === "2d") count2d++
+
+    if (attack.direction === "bullish") {
+      countAttack2u++
+      attackConstituents.push({
+        symbol: sym,
+        name: h.name || sym,
+        pctVal: h.pctVal || 0,
+        attackType: attack.attackType,
+        direction: "bullish",
+        consecutiveCount: attack.consecutiveCount,
+        triggerPrice: attack.triggerPrice,
+        price: price
+      })
+    } else if (attack.direction === "bearish") {
+      countAttack2d++
+      attackConstituents.push({
+        symbol: sym,
+        name: h.name || sym,
+        pctVal: h.pctVal || 0,
+        attackType: attack.attackType,
+        direction: "bearish",
+        consecutiveCount: attack.consecutiveCount,
+        triggerPrice: attack.triggerPrice,
+        price: price
+      })
+    } else {
+      var trigHigh = Number(cPrev.high)
+      var trigLow = Number(cPrev.low)
+      if (price && isFinite(price)) {
+        var distToHigh = trigHigh > 0 ? ((trigHigh - price) / trigHigh) * 100 : 999
+        var distToLow = trigLow > 0 ? ((price - trigLow) / trigLow) * 100 : 999
+        laggards.push({
+          symbol: sym,
+          name: h.name || sym,
+          pctVal: h.pctVal || 0,
+          scenario: s0,
+          color: color0,
+          price: price,
+          triggerHigh: trigHigh,
+          triggerLow: trigLow,
+          distToHighPct: distToHigh,
+          distToLowPct: distToLow
+        })
+      }
+    }
+  }
+
+  var pct2u = total > 0 ? (count2u / total) * 100 : 0
+  var pct2d = total > 0 ? (count2d / total) * 100 : 0
+  var pctAttack2u = total > 0 ? (countAttack2u / total) * 100 : 0
+  var pctAttack2d = total > 0 ? (countAttack2d / total) * 100 : 0
+  var netAttackDelta = pctAttack2u - pctAttack2d
+
+  var status = "NEUTRAL"
+  if (pct2u >= 75 && pctAttack2u >= 40) {
+    status = "BULLISH ATTACK"
+  } else if (pct2d >= 75 && pctAttack2d >= 40) {
+    status = "BEARISH ATTACK"
+  } else if (pct2u >= 60) {
+    status = "DEVELOPING BUY"
+  } else if (pct2d >= 60) {
+    status = "DEVELOPING SELL"
+  }
+
+  var relevantLaggards = []
+  if (pct2u >= pct2d) {
+    relevantLaggards = laggards.filter(function(l) { return l.distToHighPct >= 0 && l.distToHighPct <= 3.5 }).map(function(l) {
+      return Object.assign({}, l, { direction: "bullish", distToTriggerPct: l.distToHighPct, triggerPrice: l.triggerHigh })
+    })
+    relevantLaggards.sort(function(a, b) { return a.distToTriggerPct - b.distToTriggerPct })
+  } else {
+    relevantLaggards = laggards.filter(function(l) { return l.distToLowPct >= 0 && l.distToLowPct <= 3.5 }).map(function(l) {
+      return Object.assign({}, l, { direction: "bearish", distToTriggerPct: l.distToLowPct, triggerPrice: l.triggerLow })
+    })
+    relevantLaggards.sort(function(a, b) { return a.distToTriggerPct - b.distToTriggerPct })
+  }
+
+  return {
+    symbol: basketSymbol,
+    name: basketName,
+    category: category || "Sector",
+    totalHoldings: total,
+    count2u: count2u,
+    count2d: count2d,
+    pct2u: pct2u,
+    pct2d: pct2d,
+    countAttack2u: countAttack2u,
+    countAttack2d: countAttack2d,
+    pctAttack2u: pctAttack2u,
+    pctAttack2d: pctAttack2d,
+    netAttackDelta: netAttackDelta,
+    status: status,
+    attackConstituents: attackConstituents,
+    laggards: relevantLaggards
+  }
+}
+
+function computeAllAttackBaskets(basketsHoldingsMap, dailyCandlesMap, liveQuotesMap) {
+  var baskets = allAttackBasketsList()
+  var out = []
+  for (var i = 0; i < baskets.length; i++) {
+    var b = baskets[i]
+    var sym = b.symbol
+    var holdingsData = basketsHoldingsMap ? basketsHoldingsMap[sym] : null
+    var holdings = (holdingsData && holdingsData.holdings) ? holdingsData.holdings : (Array.isArray(holdingsData) ? holdingsData : [])
+    var metrics = computeBasketAttackMetrics(sym, b.name, b.category, holdings, dailyCandlesMap, liveQuotesMap)
+    out.push(metrics)
+  }
+  return out
+}
+
+function sortAttackBaskets(basketsList, sortKey, sortAsc) {
+  if (!Array.isArray(basketsList)) return []
+  var list = basketsList.slice()
+  var asc = !!sortAsc
+  var sk = String(sortKey || "attack").toLowerCase()
+
+  list.sort(function (a, b) {
+    if (sk === "symbol" || sk === "ticker") {
+      return asc ? a.symbol.localeCompare(b.symbol) : b.symbol.localeCompare(a.symbol)
+    }
+    if (sk === "name") {
+      return asc ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)
+    }
+    if (sk === "pct2u") {
+      return asc ? (a.pct2u - b.pct2u) : (b.pct2u - a.pct2u)
+    }
+    if (sk === "pct2d") {
+      return asc ? (a.pct2d - b.pct2d) : (b.pct2d - a.pct2d)
+    }
+    var diff = Number(a.netAttackDelta) - Number(b.netAttackDelta)
+    if (Math.abs(diff) > 0.0001) {
+      return asc ? diff : -diff
+    }
+    return Math.abs(b.pctAttack2u + b.pctAttack2d) - Math.abs(a.pctAttack2u + a.pctAttack2d)
+  })
+
+  return list
+}
+
 function stratRuleRationales() {
   return {
     1: "Full Timeframe Continuity (FTFC): Price relative to open must align across 60, 1D, 1W, and 1M (all green for long, all red for short). Eliminates low-probability counter-trend traps.",
@@ -5050,6 +5326,11 @@ if (typeof module !== "undefined") {
     computeAllSectorsBreadth: computeAllSectorsBreadth,
     sortSectorBreadth: sortSectorBreadth,
     formatNetDelta: formatNetDelta,
+    detectStratAttack: detectStratAttack,
+    allAttackBasketsList: allAttackBasketsList,
+    computeBasketAttackMetrics: computeBasketAttackMetrics,
+    computeAllAttackBaskets: computeAllAttackBaskets,
+    sortAttackBaskets: sortAttackBaskets,
     stratRuleRationales: stratRuleRationales,
     resolveDominoHtfSignal: resolveDominoHtfSignal,
     resolveUntaggedHtfTargets: resolveUntaggedHtfTargets,

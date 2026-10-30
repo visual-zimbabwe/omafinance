@@ -565,6 +565,7 @@ Column {
                 spacing: Style.space(6)
 
                 Text {
+                    id: holdingsTitleText
                     text: "HOLDINGS"
                     color: controller.dim
                     font.family: controller.contentFontFamily
@@ -580,11 +581,31 @@ Column {
                     font.family: controller.contentFontFamily
                     font.pixelSize: Style.font.bodySmall
                 }
+
+                Text {
+                    id: holdingsAttackLink
+                    text: "· Strat Attack"
+                    color: attackLinkMouseArea.containsMouse ? controller.contentForeground : controller.dim
+                    font.family: controller.contentFontFamily
+                    font.pixelSize: Style.font.bodySmall
+
+                    MouseArea {
+                        id: attackLinkMouseArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (controller && typeof controller.openStratAttack === "function") {
+                                controller.openStratAttack();
+                            }
+                        }
+                    }
+                }
             }
 
             MouseArea {
                 id: holdingsHeaderMouseArea
-                anchors.fill: holdingsHeaderLeft
+                anchors.fill: holdingsTitleText
                 hoverEnabled: true
             }
 
@@ -640,11 +661,31 @@ Column {
 
                 Repeater {
                     model: [
-                        { label: "60", key: "60", colWidth: Style.space(22) },
-                        { label: "D", key: "1D", colWidth: Style.space(18) },
-                        { label: "W", key: "1W", colWidth: Style.space(18) },
-                        { label: "M", key: "1M", colWidth: Style.space(18) },
-                        { label: "Y", key: "1Y", colWidth: Style.space(18) }
+                        {
+                            label: "60",
+                            key: "60",
+                            colWidth: Style.space(22)
+                        },
+                        {
+                            label: "D",
+                            key: "1D",
+                            colWidth: Style.space(18)
+                        },
+                        {
+                            label: "W",
+                            key: "1W",
+                            colWidth: Style.space(18)
+                        },
+                        {
+                            label: "M",
+                            key: "1M",
+                            colWidth: Style.space(18)
+                        },
+                        {
+                            label: "Y",
+                            key: "1Y",
+                            colWidth: Style.space(18)
+                        }
                     ]
 
                     Text {
@@ -699,7 +740,7 @@ Column {
                         cursorShape: holdingRow.isDelisted ? Qt.ArrowCursor : Qt.PointingHandCursor
                         onClicked: {
                             if (!holdingRow.isDelisted)
-                                controller.openDetailWithHistory(holdingRow.modelData.symbol)
+                                controller.openDetailWithHistory(holdingRow.modelData.symbol);
                         }
                     }
 
@@ -773,11 +814,31 @@ Column {
 
                                 Repeater {
                                     model: [
-                                        { label: "60", key: "60", colWidth: Style.space(22) },
-                                        { label: "D", key: "1D", colWidth: Style.space(18) },
-                                        { label: "W", key: "1W", colWidth: Style.space(18) },
-                                        { label: "M", key: "1M", colWidth: Style.space(18) },
-                                        { label: "Y", key: "1Y", colWidth: Style.space(18) }
+                                        {
+                                            label: "60",
+                                            key: "60",
+                                            colWidth: Style.space(22)
+                                        },
+                                        {
+                                            label: "D",
+                                            key: "1D",
+                                            colWidth: Style.space(18)
+                                        },
+                                        {
+                                            label: "W",
+                                            key: "1W",
+                                            colWidth: Style.space(18)
+                                        },
+                                        {
+                                            label: "M",
+                                            key: "1M",
+                                            colWidth: Style.space(18)
+                                        },
+                                        {
+                                            label: "Y",
+                                            key: "1Y",
+                                            colWidth: Style.space(18)
+                                        }
                                     ]
 
                                     Item {
