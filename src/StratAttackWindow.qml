@@ -133,21 +133,13 @@ FloatingWindow {
                         font.bold: true
                     }
 
-                    Rectangle {
+                    Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        width: Style.space(64)
-                        height: Style.space(18)
-                        radius: Style.space(4)
-                        color: Style.hoverFillFor(root.foreground, Color.accent)
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "2u-2u / 2d-2d"
-                            color: Color.accent
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                            font.bold: true
-                        }
+                        text: "2u-2u / 2d-2d"
+                        color: Color.accent
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        font.bold: true
                     }
                 }
 
@@ -182,29 +174,37 @@ FloatingWindow {
                     ]
 
                     Rectangle {
+                        id: tabItem
                         required property var modelData
-                        width: tabText.implicitWidth + Style.space(16)
+                        width: tabText.implicitWidth + Style.space(12)
                         height: Style.space(28)
-                        radius: Style.space(6)
-                        color: root.activeTab === modelData.id ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
-                        border.color: root.activeTab === modelData.id ? Color.accent : Qt.darker(root.dim, 1.6)
-                        border.width: 1
+                        color: "transparent"
 
                         Text {
                             id: tabText
                             anchors.centerIn: parent
-                            text: parent.modelData.label
-                            color: root.activeTab === parent.modelData.id ? root.foreground : root.dim
+                            text: tabItem.modelData.label
+                            color: root.activeTab === tabItem.modelData.id ? Color.accent : (tabMouse.containsMouse ? root.foreground : root.dim)
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.bodySmall
-                            font.bold: root.activeTab === parent.modelData.id
+                            font.bold: root.activeTab === tabItem.modelData.id
+                        }
+
+                        Rectangle {
+                            anchors.bottom: parent.bottom
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: parent.width - Style.space(8)
+                            height: 2
+                            color: root.activeTab === tabItem.modelData.id ? Color.accent : "transparent"
                         }
 
                         MouseArea {
+                            id: tabMouse
                             anchors.fill: parent
+                            hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                root.activeTab = parent.modelData.id;
+                                root.activeTab = tabItem.modelData.id;
                             }
                         }
                     }
@@ -214,15 +214,12 @@ FloatingWindow {
                 Rectangle {
                     width: Style.space(28)
                     height: Style.space(28)
-                    radius: Style.space(6)
-                    color: refreshArea.containsMouse ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
-                    border.color: Qt.darker(root.dim, 1.6)
-                    border.width: 1
+                    color: "transparent"
 
                     Text {
                         anchors.centerIn: parent
                         text: "↻"
-                        color: root.loading ? Color.accent : root.foreground
+                        color: refreshArea.containsMouse ? Color.accent : (root.loading ? Color.accent : root.dim)
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.body
                     }
@@ -259,31 +256,20 @@ FloatingWindow {
             Repeater {
                 model: root.topBullish.slice(0, 4)
 
-                Rectangle {
+                Text {
                     id: attackPill
                     required property var modelData
-                    width: pillRow.implicitWidth + Style.space(16)
-                    height: Style.space(24)
-                    radius: Style.space(4)
-                    color: Style.hoverFillFor(root.upColor, 0.15)
-                    border.color: root.upColor
-                    border.width: 1
-
-                    Row {
-                        id: pillRow
-                        anchors.centerIn: parent
-
-                        Text {
-                            text: attackPill.modelData.symbol
-                            color: root.foreground
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                            font.bold: true
-                        }
-                    }
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: attackPill.modelData.symbol
+                    color: pillMouse.containsMouse ? Color.accent : root.upColor
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
 
                     MouseArea {
+                        id: pillMouse
                         anchors.fill: parent
+                        hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             if (root.controller)
@@ -394,21 +380,14 @@ FloatingWindow {
                                 font.bold: true
                             }
 
-                            Rectangle {
+                            Text {
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: Style.space(70)
-                                height: Style.space(20)
-                                radius: Style.space(4)
-                                color: Style.hoverFillFor(root.foreground, 0.1)
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: laggardRow.modelData.parentBasket
-                                    color: root.foreground
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.caption
-                                    font.bold: true
-                                }
+                                text: laggardRow.modelData.parentBasket
+                                color: Color.accent
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.bodySmall
+                                font.bold: true
                             }
 
                             WtdCandlesStrip {
@@ -586,23 +565,14 @@ FloatingWindow {
                                     }
                                 }
 
-                                Rectangle {
+                                Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     width: Style.space(140)
-                                    height: Style.space(22)
-                                    radius: Style.space(4)
-                                    color: basketBlock.modelData.status === "BULLISH ATTACK" ? Style.hoverFillFor(root.upColor, 0.2) : (basketBlock.modelData.status === "BEARISH ATTACK" ? Style.hoverFillFor(root.downColor, 0.2) : "transparent")
-                                    border.color: basketBlock.modelData.status === "BULLISH ATTACK" ? root.upColor : (basketBlock.modelData.status === "BEARISH ATTACK" ? root.downColor : Qt.darker(root.dim, 1.4))
-                                    border.width: 1
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: basketBlock.modelData.status
-                                        color: basketBlock.modelData.status === "BULLISH ATTACK" ? root.upColor : (basketBlock.modelData.status === "BEARISH ATTACK" ? root.downColor : root.dim)
-                                        font.family: root.fontFamily
-                                        font.pixelSize: Style.font.caption
-                                        font.bold: true
-                                    }
+                                    text: basketBlock.modelData.status
+                                    color: basketBlock.modelData.status === "BULLISH ATTACK" ? root.upColor : (basketBlock.modelData.status === "BEARISH ATTACK" ? root.downColor : root.dim)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    font.bold: true
                                 }
 
                                 Text {
@@ -700,32 +670,81 @@ FloatingWindow {
                                         Rectangle {
                                             id: cCard
                                             required property var modelData
-                                            width: Style.space(184)
-                                            height: Style.space(112)
+                                            width: Style.space(196)
+                                            height: Style.space(164)
                                             radius: Style.space(8)
                                             color: "transparent"
-                                            border.color: cCardArea.containsMouse ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+                                            border.color: cCardArea.containsMouse || cStrip.hoverIndex >= 0 ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
                                             border.width: 1
 
                                             Column {
                                                 anchors.fill: parent
                                                 anchors.margins: Style.space(8)
-                                                spacing: Style.space(4)
+                                                spacing: Style.space(6)
 
-                                                Text {
-                                                    text: cCard.modelData.symbol
-                                                    color: root.foreground
-                                                    font.family: root.fontFamily
-                                                    font.pixelSize: Style.font.bodyLarge
-                                                    font.bold: true
+                                                Item {
+                                                    width: parent.width
+                                                    height: Style.space(22)
+
+                                                    Text {
+                                                        anchors.left: parent.left
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        text: cCard.modelData.symbol
+                                                        color: root.foreground
+                                                        font.family: root.fontFamily
+                                                        font.pixelSize: Style.font.bodyLarge
+                                                        font.bold: true
+                                                    }
+
+                                                    Row {
+                                                        anchors.right: parent.right
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        spacing: Style.space(6)
+
+                                                        Text {
+                                                            visible: cStrip.hoverCandle !== null
+                                                            textFormat: Text.PlainText
+                                                            text: {
+                                                                if (!cStrip.hoverCandle)
+                                                                    return "";
+                                                                var c = cStrip.hoverCandle;
+                                                                return c.day + " $" + (c.close ? c.close.toFixed(2) : "-");
+                                                            }
+                                                            color: root.dim
+                                                            font.family: root.fontFamily
+                                                            font.pixelSize: Style.font.caption
+                                                        }
+
+                                                        Text {
+                                                            visible: cStrip.activeCandle && cStrip.activeCandle.scenario && cStrip.activeCandle.scenario !== "-"
+                                                            textFormat: Text.PlainText
+                                                            text: (cStrip.activeCandle && cStrip.activeCandle.scenario && cStrip.activeCandle.scenario !== "-") ? cStrip.activeCandle.scenario.toUpperCase() : ""
+                                                            color: (cStrip.activeCandle && cStrip.activeCandle.close >= cStrip.activeCandle.open) ? root.upColor : root.downColor
+                                                            font.family: root.fontFamily
+                                                            font.pixelSize: Style.font.bodyLarge
+                                                            font.bold: true
+                                                        }
+                                                    }
                                                 }
 
                                                 WtdCandlesStrip {
+                                                    id: cStrip
                                                     width: parent.width
-                                                    height: Style.space(74)
+                                                    height: Style.space(118)
                                                     wtdData: cCard.modelData.wtd
                                                     upColor: root.upColor
                                                     downColor: root.downColor
+                                                    foreground: root.foreground
+                                                    dim: root.dim
+                                                    fontFamily: root.fontFamily
+                                                    onClicked: {
+                                                        if (root.controller)
+                                                            root.controller.openGrid({
+                                                                symbol: cCard.modelData.symbol,
+                                                                gridMode: "2+3",
+                                                                timeframes: ["60", "1D", "1W", "1M", "1Y"]
+                                                            });
+                                                    }
                                                 }
                                             }
 
@@ -781,32 +800,81 @@ FloatingWindow {
                                         Rectangle {
                                             id: lCard
                                             required property var modelData
-                                            width: Style.space(184)
-                                            height: Style.space(112)
+                                            width: Style.space(196)
+                                            height: Style.space(164)
                                             radius: Style.space(8)
                                             color: "transparent"
-                                            border.color: lCardArea.containsMouse ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+                                            border.color: lCardArea.containsMouse || lStrip.hoverIndex >= 0 ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
                                             border.width: 1
 
                                             Column {
                                                 anchors.fill: parent
                                                 anchors.margins: Style.space(8)
-                                                spacing: Style.space(4)
+                                                spacing: Style.space(6)
 
-                                                Text {
-                                                    text: lCard.modelData.symbol
-                                                    color: root.foreground
-                                                    font.family: root.fontFamily
-                                                    font.pixelSize: Style.font.bodyLarge
-                                                    font.bold: true
+                                                Item {
+                                                    width: parent.width
+                                                    height: Style.space(22)
+
+                                                    Text {
+                                                        anchors.left: parent.left
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        text: lCard.modelData.symbol
+                                                        color: root.foreground
+                                                        font.family: root.fontFamily
+                                                        font.pixelSize: Style.font.bodyLarge
+                                                        font.bold: true
+                                                    }
+
+                                                    Row {
+                                                        anchors.right: parent.right
+                                                        anchors.verticalCenter: parent.verticalCenter
+                                                        spacing: Style.space(6)
+
+                                                        Text {
+                                                            visible: lStrip.hoverCandle !== null
+                                                            textFormat: Text.PlainText
+                                                            text: {
+                                                                if (!lStrip.hoverCandle)
+                                                                    return "";
+                                                                var c = lStrip.hoverCandle;
+                                                                return c.day + " $" + (c.close ? c.close.toFixed(2) : "-");
+                                                            }
+                                                            color: root.dim
+                                                            font.family: root.fontFamily
+                                                            font.pixelSize: Style.font.caption
+                                                        }
+
+                                                        Text {
+                                                            visible: lStrip.activeCandle && lStrip.activeCandle.scenario && lStrip.activeCandle.scenario !== "-"
+                                                            textFormat: Text.PlainText
+                                                            text: (lStrip.activeCandle && lStrip.activeCandle.scenario && lStrip.activeCandle.scenario !== "-") ? lStrip.activeCandle.scenario.toUpperCase() : ""
+                                                            color: (lStrip.activeCandle && lStrip.activeCandle.close >= lStrip.activeCandle.open) ? root.upColor : root.downColor
+                                                            font.family: root.fontFamily
+                                                            font.pixelSize: Style.font.bodyLarge
+                                                            font.bold: true
+                                                        }
+                                                    }
                                                 }
 
                                                 WtdCandlesStrip {
+                                                    id: lStrip
                                                     width: parent.width
-                                                    height: Style.space(74)
+                                                    height: Style.space(118)
                                                     wtdData: lCard.modelData.wtd
                                                     upColor: root.upColor
                                                     downColor: root.downColor
+                                                    foreground: root.foreground
+                                                    dim: root.dim
+                                                    fontFamily: root.fontFamily
+                                                    onClicked: {
+                                                        if (root.controller)
+                                                            root.controller.openGrid({
+                                                                symbol: lCard.modelData.symbol,
+                                                                gridMode: "2+3",
+                                                                timeframes: ["60", "1D", "1W", "1M", "1Y"]
+                                                            });
+                                                    }
                                                 }
                                             }
 

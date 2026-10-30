@@ -8,14 +8,21 @@ Item {
     property var wtdData: null
     property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
     property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
+    property color foreground: Color.foreground
     property color dim: Color.muted
     property string fontFamily: Style.font.family
+    property int hoverIndex: -1
+
+    signal clicked
 
     implicitWidth: Style.space(160)
     implicitHeight: Style.space(76)
 
     readonly property bool showWeekdays: height >= Style.space(48)
     readonly property var candles: (root.wtdData && root.wtdData.candles) ? root.wtdData.candles : []
+    readonly property var currentCandle: (candles && candles.length > 0) ? candles[candles.length - 1] : null
+    readonly property var hoverCandle: (hoverIndex >= 0 && hoverIndex < candles.length) ? candles[hoverIndex] : null
+    readonly property var activeCandle: hoverCandle !== null ? hoverCandle : currentCandle
 
     readonly property real minPrice: {
         if (!root.candles || root.candles.length === 0)
@@ -58,6 +65,11 @@ Item {
             candleCanvas.requestPaint();
     }
 
+    onHoverIndexChanged: {
+        if (candleCanvas.available)
+            candleCanvas.requestPaint();
+    }
+
     Column {
         anchors.fill: parent
         spacing: Style.space(2)
@@ -88,12 +100,27 @@ Item {
                     return h - pad - (norm * chartH);
                 }
 
-                // Draw OHLC candles: wicks and solid bodies
                 var count = list.length;
                 var colW = w / count;
-                var bodyW = Math.max(8, Math.min(20, Math.round(colW * 0.58)));
+                var bodyW = Math.max(8, Math.min(22, Math.round(colW * 0.58)));
                 var wickW = Math.max(1.5, Math.min(2.0, colW * 0.08));
 
+                // Subtle vertical column highlight for hovered bar
+                if (root.hoverIndex >= 0 && root.hoverIndex < count) {
+                    var hx = Math.floor(root.hoverIndex * colW);
+                    var cxHover = Math.floor(root.hoverIndex * colW + colW / 2);
+                    ctx.fillStyle = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08);
+                    ctx.fillRect(hx, 0, Math.ceil(colW), h);
+
+                    ctx.strokeStyle = Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20);
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(cxHover, 0);
+                    ctx.lineTo(cxHover, h);
+                    ctx.stroke();
+                }
+
+                // Draw OHLC candles: wicks and solid bodies
                 for (var i = 0; i < count; i++) {
                     var c = list[i];
                     var cx = Math.floor(i * colW + colW / 2);
@@ -124,6 +151,33 @@ Item {
                     ctx.fillRect(Math.round(cx - bodyW / 2), bodyTop, bodyW, bodyH);
                 }
             }
+
+            MouseArea {
+                id: candleMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onPositionChanged: mouse => {
+                    var count = root.candles.length;
+                    if (count <= 0)
+                        return;
+                    var colW = width / count;
+                    var idx = Math.floor(mouse.x / colW);
+                    if (idx >= 0 && idx < count) {
+                        if (root.hoverIndex !== idx)
+                            root.hoverIndex = idx;
+                    } else {
+                        if (root.hoverIndex !== -1)
+                            root.hoverIndex = -1;
+                    }
+                }
+                onExited: {
+                    root.hoverIndex = -1;
+                }
+                onClicked: {
+                    root.clicked();
+                }
+            }
         }
 
         Item {
@@ -139,16 +193,17 @@ Item {
 
                     Item {
                         required property var modelData
+                        required property int index
                         width: parent.width / Math.max(1, root.candles.length)
                         height: parent.height
 
                         Text {
                             anchors.centerIn: parent
-                            text: modelData.day
-                            color: root.dim
+                            text: parent.modelData.day
+                            color: parent.index === root.hoverIndex ? root.foreground : root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
-                            font.bold: true
+                            font.bold: parent.index === root.hoverIndex || (root.hoverIndex < 0 && parent.index === root.candles.length - 1)
                         }
                     }
                 }
