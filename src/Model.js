@@ -331,6 +331,12 @@ function normalizeRange(value) {
 
 function chartSpec(range) {
   switch (String(range || "1D")) {
+    case "1":
+    case "1m": return { range: "5d", interval: "1m" }
+    case "5":
+    case "5m": return { range: "1mo", interval: "5m" }
+    case "15":
+    case "15m": return { range: "1mo", interval: "15m" }
     case "30": return { range: "1mo", interval: "30m" }
     case "60": return { range: "1mo", interval: "60m" }
     case "1W": return { range: "5y", interval: "1wk" }
@@ -2187,6 +2193,31 @@ function parseInterval(query) {
   if (!query || typeof query !== "string") return null
   var q = query.trim().toUpperCase().replace(/^[^0-9A-Z]+/, "").replace(/[^0-9A-Z]+$/, "")
   if (!q) return null
+
+  if (
+    q === "1MIN" ||
+    q === "1MINS"
+  ) {
+    return "1"
+  }
+
+  if (
+    q === "5" ||
+    q === "5M" ||
+    q === "5MIN" ||
+    q === "5MINS"
+  ) {
+    return "5"
+  }
+
+  if (
+    q === "15" ||
+    q === "15M" ||
+    q === "15MIN" ||
+    q === "15MINS"
+  ) {
+    return "15"
+  }
 
   if (
     q === "30" ||
@@ -4314,12 +4345,15 @@ function discordAlertPayload(chk, eventType) {
 
 function timeframeRank(tf) {
   switch (String(tf || "")) {
-  case "30": return 1
-  case "60": return 2
-  case "1D": return 3
-  case "1W": return 4
-  case "1M": return 5
-  case "1Y": return 6
+  case "1": return 1
+  case "5": return 2
+  case "15": return 3
+  case "30": return 4
+  case "60": return 5
+  case "1D": return 6
+  case "1W": return 7
+  case "1M": return 8
+  case "1Y": return 9
   default: return 0
   }
 }
@@ -4497,7 +4531,7 @@ function buildReplayCandles(tf, rawCandles, ltf30Candles, htf60Candles, dailyCan
   var intradaySrc = ltf30.length > 0 ? ltf30 : htf60
   var out = []
 
-  if (range === "30") {
+  if (range === "1" || range === "5" || range === "15" || range === "30") {
     for (var i = 0; i < rawCandles.length; i++) {
       var c30 = rawCandles[i]
       if (c30 && isFinite(c30.timestamp) && c30.timestamp < cutoff) {
@@ -4727,6 +4761,18 @@ function formatReplayBadgeTime(cutoffTs, ltf30Candles, htf60Candles, dailyCandle
   return formatCandleTime(activeTs, tfKey)
 }
 
+function mapReplayStepInterval(step) {
+  var s = String(step || "").trim().toUpperCase()
+  if (!s || s === "AUTO") return ""
+  if (s === "1M" || s === "1" || s === "1MIN") return "1"
+  if (s === "5M" || s === "5" || s === "5MIN") return "5"
+  if (s === "15M" || s === "15" || s === "15MIN") return "15"
+  if (s === "30M" || s === "30" || s === "30MIN") return "30"
+  if (s === "60M" || s === "60" || s === "1H" || s === "1HR") return "60"
+  if (s === "1D" || s === "D" || s === "DAILY") return "1D"
+  return String(step)
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -4840,7 +4886,8 @@ if (typeof module !== "undefined") {
     buildReplayCandles: buildReplayCandles,
     buildReplayQuote: buildReplayQuote,
     stepReplayCutoff: stepReplayCutoff,
-    formatReplayBadgeTime: formatReplayBadgeTime
+    formatReplayBadgeTime: formatReplayBadgeTime,
+    mapReplayStepInterval: mapReplayStepInterval
   }
 }
 

@@ -40,6 +40,8 @@ FloatingWindow {
     property var chartCache: ({})
     property var symbolLevels: ({})
     property real replayCutoffTs: 0
+    property string replayStepInterval: "Auto"
+    property bool replayIntervalExpanded: false
     property var pendingFetches: []
     property bool fetching: false
     property int quoteFailureCount: 0
@@ -53,12 +55,26 @@ FloatingWindow {
         root.replayCutoffTs = (isFinite(ts) && ts > 0) ? ts : 0;
     }
 
+    function setReplayStepInterval(interval) {
+        root.replayStepInterval = interval || "Auto";
+        var tfKey = Model.mapReplayStepInterval(root.replayStepInterval);
+        var sym = symbolForCell(root.activeCellIndex);
+        if (tfKey && sym) {
+            requestChartFetch(sym, tfKey, false);
+        }
+    }
+
     function stepReplay(dir) {
         var sym = symbolForCell(root.activeCellIndex);
-        var tf = timeframeForCell(root.activeCellIndex);
-        var raw = root.chartCache[cacheKey(sym, tf)] || [];
+        var stepTf = Model.mapReplayStepInterval(root.replayStepInterval);
+        if (!stepTf) {
+            stepTf = timeframeForCell(root.activeCellIndex);
+        }
+        var raw = root.chartCache[cacheKey(sym, stepTf)] || [];
         if (raw.length < 2) {
-            raw = root.chartCache[cacheKey(sym, "30")] || root.chartCache[cacheKey(sym, "60")] || [];
+            requestChartFetch(sym, stepTf, false);
+            var activeTf = timeframeForCell(root.activeCellIndex);
+            raw = root.chartCache[cacheKey(sym, activeTf)] || root.chartCache[cacheKey(sym, "30")] || root.chartCache[cacheKey(sym, "60")] || [];
         }
         root.replayCutoffTs = Model.stepReplayCutoff(raw, root.replayCutoffTs, dir);
     }
@@ -368,6 +384,7 @@ FloatingWindow {
 
     function refreshAllCharts(force) {
         var isForced = force === true;
+        var stepTf = Model.mapReplayStepInterval(root.replayStepInterval);
         if (root.gridMode === "1x1") {
             var sym1 = symbolForCell(root.activeCellIndex);
             var tf1 = timeframeForCell(root.activeCellIndex);
@@ -375,6 +392,8 @@ FloatingWindow {
             requestChartFetch(sym1, "30", isForced);
             requestChartFetch(sym1, "60", isForced);
             requestChartFetch(sym1, "1D", isForced);
+            if (stepTf)
+                requestChartFetch(sym1, stepTf, isForced);
             return;
         }
         var count = root.gridMode === "2+3" ? 5 : 4;
@@ -385,6 +404,10 @@ FloatingWindow {
             requestChartFetch(sym, "30", isForced);
             requestChartFetch(sym, "60", isForced);
             requestChartFetch(sym, "1D", isForced);
+        }
+        if (stepTf) {
+            var activeSym = symbolForCell(root.activeCellIndex);
+            requestChartFetch(activeSym, stepTf, isForced);
         }
     }
 
@@ -601,6 +624,11 @@ FloatingWindow {
             }
 
             if (event.key === Qt.Key_Escape) {
+                if (root.replayIntervalExpanded) {
+                    root.replayIntervalExpanded = false;
+                    event.accepted = true;
+                    return;
+                }
                 if (root.replayCutoffTs > 0) {
                     root.setReplayCutoff(0);
                     event.accepted = true;
@@ -813,6 +841,76 @@ FloatingWindow {
                             anchors.margins: -Style.space(4)
                             cursorShape: Qt.PointingHandCursor
                             onClicked: root.stepReplay(-1)
+                        }
+                    }
+
+                    Item {
+                        id: replayStepContainer
+                        visible: root.replayCutoffTs > 0
+                        implicitWidth: root.replayIntervalExpanded ? expandedReplayStepRow.implicitWidth : activeReplayStepLabel.implicitWidth
+                        implicitHeight: Math.max(activeReplayStepLabel.implicitHeight, expandedReplayStepRow.implicitHeight)
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        Text {
+                            id: activeReplayStepLabel
+                            visible: !root.replayIntervalExpanded
+                            anchors.verticalCenter: parent.verticalCenter
+                            textFormat: Text.PlainText
+                            text: "[" + root.replayStepInterval + "]"
+                            color: replayControlRow.replayAmber
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: true
+
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.margins: -Style.space(4)
+                                cursorShape: Qt.PointingHandCursor
+                                hoverEnabled: true
+                                onClicked: {
+                                    root.replayIntervalExpanded = true;
+                                }
+                            }
+                        }
+
+                        Row {
+                            id: expandedReplayStepRow
+                            visible: root.replayIntervalExpanded
+                            spacing: Style.space(6)
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Repeater {
+                                model: ["Auto", "1m", "5m", "15m", "30m", "60m", "1D"]
+
+                                Text {
+                                    required property string modelData
+                                    textFormat: Text.PlainText
+                                    text: modelData
+                                    color: modelData === root.replayStepInterval ? replayControlRow.replayAmber : Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                    font.bold: modelData === root.replayStepInterval
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.margins: -Style.space(4)
+                                        cursorShape: Qt.PointingHandCursor
+                                        hoverEnabled: true
+                                        onClicked: {
+                                            root.setReplayStepInterval(modelData);
+                                            root.replayIntervalExpanded = false;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        HoverHandler {
+                            id: replayStepHover
+                            onHoveredChanged: {
+                                if (!hovered)
+                                    root.replayIntervalExpanded = false;
+                            }
                         }
                     }
 

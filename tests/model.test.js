@@ -2184,3 +2184,35 @@ test("evaluateStratChecklist and resolveUntaggedHtfTargets scan lookback 1D/1W s
   )
 })
 
+test("replay step interval mapping, chartSpec, and custom timeframes", () => {
+  assert.equal(Model.mapReplayStepInterval("Auto"), "")
+  assert.equal(Model.mapReplayStepInterval("1m"), "1")
+  assert.equal(Model.mapReplayStepInterval("5m"), "5")
+  assert.equal(Model.mapReplayStepInterval("15m"), "15")
+  assert.equal(Model.mapReplayStepInterval("30m"), "30")
+  assert.equal(Model.mapReplayStepInterval("60m"), "60")
+  assert.equal(Model.mapReplayStepInterval("1D"), "1D")
+
+  assert.deepEqual(Model.chartSpec("1"), { range: "5d", interval: "1m" })
+  assert.deepEqual(Model.chartSpec("5"), { range: "1mo", interval: "5m" })
+  assert.deepEqual(Model.chartSpec("15"), { range: "1mo", interval: "15m" })
+
+  assert.equal(Model.parseInterval("5"), "5")
+  assert.equal(Model.parseInterval("5m"), "5")
+  assert.equal(Model.parseInterval("15"), "15")
+  assert.equal(Model.parseInterval("15m"), "15")
+  assert.equal(Model.parseInterval("1min"), "1")
+
+  const raw5m = [
+    { timestamp: 1000 },
+    { timestamp: 1300 },
+    { timestamp: 1600 },
+    { timestamp: 1900 }
+  ]
+  assert.equal(Model.stepReplayCutoff(raw5m, 0, -1), 1900)
+  assert.equal(Model.stepReplayCutoff(raw5m, 1900, -1), 1600)
+  assert.equal(Model.stepReplayCutoff(raw5m, 1600, 1), 1900)
+  assert.equal(Model.stepReplayCutoff(raw5m, 1900, 1), 0)
+})
+
+
