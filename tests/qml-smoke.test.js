@@ -489,6 +489,16 @@ test("fetch-holdings-strat script exists and exports holdings strat pipeline", (
   assert.match(scriptContent, /Model\.computeHoldingsStratMap/)
 })
 
+test("fetch-etf-holdings script exists and integrates with SEC EDGAR dynamic discovery", () => {
+  const scriptPath = path.join(__dirname, "..", "scripts", "fetch-etf-holdings.js")
+  assert.ok(fs.existsSync(scriptPath))
+  const scriptContent = fs.readFileSync(scriptPath, "utf8")
+  assert.match(scriptContent, /company_tickers_mf\.json/)
+  assert.match(scriptContent, /efts\.sec\.gov/)
+  assert.match(scriptContent, /openfigi\.com/)
+  assert.match(scriptContent, /Model\.parseNportXml/)
+})
+
 test("grid cells provide live 9-rule Strat checklist text status on execution timeframe with localized inspector popup", () => {
   const popup = fs.readFileSync(source("StratChecklistPopup.qml"), "utf8")
   const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")

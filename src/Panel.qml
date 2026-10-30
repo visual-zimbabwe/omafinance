@@ -714,7 +714,7 @@ Panel {
     }
 
     function fetchHoldings() {
-        if (!detailSymbol || !Model.isSpdrSector(detailSymbol)) {
+        if (!detailSymbol || Model.isCryptoSymbol(detailSymbol)) {
             detailHoldings = null;
             detailHoldingsStratMap = ({});
             holdingsLoaded = false;
@@ -730,18 +730,22 @@ Panel {
         }
         if (holdingsProc.running)
             return;
-        var hUrl = Model.holdingsUrl(detailSymbol);
-        if (!hUrl)
-            return;
         holdingsFetchSymbol = detailSymbol;
         holdingsError = "";
-        holdingsProc.command = ["curl", "-fsS", "--max-time", "12", "-A", "Omafinance research@omafinance.org", hUrl];
+        var home = Quickshell.env("HOME");
+        var scriptPath = home + "/.config/omarchy/plugins/mohamedmansour.finance/scripts/fetch-etf-holdings.js";
+        holdingsProc.command = Model.nodeCommand(scriptPath, [detailSymbol]);
         holdingsProc.running = true;
     }
 
     function fetchHoldingsStrat(symbol) {
         var target = symbol || detailSymbol;
-        if (!target || !Model.isSpdrSector(target)) {
+        if (!target || Model.isCryptoSymbol(target)) {
+            detailHoldingsStratMap = ({});
+            detailHoldingsStratLoading = false;
+            return;
+        }
+        if (!root.detailHoldings || !root.detailHoldings.holdings || root.detailHoldings.holdings.length === 0) {
             detailHoldingsStratMap = ({});
             detailHoldingsStratLoading = false;
             return;
@@ -1282,7 +1286,16 @@ Panel {
             if (currentFetch) {
                 var raw = String(holdingsStdout.text || "").trim();
                 if (exitCode === 0 && raw) {
-                    var parsed = Model.parseNportXml(raw, root.holdingsFetchSymbol);
+                    var parsed = null;
+                    try {
+                        if (raw.charAt(0) === "{") {
+                            parsed = JSON.parse(raw);
+                        } else {
+                            parsed = Model.parseNportXml(raw, root.holdingsFetchSymbol);
+                        }
+                    } catch (e) {
+                        console.log("[Holdings] parse error:", e);
+                    }
                     if (parsed && parsed.holdings && parsed.holdings.length > 0) {
                         root.detailHoldings = parsed;
                         root.cacheDetailData(root.holdingsFetchSymbol, "holdings", parsed);
@@ -1299,7 +1312,7 @@ Panel {
                     root.holdingsLoaded = false;
                 }
             }
-            if (root.detailSymbol && Model.isSpdrSector(root.detailSymbol) && root.holdingsFetchSymbol !== root.detailSymbol)
+            if (root.detailSymbol && !Model.isCryptoSymbol(root.detailSymbol) && root.holdingsFetchSymbol !== root.detailSymbol)
                 Qt.callLater(root.fetchHoldings);
         }
         stdout: StdioCollector {
@@ -1327,7 +1340,7 @@ Panel {
                 }
                 root.detailHoldingsStratLoading = false;
             }
-            if (root.detailSymbol && Model.isSpdrSector(root.detailSymbol) && root.holdingsStratFetchSymbol !== root.detailSymbol)
+            if (root.detailSymbol && !Model.isCryptoSymbol(root.detailSymbol) && root.holdingsStratFetchSymbol !== root.detailSymbol)
                 Qt.callLater(function () {
                     root.fetchHoldingsStrat(root.detailSymbol);
                 });

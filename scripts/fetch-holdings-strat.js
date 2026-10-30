@@ -32,20 +32,19 @@ async function run() {
     return;
   }
 
-  // 1. Fetch holdings if SPDR sector
-  const hUrl = Model.holdingsUrl(targetSymbol);
-  if (!hUrl) {
-    process.stdout.write(JSON.stringify({ error: "Invalid holdings URL for " + targetSymbol }));
-    return;
+  // 1. Fetch holdings (cached from fetch-etf-holdings or dynamically resolved)
+  const { resolveEtfHoldings } = require("./fetch-etf-holdings.js");
+  let parsed = await resolveEtfHoldings(targetSymbol);
+  if (!parsed || !parsed.holdings || parsed.holdings.length === 0) {
+    const hUrl = Model.holdingsUrl(targetSymbol);
+    if (hUrl) {
+      const hRes = await fetchHttps(hUrl, { "User-Agent": "Omafinance research@omafinance.org" });
+      if (hRes.ok && hRes.data) {
+        parsed = Model.parseNportXml(hRes.data, targetSymbol);
+      }
+    }
   }
 
-  const hRes = await fetchHttps(hUrl, { "User-Agent": "Omafinance research@omafinance.org" });
-  if (!hRes.ok || !hRes.data) {
-    process.stdout.write(JSON.stringify({ error: "Failed to fetch holdings for " + targetSymbol }));
-    return;
-  }
-
-  const parsed = Model.parseNportXml(hRes.data, targetSymbol);
   if (!parsed || !parsed.holdings || parsed.holdings.length === 0) {
     process.stdout.write(JSON.stringify({ symbol: targetSymbol, holdings: [], stratMap: {} }));
     return;
