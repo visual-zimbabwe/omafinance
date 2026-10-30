@@ -151,33 +151,6 @@ Item {
                     ctx.fillRect(Math.round(cx - bodyW / 2), bodyTop, bodyW, bodyH);
                 }
             }
-
-            MouseArea {
-                id: candleMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onPositionChanged: mouse => {
-                    var count = root.candles.length;
-                    if (count <= 0)
-                        return;
-                    var colW = width / count;
-                    var idx = Math.floor(mouse.x / colW);
-                    if (idx >= 0 && idx < count) {
-                        if (root.hoverIndex !== idx)
-                            root.hoverIndex = idx;
-                    } else {
-                        if (root.hoverIndex !== -1)
-                            root.hoverIndex = -1;
-                    }
-                }
-                onExited: {
-                    root.hoverIndex = -1;
-                }
-                onClicked: {
-                    root.clicked();
-                }
-            }
         }
 
         Item {

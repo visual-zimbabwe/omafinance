@@ -10,10 +10,12 @@ FloatingWindow {
     id: root
 
     property var controller: null
+    property string activeTimeframe: "1D" // "1D" or "1W"
     property string activeTab: "all" // "all", "attacks", "laggards"
     property string sortKey: "attack" // "attack", "symbol", "name", "pct2u", "pct2d"
     property bool sortAsc: false
 
+    property var scanResult: null
     property var attackData: []
     property var topBullish: []
     property var topBearish: []
@@ -36,6 +38,20 @@ FloatingWindow {
     readonly property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
     readonly property color warningColor: Qt.rgba(0.78, 0.55, 0.15, 1)
     readonly property string fontFamily: Style.font.family
+
+    function applyScanResult(data) {
+        root.scanResult = data;
+        var ds = (root.activeTimeframe === "1W" && data.weekly) ? data.weekly : (data.daily || data);
+        root.attackData = ds.baskets || [];
+        root.topBullish = ds.topBullishAttacks || [];
+        root.topBearish = ds.topBearishAttacks || [];
+        root.topLaggards = ds.topLaggards || [];
+    }
+
+    onActiveTimeframeChanged: {
+        if (root.scanResult)
+            applyScanResult(root.scanResult);
+    }
 
     function startRefresh() {
         if (root.loading)
@@ -71,11 +87,8 @@ FloatingWindow {
             if (exitCode === 0 && raw) {
                 try {
                     var data = JSON.parse(raw);
-                    if (data && data.baskets) {
-                        root.attackData = data.baskets;
-                        root.topBullish = data.topBullishAttacks || [];
-                        root.topBearish = data.topBearishAttacks || [];
-                        root.topLaggards = data.topLaggards || [];
+                    if (data && (data.baskets || data.daily)) {
+                        applyScanResult(data);
                         root.lastFetchedAt = Date.now();
                         var d = new Date();
                         root.statusText = "Updated " + d.toLocaleTimeString([], {
@@ -141,7 +154,89 @@ FloatingWindow {
             Row {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(8)
+                spacing: Style.space(10)
+
+                // Timeframe Selectors (1D Daily vs 1W Weekly)
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(4)
+
+                    Rectangle {
+                        width: tfDailyText.implicitWidth + Style.space(12)
+                        height: Style.space(28)
+                        color: "transparent"
+
+                        Text {
+                            id: tfDailyText
+                            anchors.centerIn: parent
+                            text: "1D"
+                            color: root.activeTimeframe === "1D" ? Color.accent : (tfDailyMouse.containsMouse ? root.foreground : root.dim)
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: root.activeTimeframe === "1D"
+                        }
+
+                        Rectangle {
+                            anchors.bottom: parent.bottom
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: parent.width - Style.space(6)
+                            height: 2
+                            color: root.activeTimeframe === "1D" ? Color.accent : "transparent"
+                        }
+
+                        MouseArea {
+                            id: tfDailyMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.activeTimeframe = "1D";
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: tfWeeklyText.implicitWidth + Style.space(12)
+                        height: Style.space(28)
+                        color: "transparent"
+
+                        Text {
+                            id: tfWeeklyText
+                            anchors.centerIn: parent
+                            text: "1W"
+                            color: root.activeTimeframe === "1W" ? Color.accent : (tfWeeklyMouse.containsMouse ? root.foreground : root.dim)
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: root.activeTimeframe === "1W"
+                        }
+
+                        Rectangle {
+                            anchors.bottom: parent.bottom
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: parent.width - Style.space(6)
+                            height: 2
+                            color: root.activeTimeframe === "1W" ? Color.accent : "transparent"
+                        }
+
+                        MouseArea {
+                            id: tfWeeklyMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.activeTimeframe = "1W";
+                            }
+                        }
+                    }
+                }
+
+                // Vertical Separator
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 1
+                    height: Style.space(16)
+                    color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+                }
 
                 // Tab selectors
                 Repeater {
@@ -398,7 +493,7 @@ FloatingWindow {
                         Text {
                             width: Style.space(90)
                             horizontalAlignment: Text.AlignRight
-                            text: "TODAY BAR"
+                            text: root.activeTimeframe === "1W" ? "WEEK BAR" : "TODAY BAR"
                             color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -591,7 +686,7 @@ FloatingWindow {
                         Text {
                             width: Style.space(110)
                             horizontalAlignment: Text.AlignRight
-                            text: "TODAY 2U / 2D"
+                            text: root.activeTimeframe === "1W" ? "WEEK 2U / 2D" : "TODAY 2U / 2D"
                             color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -862,6 +957,24 @@ FloatingWindow {
                                                 anchors.fill: parent
                                                 hoverEnabled: true
                                                 cursorShape: Qt.PointingHandCursor
+                                                onPositionChanged: mouse => {
+                                                    var p = mapToItem(cStrip, mouse.x, mouse.y);
+                                                    if (p.x >= 0 && p.x <= cStrip.width && p.y >= 0 && p.y <= cStrip.height) {
+                                                        var count = cStrip.candles ? cStrip.candles.length : 0;
+                                                        if (count > 0) {
+                                                            var colW = cStrip.width / count;
+                                                            var idx = Math.floor(p.x / colW);
+                                                            cStrip.hoverIndex = (idx >= 0 && idx < count) ? idx : -1;
+                                                        } else {
+                                                            cStrip.hoverIndex = -1;
+                                                        }
+                                                    } else {
+                                                        cStrip.hoverIndex = -1;
+                                                    }
+                                                }
+                                                onExited: {
+                                                    cStrip.hoverIndex = -1;
+                                                }
                                                 onClicked: {
                                                     if (root.controller)
                                                         root.controller.openGrid({
@@ -992,6 +1105,24 @@ FloatingWindow {
                                                 anchors.fill: parent
                                                 hoverEnabled: true
                                                 cursorShape: Qt.PointingHandCursor
+                                                onPositionChanged: mouse => {
+                                                    var p = mapToItem(lStrip, mouse.x, mouse.y);
+                                                    if (p.x >= 0 && p.x <= lStrip.width && p.y >= 0 && p.y <= lStrip.height) {
+                                                        var count = lStrip.candles ? lStrip.candles.length : 0;
+                                                        if (count > 0) {
+                                                            var colW = lStrip.width / count;
+                                                            var idx = Math.floor(p.x / colW);
+                                                            lStrip.hoverIndex = (idx >= 0 && idx < count) ? idx : -1;
+                                                        } else {
+                                                            lStrip.hoverIndex = -1;
+                                                        }
+                                                    } else {
+                                                        lStrip.hoverIndex = -1;
+                                                    }
+                                                }
+                                                onExited: {
+                                                    lStrip.hoverIndex = -1;
+                                                }
                                                 onClicked: {
                                                     if (root.controller)
                                                         root.controller.openGrid({

@@ -2534,6 +2534,18 @@ test("extractWtdDailyCandles extracts Week-To-Date daily bars, scenarios, and we
   assert.equal(resLive.candles[1].close, 112)
   assert.equal(resLive.candles[1].high, 112)
   assert.equal(resLive.weekHigh, 112)
+
+  // 1W timeframe slices recent weekly bars with M/D labels
+  const w1 = { timestamp: 1780000000, open: 100, high: 105, low: 95, close: 102 }
+  const w2 = { timestamp: 1780604800, open: 102, high: 108, low: 101, close: 107 }
+  const w3 = { timestamp: 1781209600, open: 107, high: 112, low: 106, close: 111 }
+  const resWeekly = Model.extractWtdDailyCandles([w1, w2, w3], null, 108, "bullish", "1W")
+  assert.equal(resWeekly.candles.length, 3)
+  assert.ok(resWeekly.candles[0].day.includes("/"))
+  assert.equal(resWeekly.candles[1].scenario, "2u")
+  assert.equal(resWeekly.candles[2].scenario, "2u")
+  assert.equal(resWeekly.weekHigh, 112)
+  assert.equal(resWeekly.weekLow, 95)
 })
 
 

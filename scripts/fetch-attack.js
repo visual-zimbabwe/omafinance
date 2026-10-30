@@ -65,22 +65,25 @@ async function run() {
     }
   }
 
-  // 2. Fetch full OHLC daily candles (1mo) per symbol in parallel
+  // 2. Fetch full OHLC daily candles (3mo) per symbol in parallel and derive weekly candles
   const dailyMap = {};
+  const weeklyMap = {};
   const concurrency = 20;
   let symIdx = 0;
 
   async function worker() {
     while (symIdx < allSyms.length) {
       const sym = allSyms[symIdx++];
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1mo&includePrePost=false`;
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=3mo&includePrePost=false`;
       const res = await fetchHttps(url, { "User-Agent": "Mozilla/5.0" });
       if (res.ok && res.data) {
         try {
           const j = JSON.parse(res.data);
           const r = j && j.chart && j.chart.result && j.chart.result[0];
           if (r && r.timestamp && r.indicators) {
-            dailyMap[sym] = Model.parseCandles(r.timestamp, r.indicators);
+            const daily = Model.parseCandles(r.timestamp, r.indicators);
+            dailyMap[sym] = daily;
+            weeklyMap[sym] = Model.mergePeriodCandles(daily, "1W");
           }
         } catch (e) {}
       }
@@ -89,47 +92,89 @@ async function run() {
 
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
-  // 3. Compute Attack Metrics per Basket
-  const evaluatedBaskets = [];
-  const allLaggards = [];
+  // 3. Compute Attack Metrics per Basket for Daily and Weekly timeframes
+  const evaluatedDailyBaskets = [];
+  const evaluatedWeeklyBaskets = [];
+  const allDailyLaggards = [];
+  const allWeeklyLaggards = [];
 
   for (const b of baskets) {
     const data = basketsMap[b.symbol];
     const holdings = data ? data.holdings : [];
-    const metrics = Model.computeBasketAttackMetrics(b.symbol, b.name, b.category, holdings, dailyMap);
 
-    // Also check if the ETF itself is printing an attack
-    const etfCandles = dailyMap[b.symbol];
-    if (etfCandles && etfCandles.length >= 2) {
-      metrics.etfAttack = Model.detectStratAttack(etfCandles);
-      metrics.wtd = Model.extractWtdDailyCandles(etfCandles, null, metrics.etfAttack.triggerPrice, metrics.etfAttack.direction);
+    // Daily metrics
+    const dailyMetrics = Model.computeBasketAttackMetrics(b.symbol, b.name, b.category, holdings, dailyMap, null, "1D");
+    const etfDaily = dailyMap[b.symbol];
+    if (etfDaily && etfDaily.length >= 2) {
+      dailyMetrics.etfAttack = Model.detectStratAttack(etfDaily);
+      dailyMetrics.wtd = Model.extractWtdDailyCandles(etfDaily, null, dailyMetrics.etfAttack.triggerPrice, dailyMetrics.etfAttack.direction, "1D");
     } else {
-      metrics.etfAttack = { attackType: "none", direction: "neutral", state: "none", label: "-" };
-      metrics.wtd = { candles: [], weekHigh: 0, weekLow: 0, triggerPrice: 0, triggerDirection: "neutral" };
+      dailyMetrics.etfAttack = { attackType: "none", direction: "neutral", state: "none", label: "-" };
+      dailyMetrics.wtd = { candles: [], weekHigh: 0, weekLow: 0, triggerPrice: 0, triggerDirection: "neutral" };
     }
 
-    evaluatedBaskets.push(metrics);
+    // Weekly metrics
+    const weeklyMetrics = Model.computeBasketAttackMetrics(b.symbol, b.name, b.category, holdings, weeklyMap, null, "1W");
+    const etfWeekly = weeklyMap[b.symbol];
+    if (etfWeekly && etfWeekly.length >= 2) {
+      weeklyMetrics.etfAttack = Model.detectStratAttack(etfWeekly);
+      weeklyMetrics.wtd = Model.extractWtdDailyCandles(etfWeekly, null, weeklyMetrics.etfAttack.triggerPrice, weeklyMetrics.etfAttack.direction, "1W");
+    } else {
+      weeklyMetrics.etfAttack = { attackType: "none", direction: "neutral", state: "none", label: "-" };
+      weeklyMetrics.wtd = { candles: [], weekHigh: 0, weekLow: 0, triggerPrice: 0, triggerDirection: "neutral" };
+    }
 
-    for (const lag of metrics.laggards) {
-      allLaggards.push(Object.assign({ parentBasket: b.symbol, basketStatus: metrics.status }, lag));
+    // Cross-link summary indicators
+    dailyMetrics.weeklyAttackPct = weeklyMetrics.pctAttack2u > weeklyMetrics.pctAttack2d ? weeklyMetrics.pctAttack2u : -weeklyMetrics.pctAttack2d;
+    dailyMetrics.weeklyStatus = weeklyMetrics.status;
+    weeklyMetrics.dailyAttackPct = dailyMetrics.pctAttack2u > dailyMetrics.pctAttack2d ? dailyMetrics.pctAttack2u : -dailyMetrics.pctAttack2d;
+    weeklyMetrics.dailyStatus = dailyMetrics.status;
+
+    evaluatedDailyBaskets.push(dailyMetrics);
+    evaluatedWeeklyBaskets.push(weeklyMetrics);
+
+    for (const lag of dailyMetrics.laggards) {
+      allDailyLaggards.push(Object.assign({ parentBasket: b.symbol, basketStatus: dailyMetrics.status }, lag));
+    }
+    for (const lag of weeklyMetrics.laggards) {
+      allWeeklyLaggards.push(Object.assign({ parentBasket: b.symbol, basketStatus: weeklyMetrics.status }, lag));
     }
   }
 
-  const sortedBaskets = Model.sortAttackBaskets(evaluatedBaskets, "attack", false);
+  const sortedDailyBaskets = Model.sortAttackBaskets(evaluatedDailyBaskets, "attack", false);
+  const sortedWeeklyBaskets = Model.sortAttackBaskets(evaluatedWeeklyBaskets, "attack", false);
 
-  const topBullish = sortedBaskets.filter(b => b.pctAttack2u > 0 || b.pct2u >= 60).slice(0, 5);
-  const topBearish = sortedBaskets.filter(b => b.pctAttack2d > 0 || b.pct2d >= 60).slice(0, 5);
+  const topBullishDaily = sortedDailyBaskets.filter(b => b.pctAttack2u > 0 || b.pct2u >= 60).slice(0, 5);
+  const topBearishDaily = sortedDailyBaskets.filter(b => b.pctAttack2d > 0 || b.pct2d >= 60).slice(0, 5);
 
-  // Sort global laggards by tightest distance to trigger
-  allLaggards.sort((a, b) => (a.distToTriggerPct != null ? a.distToTriggerPct : 999) - (b.distToTriggerPct != null ? b.distToTriggerPct : 999));
-  const topLaggards = allLaggards.slice(0, 15);
+  const topBullishWeekly = sortedWeeklyBaskets.filter(b => b.pctAttack2u > 0 || b.pct2u >= 60).slice(0, 5);
+  const topBearishWeekly = sortedWeeklyBaskets.filter(b => b.pctAttack2d > 0 || b.pct2d >= 60).slice(0, 5);
+
+  allDailyLaggards.sort((a, b) => (a.distToTriggerPct != null ? a.distToTriggerPct : 999) - (b.distToTriggerPct != null ? b.distToTriggerPct : 999));
+  const topDailyLaggards = allDailyLaggards.slice(0, 15);
+
+  allWeeklyLaggards.sort((a, b) => (a.distToTriggerPct != null ? a.distToTriggerPct : 999) - (b.distToTriggerPct != null ? b.distToTriggerPct : 999));
+  const topWeeklyLaggards = allWeeklyLaggards.slice(0, 15);
 
   const output = {
     timestamp: Date.now(),
-    baskets: sortedBaskets,
-    topBullishAttacks: topBullish,
-    topBearishAttacks: topBearish,
-    topLaggards: topLaggards
+    daily: {
+      baskets: sortedDailyBaskets,
+      topBullishAttacks: topBullishDaily,
+      topBearishAttacks: topBearishDaily,
+      topLaggards: topDailyLaggards
+    },
+    weekly: {
+      baskets: sortedWeeklyBaskets,
+      topBullishAttacks: topBullishWeekly,
+      topBearishAttacks: topBearishWeekly,
+      topLaggards: topWeeklyLaggards
+    },
+    // Backwards compatibility with existing root properties
+    baskets: sortedDailyBaskets,
+    topBullishAttacks: topBullishDaily,
+    topBearishAttacks: topBearishDaily,
+    topLaggards: topDailyLaggards
   };
 
   process.stdout.write(JSON.stringify(output));

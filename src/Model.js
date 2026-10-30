@@ -3377,11 +3377,12 @@ function allAttackBasketsList() {
   ]
 }
 
-function extractWtdDailyCandles(candles, liveQuote, triggerPrice, triggerDirection) {
+function extractWtdDailyCandles(candles, liveQuote, triggerPrice, triggerDirection, timeframe) {
   if (!Array.isArray(candles) || candles.length === 0) {
     return { candles: [], weekHigh: 0, weekLow: 0, triggerPrice: 0, triggerDirection: "neutral" }
   }
 
+  var tf = timeframe || "1D"
   var cList = candles.slice()
   var n = cList.length
   var lastC = Object.assign({}, cList[n - 1])
@@ -3393,15 +3394,22 @@ function extractWtdDailyCandles(candles, liveQuote, triggerPrice, triggerDirecti
   }
   cList[n - 1] = lastC
 
-  var dLast = new Date(lastC.timestamp * 1000)
-  var dayOfWeek = dLast.getUTCDay()
-  var daysSinceMon = (dayOfWeek + 6) % 7
-  var monMidnight = new Date(dLast.getTime() - daysSinceMon * 86400 * 1000)
-  monMidnight.setUTCHours(0, 0, 0, 0)
-  var monTs = Math.floor(monMidnight.getTime() / 1000)
+  var weekBars = []
+  if (tf === "1W") {
+    // Recent 5 weekly bars
+    weekBars = cList.slice(Math.max(0, n - 5))
+  } else {
+    // Current Week-To-Date daily bars starting Monday midnight
+    var dLast = new Date(lastC.timestamp * 1000)
+    var dayOfWeek = dLast.getUTCDay()
+    var daysSinceMon = (dayOfWeek + 6) % 7
+    var monMidnight = new Date(dLast.getTime() - daysSinceMon * 86400 * 1000)
+    monMidnight.setUTCHours(0, 0, 0, 0)
+    var monTs = Math.floor(monMidnight.getTime() / 1000)
 
-  var weekBars = cList.filter(function(c) { return c && c.timestamp >= monTs; })
-  if (weekBars.length === 0) weekBars = [lastC]
+    weekBars = cList.filter(function(c) { return c && c.timestamp >= monTs; })
+    if (weekBars.length === 0) weekBars = [lastC]
+  }
 
   var dayMap = ["Sun", "M", "T", "W", "Th", "F", "Sat"]
   var wtdCandles = []
@@ -3411,8 +3419,9 @@ function extractWtdDailyCandles(candles, liveQuote, triggerPrice, triggerDirecti
     var prev = idx > 0 ? cList[idx - 1] : null
     var sc = prev ? stratScenario(c, prev) : "-"
     var d = new Date(c.timestamp * 1000)
+    var dayLabel = tf === "1W" ? ((d.getUTCMonth() + 1) + "/" + d.getUTCDate()) : (dayMap[d.getUTCDay()] || "-")
     wtdCandles.push({
-      day: dayMap[d.getUTCDay()] || "-",
+      day: dayLabel,
       timestamp: c.timestamp,
       open: Number(c.open),
       high: Number(c.high),
@@ -3439,7 +3448,8 @@ function extractWtdDailyCandles(candles, liveQuote, triggerPrice, triggerDirecti
   }
 }
 
-function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings, dailyCandlesMap, liveQuotesMap) {
+function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings, dailyCandlesMap, liveQuotesMap, timeframe) {
+  var tf = timeframe || "1D"
   var list = Array.isArray(holdings) ? holdings : []
   var total = 0
   var count2u = 0
@@ -3481,7 +3491,7 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
         consecutiveCount: attack.consecutiveCount,
         triggerPrice: attack.triggerPrice,
         price: price,
-        wtd: extractWtdDailyCandles(candles, quote, attack.triggerPrice, "bullish")
+        wtd: extractWtdDailyCandles(candles, quote, attack.triggerPrice, "bullish", tf)
       })
     } else if (attack.direction === "bearish") {
       countAttack2d++
@@ -3494,7 +3504,7 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
         consecutiveCount: attack.consecutiveCount,
         triggerPrice: attack.triggerPrice,
         price: price,
-        wtd: extractWtdDailyCandles(candles, quote, attack.triggerPrice, "bearish")
+        wtd: extractWtdDailyCandles(candles, quote, attack.triggerPrice, "bearish", tf)
       })
     } else {
       var trigHigh = Number(cPrev.high)
@@ -3548,7 +3558,7 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
         direction: "bullish",
         distToTriggerPct: l.distToHighPct,
         triggerPrice: l.triggerHigh,
-        wtd: extractWtdDailyCandles(lCandles, lQuote, l.triggerHigh, "bullish")
+        wtd: extractWtdDailyCandles(lCandles, lQuote, l.triggerHigh, "bullish", tf)
       })
     })
     relevantLaggards.sort(function(a, b) { return a.distToTriggerPct - b.distToTriggerPct })
@@ -3560,7 +3570,7 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
         direction: "bearish",
         distToTriggerPct: l.distToLowPct,
         triggerPrice: l.triggerLow,
-        wtd: extractWtdDailyCandles(lCandles2, lQuote2, l.triggerLow, "bearish")
+        wtd: extractWtdDailyCandles(lCandles2, lQuote2, l.triggerLow, "bearish", tf)
       })
     })
     relevantLaggards.sort(function(a, b) { return a.distToTriggerPct - b.distToTriggerPct })
@@ -3570,6 +3580,7 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     symbol: basketSymbol,
     name: basketName,
     category: category || "Sector",
+    timeframe: tf,
     totalHoldings: total,
     count2u: count2u,
     count2d: count2d,
