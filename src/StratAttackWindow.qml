@@ -262,7 +262,7 @@ FloatingWindow {
                 Rectangle {
                     id: attackPill
                     required property var modelData
-                    width: pillRow.implicitWidth + Style.space(12)
+                    width: pillRow.implicitWidth + Style.space(16)
                     height: Style.space(24)
                     radius: Style.space(4)
                     color: Style.hoverFillFor(root.upColor, 0.15)
@@ -272,19 +272,10 @@ FloatingWindow {
                     Row {
                         id: pillRow
                         anchors.centerIn: parent
-                        spacing: Style.space(6)
 
                         Text {
                             text: attackPill.modelData.symbol
                             color: root.foreground
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                            font.bold: true
-                        }
-
-                        Text {
-                            text: attackPill.modelData.pctAttack2u.toFixed(0) + "% 2u-2u"
-                            color: root.upColor
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
                             font.bold: true
@@ -329,7 +320,7 @@ FloatingWindow {
                         spacing: Style.space(12)
 
                         Text {
-                            width: Style.space(70)
+                            width: Style.space(80)
                             text: "TICKER"
                             color: root.dim
                             font.family: root.fontFamily
@@ -338,7 +329,7 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(60)
+                            width: Style.space(70)
                             text: "BASKET"
                             color: root.dim
                             font.family: root.fontFamily
@@ -347,16 +338,7 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(45)
-                            text: "BAR"
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                            font.bold: true
-                        }
-
-                        Text {
-                            width: Style.space(90)
+                            width: Style.space(100)
                             text: "WTD BARS"
                             color: root.dim
                             font.family: root.fontFamily
@@ -365,9 +347,9 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(80)
+                            width: Style.space(90)
                             horizontalAlignment: Text.AlignRight
-                            text: "LIVE PRICE"
+                            text: "PRICE"
                             color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -375,27 +357,7 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(80)
-                            horizontalAlignment: Text.AlignRight
-                            text: "TRIGGER"
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                            font.bold: true
-                        }
-
-                        Text {
-                            width: Style.space(85)
-                            horizontalAlignment: Text.AlignRight
-                            text: "DISTANCE"
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                            font.bold: true
-                        }
-
-                        Text {
-                            width: Style.space(160)
+                            width: Style.space(240)
                             text: "COMPANY NAME"
                             color: root.dim
                             font.family: root.fontFamily
@@ -424,7 +386,7 @@ FloatingWindow {
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(70)
+                                width: Style.space(80)
                                 text: laggardRow.modelData.symbol
                                 color: root.foreground
                                 font.family: root.fontFamily
@@ -434,7 +396,7 @@ FloatingWindow {
 
                             Rectangle {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(60)
+                                width: Style.space(70)
                                 height: Style.space(20)
                                 radius: Style.space(4)
                                 color: Style.hoverFillFor(root.foreground, 0.1)
@@ -449,19 +411,9 @@ FloatingWindow {
                                 }
                             }
 
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(45)
-                                text: laggardRow.modelData.scenario ? String(laggardRow.modelData.scenario).toUpperCase() : "-"
-                                color: laggardRow.modelData.color === "G" ? root.upColor : (laggardRow.modelData.color === "R" ? root.downColor : root.dim)
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                font.bold: true
-                            }
-
                             WtdCandlesStrip {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(90)
+                                width: Style.space(100)
                                 height: Style.space(28)
                                 wtdData: laggardRow.modelData.wtd
                                 upColor: root.upColor
@@ -470,7 +422,7 @@ FloatingWindow {
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(80)
+                                width: Style.space(90)
                                 horizontalAlignment: Text.AlignRight
                                 text: laggardRow.modelData.price ? "$" + laggardRow.modelData.price.toFixed(2) : "-"
                                 color: root.foreground
@@ -480,29 +432,7 @@ FloatingWindow {
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(80)
-                                horizontalAlignment: Text.AlignRight
-                                text: laggardRow.modelData.triggerPrice ? "$" + laggardRow.modelData.triggerPrice.toFixed(2) : "-"
-                                color: Color.accent
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.body
-                                font.bold: true
-                            }
-
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(85)
-                                horizontalAlignment: Text.AlignRight
-                                text: (laggardRow.modelData.distToTriggerPct != null) ? laggardRow.modelData.distToTriggerPct.toFixed(2) + "% away" : "-"
-                                color: root.warningColor
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                font.bold: true
-                            }
-
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(160)
+                                width: Style.space(240)
                                 text: laggardRow.modelData.name || ""
                                 color: root.dim
                                 font.family: root.fontFamily
@@ -789,8 +719,8 @@ FloatingWindow {
                                         Rectangle {
                                             id: cCard
                                             required property var modelData
-                                            width: Style.space(250)
-                                            height: Style.space(52)
+                                            width: Style.space(168)
+                                            height: Style.space(48)
                                             radius: Style.space(6)
                                             color: cCardArea.containsMouse ? Style.hoverFillFor(Color.background, 0.5) : Style.hoverFillFor(Color.background, 0.2)
                                             border.color: cCardArea.containsMouse ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
@@ -801,62 +731,20 @@ FloatingWindow {
                                                 anchors.margins: Style.space(6)
                                                 spacing: Style.space(8)
 
-                                                Column {
+                                                Text {
                                                     anchors.verticalCenter: parent.verticalCenter
-                                                    width: Style.space(126)
-                                                    spacing: Style.space(2)
-
-                                                    Row {
-                                                        spacing: Style.space(6)
-                                                        Text {
-                                                            text: cCard.modelData.symbol
-                                                            color: root.foreground
-                                                            font.family: root.fontFamily
-                                                            font.pixelSize: Style.font.body
-                                                            font.bold: true
-                                                        }
-                                                        Text {
-                                                            text: cCard.modelData.pctVal ? cCard.modelData.pctVal.toFixed(1) + "%" : ""
-                                                            color: root.dim
-                                                            font.family: root.fontFamily
-                                                            font.pixelSize: Style.font.caption
-                                                            visible: cCard.modelData.pctVal > 0
-                                                        }
-                                                    }
-
-                                                    Row {
-                                                        spacing: Style.space(4)
-                                                        Rectangle {
-                                                            anchors.verticalCenter: parent.verticalCenter
-                                                            width: attackLbl.implicitWidth + Style.space(6)
-                                                            height: Style.space(16)
-                                                            radius: Style.space(3)
-                                                            color: Style.hoverFillFor(cCard.modelData.direction === "bullish" ? root.upColor : root.downColor, 0.25)
-                                                            Text {
-                                                                id: attackLbl
-                                                                anchors.centerIn: parent
-                                                                text: cCard.modelData.attackType
-                                                                color: cCard.modelData.direction === "bullish" ? root.upColor : root.downColor
-                                                                font.family: root.fontFamily
-                                                                font.pixelSize: Style.font.caption
-                                                                font.bold: true
-                                                            }
-                                                        }
-
-                                                        Text {
-                                                            anchors.verticalCenter: parent.verticalCenter
-                                                            text: cCard.modelData.price ? "$" + cCard.modelData.price.toFixed(2) : ""
-                                                            color: root.dim
-                                                            font.family: root.fontFamily
-                                                            font.pixelSize: Style.font.caption
-                                                        }
-                                                    }
+                                                    width: Style.space(52)
+                                                    text: cCard.modelData.symbol
+                                                    color: root.foreground
+                                                    font.family: root.fontFamily
+                                                    font.pixelSize: Style.font.body
+                                                    font.bold: true
                                                 }
 
                                                 WtdCandlesStrip {
                                                     anchors.verticalCenter: parent.verticalCenter
-                                                    width: Style.space(96)
-                                                    height: Style.space(38)
+                                                    width: Style.space(92)
+                                                    height: Style.space(34)
                                                     wtdData: cCard.modelData.wtd
                                                     upColor: root.upColor
                                                     downColor: root.downColor
@@ -898,7 +786,7 @@ FloatingWindow {
                                         font.bold: true
                                     }
                                     Text {
-                                        text: "· Un-triggered stocks near breakout"
+                                        text: "· Click ticker to open 5-timeframe Grid"
                                         color: root.dim
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.caption
@@ -915,8 +803,8 @@ FloatingWindow {
                                         Rectangle {
                                             id: lCard
                                             required property var modelData
-                                            width: Style.space(250)
-                                            height: Style.space(52)
+                                            width: Style.space(168)
+                                            height: Style.space(48)
                                             radius: Style.space(6)
                                             color: lCardArea.containsMouse ? Style.hoverFillFor(Color.background, 0.5) : Style.hoverFillFor(Color.background, 0.2)
                                             border.color: lCardArea.containsMouse ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
@@ -927,41 +815,20 @@ FloatingWindow {
                                                 anchors.margins: Style.space(6)
                                                 spacing: Style.space(8)
 
-                                                Column {
+                                                Text {
                                                     anchors.verticalCenter: parent.verticalCenter
-                                                    width: Style.space(126)
-                                                    spacing: Style.space(2)
-
-                                                    Row {
-                                                        spacing: Style.space(6)
-                                                        Text {
-                                                            text: lCard.modelData.symbol
-                                                            color: root.foreground
-                                                            font.family: root.fontFamily
-                                                            font.pixelSize: Style.font.body
-                                                            font.bold: true
-                                                        }
-                                                        Text {
-                                                            text: (lCard.modelData.distToTriggerPct != null) ? lCard.modelData.distToTriggerPct.toFixed(1) + "% away" : ""
-                                                            color: root.warningColor
-                                                            font.family: root.fontFamily
-                                                            font.pixelSize: Style.font.caption
-                                                            font.bold: true
-                                                        }
-                                                    }
-
-                                                    Text {
-                                                        text: (lCard.modelData.price ? "$" + lCard.modelData.price.toFixed(2) : "") + " | Trig " + (lCard.modelData.triggerPrice ? "$" + lCard.modelData.triggerPrice.toFixed(2) : "-")
-                                                        color: root.dim
-                                                        font.family: root.fontFamily
-                                                        font.pixelSize: Style.font.caption
-                                                    }
+                                                    width: Style.space(52)
+                                                    text: lCard.modelData.symbol
+                                                    color: root.foreground
+                                                    font.family: root.fontFamily
+                                                    font.pixelSize: Style.font.body
+                                                    font.bold: true
                                                 }
 
                                                 WtdCandlesStrip {
                                                     anchors.verticalCenter: parent.verticalCenter
-                                                    width: Style.space(96)
-                                                    height: Style.space(38)
+                                                    width: Style.space(92)
+                                                    height: Style.space(34)
                                                     wtdData: lCard.modelData.wtd
                                                     upColor: root.upColor
                                                     downColor: root.downColor

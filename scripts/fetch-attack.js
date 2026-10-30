@@ -65,25 +65,24 @@ async function run() {
     }
   }
 
-  // 2. Chunk symbols into batches of 20 and fetch daily candles (1mo)
-  const batches = [];
-  for (let i = 0; i < allSyms.length; i += 20) {
-    batches.push(allSyms.slice(i, i + 20));
-  }
-
+  // 2. Fetch full OHLC daily candles (1mo) per symbol in parallel
   const dailyMap = {};
-  const concurrency = 6;
-  let bIdx = 0;
+  const concurrency = 20;
+  let symIdx = 0;
 
   async function worker() {
-    while (bIdx < batches.length) {
-      const b = batches[bIdx++];
-      const url = Model.sparkCandlesUrl(b, "1d", "1mo");
-      if (!url) continue;
+    while (symIdx < allSyms.length) {
+      const sym = allSyms[symIdx++];
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1mo&includePrePost=false`;
       const res = await fetchHttps(url, { "User-Agent": "Mozilla/5.0" });
       if (res.ok && res.data) {
-        const parsed = Model.parseSparkCandles(res.data, "1d");
-        Object.assign(dailyMap, parsed);
+        try {
+          const j = JSON.parse(res.data);
+          const r = j && j.chart && j.chart.result && j.chart.result[0];
+          if (r && r.timestamp && r.indicators) {
+            dailyMap[sym] = Model.parseCandles(r.timestamp, r.indicators);
+          }
+        } catch (e) {}
       }
     }
   }

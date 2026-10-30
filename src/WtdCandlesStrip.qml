@@ -8,7 +8,6 @@ Item {
     property var wtdData: null
     property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
     property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
-    property color triggerColor: Color.accent
     property color dim: Color.muted
     property string fontFamily: Style.font.family
 
@@ -16,20 +15,28 @@ Item {
     implicitHeight: Style.space(34)
 
     readonly property var candles: (root.wtdData && root.wtdData.candles) ? root.wtdData.candles : []
-    readonly property real triggerPrice: root.wtdData && root.wtdData.triggerPrice ? Number(root.wtdData.triggerPrice) : 0
-    readonly property string triggerDirection: root.wtdData && root.wtdData.triggerDirection ? root.wtdData.triggerDirection : "neutral"
 
     readonly property real minPrice: {
-        var min = root.wtdData && root.wtdData.weekLow ? Number(root.wtdData.weekLow) : 0;
-        if (root.triggerPrice > 0 && (min <= 0 || root.triggerPrice < min))
-            min = root.triggerPrice;
+        if (!root.candles || root.candles.length === 0)
+            return 1;
+        var min = Number(root.candles[0].low);
+        for (var i = 1; i < root.candles.length; i++) {
+            var l = Number(root.candles[i].low);
+            if (l > 0 && (min <= 0 || l < min))
+                min = l;
+        }
         return min > 0 ? min : 1;
     }
 
     readonly property real maxPrice: {
-        var max = root.wtdData && root.wtdData.weekHigh ? Number(root.wtdData.weekHigh) : 0;
-        if (root.triggerPrice > 0 && root.triggerPrice > max)
-            max = root.triggerPrice;
+        if (!root.candles || root.candles.length === 0)
+            return 1;
+        var max = Number(root.candles[0].high);
+        for (var i = 1; i < root.candles.length; i++) {
+            var h = Number(root.candles[i].high);
+            if (h > max)
+                max = h;
+        }
         return max > 0 ? max : 1;
     }
 
@@ -70,7 +77,7 @@ Item {
                 if (!list || list.length === 0)
                     return;
 
-                var pad = 4;
+                var pad = 3;
                 var chartH = h - pad * 2;
                 var minP = root.minPrice;
                 var span = root.priceSpan;
@@ -80,26 +87,10 @@ Item {
                     return h - pad - (norm * chartH);
                 }
 
-                // 1. Draw horizontal dashed trigger line if present
-                if (root.triggerPrice > 0) {
-                    var ty = getY(root.triggerPrice);
-                    ctx.save();
-                    ctx.strokeStyle = root.triggerColor;
-                    ctx.lineWidth = 1;
-                    ctx.globalAlpha = 0.65;
-                    if (typeof ctx.setLineDash === "function")
-                        ctx.setLineDash([2, 2]);
-                    ctx.beginPath();
-                    ctx.moveTo(2, ty);
-                    ctx.lineTo(w - 2, ty);
-                    ctx.stroke();
-                    ctx.restore();
-                }
-
-                // 2. Draw candles
+                // Draw OHLC candles: wicks and solid bodies
                 var count = list.length;
                 var colW = w / count;
-                var bodyW = Math.max(4, Math.min(10, colW * 0.45));
+                var bodyW = Math.max(5, Math.min(12, colW * 0.55));
 
                 for (var i = 0; i < count; i++) {
                     var c = list[i];
@@ -116,15 +107,15 @@ Item {
                     var yO = getY(o);
                     var yC = getY(cl);
 
-                    // Wick
+                    // High-low wick
                     ctx.strokeStyle = cColor;
-                    ctx.lineWidth = 1.2;
+                    ctx.lineWidth = 1.3;
                     ctx.beginPath();
                     ctx.moveTo(cx, yHi);
                     ctx.lineTo(cx, yLo);
                     ctx.stroke();
 
-                    // Body
+                    // Open-close body
                     var bodyTop = Math.min(yO, yC);
                     var bodyH = Math.max(2, Math.abs(yC - yO));
                     ctx.fillStyle = cColor;
