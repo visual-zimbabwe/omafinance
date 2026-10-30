@@ -3525,14 +3525,18 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
   var netAttackDelta = pctAttack2u - pctAttack2d
 
   var status = "NEUTRAL"
-  if (pct2u >= 75 && pctAttack2u >= 40) {
-    status = "BULLISH ATTACK"
-  } else if (pct2d >= 75 && pctAttack2d >= 40) {
-    status = "BEARISH ATTACK"
-  } else if (pct2u >= 60) {
-    status = "DEVELOPING BUY"
-  } else if (pct2d >= 60) {
-    status = "DEVELOPING SELL"
+  if (pct2u > pct2d) {
+    if ((pct2u >= 70 && pctAttack2u >= 15) || pctAttack2u >= 25 || (pctAttack2u >= 15 && pctAttack2u > pctAttack2d * 1.5)) {
+      status = "BULLISH ATTACK"
+    } else if (pct2u >= 60 || pctAttack2u >= 10) {
+      status = "DEVELOPING BUY"
+    }
+  } else if (pct2d > pct2u) {
+    if ((pct2d >= 70 && pctAttack2d >= 15) || pctAttack2d >= 25 || (pctAttack2d >= 15 && pctAttack2d > pctAttack2u * 1.5)) {
+      status = "BEARISH ATTACK"
+    } else if (pct2d >= 60 || pctAttack2d >= 10) {
+      status = "DEVELOPING SELL"
+    }
   }
 
   var relevantLaggards = []

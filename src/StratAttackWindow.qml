@@ -101,7 +101,7 @@ FloatingWindow {
         var list = root.attackData || [];
         if (root.activeTab === "attacks") {
             list = list.filter(function (b) {
-                return (b.status === "BULLISH ATTACK" || b.status === "BEARISH ATTACK" || b.pctAttack2u >= 30 || b.pctAttack2d >= 30);
+                return (b.status === "BULLISH ATTACK" || b.status === "BEARISH ATTACK" || b.pctAttack2u >= 15 || b.pctAttack2d >= 15);
             });
         }
         return Model.sortAttackBaskets(list, root.sortKey, root.sortAsc);
@@ -122,25 +122,12 @@ FloatingWindow {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(2)
 
-                Row {
-                    spacing: Style.space(8)
-
-                    Text {
-                        text: "THESTRAT ATTACK SCANNER"
-                        color: root.foreground
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.title
-                        font.bold: true
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "2u-2u / 2d-2d"
-                        color: Color.accent
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.caption
-                        font.bold: true
-                    }
+                Text {
+                    text: "THE STRAT ATTACK SCANNER"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.title
+                    font.bold: true
                 }
 
                 Text {
@@ -239,45 +226,98 @@ FloatingWindow {
 
         // Active Attack Highlights Strip
         Row {
-            visible: root.activeTab !== "laggards" && root.topBullish && root.topBullish.length > 0
+            visible: root.activeTab !== "laggards" && ((root.topBullish && root.topBullish.length > 0) || (root.topBearish && root.topBearish.length > 0))
             width: parent.width
-            height: Style.space(30)
-            spacing: Style.space(8)
+            height: Style.space(26)
+            spacing: Style.space(24)
 
-            Text {
+            // Bullish Leaders
+            Row {
+                visible: root.topBullish && root.topBullish.length > 0
                 anchors.verticalCenter: parent.verticalCenter
-                text: "LEADERS:"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-            }
-
-            Repeater {
-                model: root.topBullish.slice(0, 4)
+                spacing: Style.space(8)
 
                 Text {
-                    id: attackPill
-                    required property var modelData
                     anchors.verticalCenter: parent.verticalCenter
-                    text: attackPill.modelData.symbol
-                    color: pillMouse.containsMouse ? Color.accent : root.upColor
+                    text: "BULLISH LEADERS:"
+                    color: root.upColor
                     font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
+                    font.pixelSize: Style.font.caption
                     font.bold: true
+                }
 
-                    MouseArea {
-                        id: pillMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (root.controller)
-                                root.controller.openGrid({
-                                    symbol: attackPill.modelData.symbol,
-                                    gridMode: "2+3",
-                                    timeframes: ["60", "1D", "1W", "1M", "1Y"]
-                                });
+                Repeater {
+                    model: root.topBullish.slice(0, 5)
+
+                    Text {
+                        id: bPill
+                        required property var modelData
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: bPill.modelData.symbol
+                        color: bMouse.containsMouse ? Color.accent : root.upColor
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+
+                        MouseArea {
+                            id: bMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (root.controller)
+                                    root.controller.openGrid({
+                                        symbol: bPill.modelData.symbol,
+                                        gridMode: "2+3",
+                                        timeframes: ["60", "1D", "1W", "1M", "1Y"]
+                                    });
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Bearish Leaders
+            Row {
+                visible: root.topBearish && root.topBearish.length > 0
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(8)
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "BEARISH LEADERS:"
+                    color: root.downColor
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                }
+
+                Repeater {
+                    model: root.topBearish.slice(0, 5)
+
+                    Text {
+                        id: bearPill
+                        required property var modelData
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: bearPill.modelData.symbol
+                        color: bearMouse.containsMouse ? Color.accent : root.downColor
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+
+                        MouseArea {
+                            id: bearMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (root.controller)
+                                    root.controller.openGrid({
+                                        symbol: bearPill.modelData.symbol,
+                                        gridMode: "2+3",
+                                        timeframes: ["60", "1D", "1W", "1M", "1Y"]
+                                    });
+                            }
                         }
                     }
                 }
@@ -303,6 +343,8 @@ FloatingWindow {
 
                     Row {
                         anchors.fill: parent
+                        anchors.leftMargin: Style.space(6)
+                        anchors.rightMargin: Style.space(6)
                         spacing: Style.space(12)
 
                         Text {
@@ -315,17 +357,8 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(70)
+                            width: Style.space(80)
                             text: "BASKET"
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                            font.bold: true
-                        }
-
-                        Text {
-                            width: Style.space(100)
-                            text: "WTD BARS"
                             color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -343,7 +376,37 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(240)
+                            width: Style.space(100)
+                            horizontalAlignment: Text.AlignRight
+                            text: "TRIGGER"
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            font.bold: true
+                        }
+
+                        Text {
+                            width: Style.space(130)
+                            horizontalAlignment: Text.AlignRight
+                            text: "DIST TO TRIGGER"
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            font.bold: true
+                        }
+
+                        Text {
+                            width: Style.space(90)
+                            horizontalAlignment: Text.AlignRight
+                            text: "TODAY BAR"
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            font.bold: true
+                        }
+
+                        Text {
+                            width: Style.space(280)
                             text: "COMPANY NAME"
                             color: root.dim
                             font.family: root.fontFamily
@@ -366,8 +429,8 @@ FloatingWindow {
 
                         Row {
                             anchors.fill: parent
-                            anchors.leftMargin: Style.space(4)
-                            anchors.rightMargin: Style.space(4)
+                            anchors.leftMargin: Style.space(6)
+                            anchors.rightMargin: Style.space(6)
                             spacing: Style.space(12)
 
                             Text {
@@ -382,21 +445,12 @@ FloatingWindow {
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(70)
+                                width: Style.space(80)
                                 text: laggardRow.modelData.parentBasket
                                 color: Color.accent
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.bodySmall
                                 font.bold: true
-                            }
-
-                            WtdCandlesStrip {
-                                anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(100)
-                                height: Style.space(28)
-                                wtdData: laggardRow.modelData.wtd
-                                upColor: root.upColor
-                                downColor: root.downColor
                             }
 
                             Text {
@@ -411,7 +465,39 @@ FloatingWindow {
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: Style.space(240)
+                                width: Style.space(100)
+                                horizontalAlignment: Text.AlignRight
+                                text: laggardRow.modelData.triggerPrice ? "$" + laggardRow.modelData.triggerPrice.toFixed(2) : "-"
+                                color: root.dim
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.bodySmall
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Style.space(130)
+                                horizontalAlignment: Text.AlignRight
+                                text: laggardRow.modelData.distToTriggerPct != null ? (laggardRow.modelData.distToTriggerPct.toFixed(1) + "% (" + (laggardRow.modelData.direction === "bullish" ? "High" : "Low") + ")") : "-"
+                                color: laggardRow.modelData.direction === "bullish" ? root.upColor : root.downColor
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.bodySmall
+                                font.bold: true
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Style.space(90)
+                                horizontalAlignment: Text.AlignRight
+                                text: laggardRow.modelData.scenario ? String(laggardRow.modelData.scenario).toUpperCase() : "-"
+                                color: laggardRow.modelData.color === "G" ? root.upColor : root.downColor
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.body
+                                font.bold: true
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Style.space(280)
                                 text: laggardRow.modelData.name || ""
                                 color: root.dim
                                 font.family: root.fontFamily
@@ -451,6 +537,8 @@ FloatingWindow {
 
                     Row {
                         anchors.fill: parent
+                        anchors.leftMargin: Style.space(6)
+                        anchors.rightMargin: Style.space(6)
                         spacing: Style.space(12)
 
                         Text {
@@ -463,8 +551,8 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(130)
-                            text: "CATEGORY / NAME"
+                            width: Style.space(210)
+                            text: "NAME & SECTOR"
                             color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -472,8 +560,8 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(160)
-                            text: "STATUS / INTENSITY"
+                            width: Style.space(150)
+                            text: "ATTACK STATUS"
                             color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -481,9 +569,19 @@ FloatingWindow {
                         }
 
                         Text {
-                            width: Style.space(140)
+                            width: Style.space(120)
                             horizontalAlignment: Text.AlignRight
-                            text: "2u-2u ATTACK %"
+                            text: "2U ATTACK %"
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            font.bold: true
+                        }
+
+                        Text {
+                            width: Style.space(120)
+                            horizontalAlignment: Text.AlignRight
+                            text: "2D ATTACK %"
                             color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -493,7 +591,7 @@ FloatingWindow {
                         Text {
                             width: Style.space(110)
                             horizontalAlignment: Text.AlignRight
-                            text: "TODAY 2u / 2d"
+                            text: "TODAY 2U / 2D"
                             color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -545,7 +643,7 @@ FloatingWindow {
 
                                 Column {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: Style.space(130)
+                                    width: Style.space(210)
                                     spacing: Style.space(2)
 
                                     Text {
@@ -567,9 +665,9 @@ FloatingWindow {
 
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: Style.space(140)
+                                    width: Style.space(150)
                                     text: basketBlock.modelData.status
-                                    color: basketBlock.modelData.status === "BULLISH ATTACK" ? root.upColor : (basketBlock.modelData.status === "BEARISH ATTACK" ? root.downColor : root.dim)
+                                    color: basketBlock.modelData.status === "BULLISH ATTACK" ? root.upColor : (basketBlock.modelData.status === "BEARISH ATTACK" ? root.downColor : (basketBlock.modelData.status.indexOf("BUY") !== -1 ? root.upColor : (basketBlock.modelData.status.indexOf("SELL") !== -1 ? root.downColor : root.dim)))
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.bodySmall
                                     font.bold: true
@@ -577,13 +675,24 @@ FloatingWindow {
 
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: Style.space(140)
+                                    width: Style.space(120)
                                     horizontalAlignment: Text.AlignRight
                                     text: basketBlock.modelData.pctAttack2u.toFixed(1) + "% (" + basketBlock.modelData.countAttack2u + ")"
-                                    color: basketBlock.modelData.pctAttack2u >= 40 ? root.upColor : root.foreground
+                                    color: basketBlock.modelData.pctAttack2u >= 20 ? root.upColor : root.foreground
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
-                                    font.bold: basketBlock.modelData.pctAttack2u >= 40
+                                    font.bold: basketBlock.modelData.pctAttack2u >= 20
+                                }
+
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: Style.space(120)
+                                    horizontalAlignment: Text.AlignRight
+                                    text: basketBlock.modelData.pctAttack2d.toFixed(1) + "% (" + basketBlock.modelData.countAttack2d + ")"
+                                    color: basketBlock.modelData.pctAttack2d >= 20 ? root.downColor : root.foreground
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.body
+                                    font.bold: basketBlock.modelData.pctAttack2d >= 20
                                 }
 
                                 Text {
@@ -661,8 +770,8 @@ FloatingWindow {
                                 }
 
                                 Flow {
-                                    width: parent.width - Style.space(40)
-                                    spacing: Style.space(8)
+                                    width: parent.width - Style.space(32)
+                                    spacing: Style.space(10)
 
                                     Repeater {
                                         model: basketBlock.modelData.attackConstituents
@@ -670,7 +779,7 @@ FloatingWindow {
                                         Rectangle {
                                             id: cCard
                                             required property var modelData
-                                            width: Style.space(196)
+                                            width: Style.space(222)
                                             height: Style.space(164)
                                             radius: Style.space(8)
                                             color: "transparent"
@@ -791,8 +900,8 @@ FloatingWindow {
                                 }
 
                                 Flow {
-                                    width: parent.width - Style.space(40)
-                                    spacing: Style.space(8)
+                                    width: parent.width - Style.space(32)
+                                    spacing: Style.space(10)
 
                                     Repeater {
                                         model: basketBlock.modelData.laggards
@@ -800,7 +909,7 @@ FloatingWindow {
                                         Rectangle {
                                             id: lCard
                                             required property var modelData
-                                            width: Style.space(196)
+                                            width: Style.space(222)
                                             height: Style.space(164)
                                             radius: Style.space(8)
                                             color: "transparent"
