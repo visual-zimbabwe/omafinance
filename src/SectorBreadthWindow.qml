@@ -78,7 +78,7 @@ FloatingWindow {
         // High-speed parallel runner script via node (non-blocking background process)
         var home = Quickshell.env("HOME");
         var scriptPath = home + "/.config/omarchy/plugins/mohamedmansour.finance/scripts/fetch-breadth.js";
-        runnerProc.command = ["node", scriptPath];
+        runnerProc.command = Model.nodeCommand(scriptPath);
         runnerProc.running = true;
     }
 

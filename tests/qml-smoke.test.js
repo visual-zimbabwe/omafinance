@@ -569,6 +569,8 @@ test("grid window and panel persist cellTimeframes across state and layouts and 
   assert.match(chart, /property int configuredZoom:\s*-1/)
   assert.match(chart, /signal zoomChangedManually\(int nextViewCount\)/)
   assert.match(grid, /property real replayCutoffTs:\s*0/)
+  assert.match(grid, /property string replayStepInterval:\s*"Auto"/)
+  assert.match(grid, /function setReplayStepInterval\(interval\)/)
   assert.match(grid, /Model\.buildReplayCandles/)
   assert.match(grid, /Model\.buildReplayQuote/)
   assert.match(grid, /function stepReplay\(dir\)/)

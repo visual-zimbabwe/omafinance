@@ -2184,3 +2184,122 @@ test("evaluateStratChecklist and resolveUntaggedHtfTargets scan lookback 1D/1W s
   )
 })
 
+test("replay step interval mapping, chartSpec, and custom timeframes", () => {
+  assert.equal(Model.mapReplayStepInterval("Auto"), "")
+  assert.equal(Model.mapReplayStepInterval("1m"), "1")
+  assert.equal(Model.mapReplayStepInterval("5m"), "5")
+  assert.equal(Model.mapReplayStepInterval("15m"), "15")
+  assert.equal(Model.mapReplayStepInterval("30m"), "30")
+  assert.equal(Model.mapReplayStepInterval("60m"), "60")
+  assert.equal(Model.mapReplayStepInterval("1D"), "1D")
+
+  assert.deepEqual(Model.chartSpec("1"), { range: "5d", interval: "1m" })
+  assert.deepEqual(Model.chartSpec("5"), { range: "1mo", interval: "5m" })
+  assert.deepEqual(Model.chartSpec("15"), { range: "1mo", interval: "15m" })
+
+  assert.equal(Model.parseInterval("5"), "5")
+  assert.equal(Model.parseInterval("5m"), "5")
+  assert.equal(Model.parseInterval("15"), "15")
+  assert.equal(Model.parseInterval("15m"), "15")
+  assert.equal(Model.parseInterval("1min"), "1")
+
+  const raw5m = [
+    { timestamp: 1000 },
+    { timestamp: 1300 },
+    { timestamp: 1600 },
+    { timestamp: 1900 }
+  ]
+  assert.equal(Model.stepReplayCutoff(raw5m, 0, -1), 1900)
+  assert.equal(Model.stepReplayCutoff(raw5m, 1900, -1), 1600)
+  assert.equal(Model.stepReplayCutoff(raw5m, 1600, 1), 1900)
+  assert.equal(Model.stepReplayCutoff(raw5m, 1900, 1), 0)
+})
+
+test("nodeCommand wraps script execution in bash with mise and local bin PATH", () => {
+  const cmd = Model.nodeCommand("/path/to/script.js", ["arg1", "arg2"])
+  assert.equal(cmd[0], "bash")
+  assert.equal(cmd[1], "-c")
+  assert.match(cmd[2], /mise\/shims/)
+  assert.match(cmd[2], /exec node "\$@"/)
+  assert.equal(cmd[3], "--")
+  assert.equal(cmd[4], "/path/to/script.js")
+  assert.equal(cmd[5], "arg1")
+  assert.equal(cmd[6], "arg2")
+})
+
+test("formatCandleTime and formatReplayBadgeTime format active intraday bar with clock time", () => {
+  const ts = 1776864600 // 2026-04-22 13:30 UTC
+  const formatted5m = Model.formatCandleTime(ts, "5")
+  const formatted15m = Model.formatCandleTime(ts, "15")
+  const formatted1m = Model.formatCandleTime(ts, "1")
+  assert.match(formatted5m, /(AM|PM)/)
+  assert.match(formatted15m, /(AM|PM)/)
+  assert.match(formatted1m, /(AM|PM)/)
+
+  const candles5m = [
+    { timestamp: ts, open: 100, close: 101 },
+    { timestamp: ts + 300, open: 101, close: 102 },
+    { timestamp: ts + 600, open: 102, close: 103 }
+  ]
+  // Cutoff at ts + 600: active visible 5m bar is ts + 300
+  const badge = Model.formatReplayBadgeTime(ts + 600, candles5m, [], [], [])
+  assert.match(badge, /(AM|PM)/)
+  assert.equal(badge, Model.formatCandleTime(ts + 300, "5"))
+})
+
+test("buildReplayCandles reconstructs developing 30m, 60m, and 1D bars from 5m sub-bars up to cutoff", () => {
+  const dayOpen = 1776864600 // 13:30 UTC (09:30 market open)
+  const bar30 = [
+    { timestamp: dayOpen, open: 500, high: 510, low: 495, close: 508, volume: 6000 }
+  ]
+  const bar60 = [
+    { timestamp: dayOpen, open: 500, high: 515, low: 495, close: 512, volume: 12000 }
+  ]
+  const bar1D = [
+    { timestamp: dayOpen, open: 500, high: 520, low: 490, close: 518, volume: 50000 }
+  ]
+
+  // First three 5m bars of the day (09:30, 09:35, 09:40)
+  const sub5m = [
+    { timestamp: dayOpen, open: 500, high: 503, low: 498, close: 502, volume: 1000 },
+    { timestamp: dayOpen + 300, open: 502, high: 506, low: 501, close: 505, volume: 1200 },
+    { timestamp: dayOpen + 600, open: 505, high: 507, low: 503, close: 504, volume: 1100 }
+  ]
+
+  // Replay cutoff at 09:40 (dayOpen + 600) -> excludes 09:40, includes 09:30 and 09:35 bars
+  const cutoff = dayOpen + 600
+
+  // 1. 30m developing candle reflects only 09:30 and 09:35 5m bars
+  const rep30 = Model.buildReplayCandles("30", bar30, [], [], [], cutoff, sub5m)
+  assert.equal(rep30.length, 1)
+  assert.equal(rep30[0].open, 500)
+  assert.equal(rep30[0].high, 506)
+  assert.equal(rep30[0].low, 498)
+  assert.equal(rep30[0].close, 505)
+  assert.equal(rep30[0].volume, 2200)
+
+  // 2. 60m developing candle reflects only 09:30 and 09:35 5m bars
+  const rep60 = Model.buildReplayCandles("60", bar60, [], [], [], cutoff, sub5m)
+  assert.equal(rep60.length, 1)
+  assert.equal(rep60[0].open, 500)
+  assert.equal(rep60[0].high, 506)
+  assert.equal(rep60[0].low, 498)
+  assert.equal(rep60[0].close, 505)
+  assert.equal(rep60[0].volume, 2200)
+
+  // 3. 1D developing candle reflects only 09:30 and 09:35 5m bars
+  const rep1D = Model.buildReplayCandles("1D", bar1D, [], [], [], cutoff, sub5m)
+  assert.equal(rep1D.length, 1)
+  assert.equal(rep1D[0].open, 500)
+  assert.equal(rep1D[0].high, 506)
+  assert.equal(rep1D[0].low, 498)
+  assert.equal(rep1D[0].close, 505)
+  assert.equal(rep1D[0].volume, 2200)
+
+  // 4. Synthetic replay quote reflects latest 5m close (505)
+  const repQuote = Model.buildReplayQuote({ symbol: "SMH", price: 518 }, [], [], [], cutoff, sub5m)
+  assert.equal(repQuote.price, 505)
+})
+
+
+
