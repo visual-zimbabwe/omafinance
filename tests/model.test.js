@@ -2301,5 +2301,85 @@ test("buildReplayCandles reconstructs developing 30m, 60m, and 1D bars from 5m s
   assert.equal(repQuote.price, 505)
 })
 
+test("isEtfSymbol accurately classifies SPDR sectors, ETF quotes, and non-ETF assets", () => {
+  assert.equal(Model.isEtfSymbol("XLC"), true)
+  assert.equal(Model.isEtfSymbol("XLK"), true)
+  assert.equal(Model.isEtfSymbol("SMH", { instrumentType: "ETF" }), true)
+  assert.equal(Model.isEtfSymbol("QQQ", { type: "ETF" }), true)
+  assert.equal(Model.isEtfSymbol("AAPL", { instrumentType: "EQUITY" }), false)
+  assert.equal(Model.isEtfSymbol("BTC-USD"), false)
+  assert.equal(Model.isEtfSymbol(null), false)
+})
+
+test("resolveCusipToTicker resolves customMap, ignores zero placeholders, and maps ADR titles", () => {
+  assert.equal(Model.resolveCusipToTicker("000000000", "Unknown Holding"), null)
+  assert.equal(Model.resolveCusipToTicker(null, "ASML Holding NV"), "ASML")
+  assert.equal(Model.resolveCusipToTicker(null, "Taiwan Semiconductor Manufacturing Co Ltd"), "TSM")
+  assert.equal(Model.resolveCusipToTicker(null, "NXP Semiconductors NV"), "NXPI")
+  assert.equal(Model.resolveCusipToTicker(null, "ARM Holdings PLC"), "ARM")
+  assert.equal(Model.resolveCusipToTicker("874039100", "Custom Co", { "874039100": "TSM" }), "TSM")
+})
+
+test("parseNportXml resolves international holdings via ISIN and custom mappings (ASML, TSM, NXPI)", () => {
+  const sampleXml = `
+<nportSubmission xmlns="http://www.sec.gov/edgar/nport">
+  <formData>
+    <genInfo>
+      <repPdEnd>2026-06-30</repPdEnd>
+    </genInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>NVIDIA Corp</name>
+        <cusip>67066G104</cusip>
+        <valUSD>10000000.00</valUSD>
+        <pctVal>20.0</pctVal>
+        <assetCat>EC</assetCat>
+      </invstOrSec>
+      <invstOrSec>
+        <name>ASML Holding NV</name>
+        <cusip>000000000</cusip>
+        <identifiers>
+          <isin value="USN070592100"/>
+        </identifiers>
+        <valUSD>5000000.00</valUSD>
+        <pctVal>10.0</pctVal>
+        <assetCat>EC</assetCat>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Taiwan Semiconductor Manufacturing Co Ltd</name>
+        <cusip>874039100</cusip>
+        <identifiers>
+          <isin value="US8740391003"/>
+        </identifiers>
+        <valUSD>4000000.00</valUSD>
+        <pctVal>8.0</pctVal>
+        <assetCat>EC</assetCat>
+      </invstOrSec>
+      <invstOrSec>
+        <name>NXP Semiconductors NV</name>
+        <cusip>000000000</cusip>
+        <identifiers>
+          <isin value="NL0009538784"/>
+        </identifiers>
+        <valUSD>1000000.00</valUSD>
+        <pctVal>2.0</pctVal>
+        <assetCat>EC</assetCat>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</nportSubmission>`
+
+  const parsed = Model.parseNportXml(sampleXml, "SMH")
+  assert.ok(parsed)
+  assert.equal(parsed.symbol, "SMH")
+  assert.equal(parsed.holdings.length, 4)
+  assert.equal(parsed.holdings[0].symbol, "NVDA")
+  assert.equal(parsed.holdings[1].symbol, "ASML")
+  assert.equal(parsed.holdings[2].symbol, "TSM")
+  assert.equal(parsed.holdings[3].symbol, "NXPI")
+  assert.equal(parsed.holdings[0].relativeRatio, 1.0)
+  assert.equal(parsed.holdings[1].relativeRatio, 0.5)
+})
+
 
 

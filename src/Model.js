@@ -927,6 +927,7 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
     fiftyTwoWeekLow: finiteOrNull(meta.fiftyTwoWeekLow),
     priceHint: meta.priceHint,
     yahooRange: meta.range ? String(meta.range) : "",
+    instrumentType: String(meta.instrumentType || meta.quoteType || ""),
     closes: closes,
     candles: candles,
     ftfc: ftfc,
@@ -2361,7 +2362,6 @@ var SPDR_CUSIP_MAP = {
   "90384S303": "ULTA",
   "983134107": "WYNN",
   "988498101": "YUM",
-  "000000000": "FLEX",
   "02209S103": "MO",
   "039483102": "ADM",
   "147528103": "CASY",
@@ -2807,6 +2807,14 @@ function sanitizeTicker(symbol) {
   return s
 }
 
+function isEtfSymbol(symbol, quote) {
+  var s = normalizeSymbol(symbol)
+  if (!s || isCryptoSymbol(s)) return false
+  if (SPDR_SECTOR_MAP[s]) return true
+  if (quote && (quote.instrumentType === "ETF" || quote.type === "ETF")) return true
+  return false
+}
+
 function isSpdrSector(symbol) {
   var s = normalizeSymbol(symbol)
   return !!(s && SPDR_SECTOR_MAP[s])
@@ -2827,11 +2835,25 @@ function holdingsUrl(symbol) {
 function resolveCusipToTicker(cusip, name, customMap) {
   if (cusip) {
     var c = String(cusip).trim().toUpperCase()
-    if (customMap && customMap[c]) return customMap[c]
-    if (SPDR_CUSIP_MAP[c]) return SPDR_CUSIP_MAP[c]
-    var c8 = c.slice(0, 8)
-    if (customMap && customMap[c8]) return customMap[c8]
-    if (SPDR_CUSIP_MAP[c8]) return SPDR_CUSIP_MAP[c8]
+    if (!/^0+$/.test(c)) {
+      if (customMap && customMap[c]) return customMap[c]
+      if (SPDR_CUSIP_MAP[c]) return SPDR_CUSIP_MAP[c]
+      var c8 = c.slice(0, 8)
+      if (customMap && customMap[c8]) return customMap[c8]
+      if (SPDR_CUSIP_MAP[c8]) return SPDR_CUSIP_MAP[c8]
+    }
+  }
+  if (name) {
+    var n = String(name).trim()
+    if (customMap && customMap[n]) return customMap[n]
+    if (/ASML HOLDING/i.test(n)) return "ASML"
+    if (/TAIWAN SEMICONDUCTOR/i.test(n)) return "TSM"
+    if (/NXP SEMICONDUCTOR/i.test(n)) return "NXPI"
+    if (/ARM HOLDINGS/i.test(n)) return "ARM"
+    if (/ASTERA LABS/i.test(n)) return "ALAB"
+    if (/STMICROELECTRONICS/i.test(n)) return "STM"
+    if (/COCA-COLA EUROPACIFIC/i.test(n)) return "CCEP"
+    if (/AXON ENTERPRISE/i.test(n)) return "AXON"
   }
   return null
 }
@@ -2865,6 +2887,13 @@ function parseNportXml(xml, targetSymbol, customMap) {
     var cusipMatch = block.match(/<(?:\w+:)?cusip>([^<]+)<\/(?:\w+:)?cusip>/i)
     var cusip = cusipMatch ? cusipMatch[1].trim().toUpperCase() : ""
 
+    var isinMatch = block.match(/<(?:\w+:)?isin(?:\s+value="([^"]+)"|>([^<]+)<\/(?:\w+:)?isin>)/i)
+    var isin = isinMatch ? (isinMatch[1] || isinMatch[2] || "").trim().toUpperCase() : ""
+
+    if ((!cusip || /^0+$/.test(cusip)) && isin && isin.startsWith("US") && isin.length >= 11) {
+      cusip = isin.slice(2, 11)
+    }
+
     var valMatch = block.match(/<(?:\w+:)?valUSD>([^<]+)<\/(?:\w+:)?valUSD>/i)
     var valUSD = valMatch ? (parseFloat(valMatch[1]) || 0) : 0
 
@@ -2872,6 +2901,9 @@ function parseNportXml(xml, targetSymbol, customMap) {
     var pctVal = pctMatch ? (parseFloat(pctMatch[1]) || 0) : 0
 
     var symbol = resolveCusipToTicker(cusip, name, customMap)
+    if (!symbol && isin) {
+      symbol = resolveCusipToTicker(isin, name, customMap)
+    }
     if (!symbol) {
       var tickerTagMatch = block.match(/<(?:\w+:)?ticker(?:\s+value="([^"]+)"|>([^<]+)<\/(?:\w+:)?ticker>)/i)
       if (tickerTagMatch) {
@@ -5003,6 +5035,7 @@ if (typeof module !== "undefined") {
     parseLayouts: parseLayouts,
     saveLayout: saveLayout,
     deleteLayout: deleteLayout,
+    isEtfSymbol: isEtfSymbol,
     isSpdrSector: isSpdrSector,
     spdrSectorInfo: spdrSectorInfo,
     holdingsUrl: holdingsUrl,
