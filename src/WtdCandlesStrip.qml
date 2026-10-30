@@ -11,9 +11,10 @@ Item {
     property color dim: Color.muted
     property string fontFamily: Style.font.family
 
-    implicitWidth: Style.space(96)
-    implicitHeight: Style.space(34)
+    implicitWidth: Style.space(160)
+    implicitHeight: Style.space(76)
 
+    readonly property bool showWeekdays: height >= Style.space(48)
     readonly property var candles: (root.wtdData && root.wtdData.candles) ? root.wtdData.candles : []
 
     readonly property real minPrice: {
@@ -59,12 +60,12 @@ Item {
 
     Column {
         anchors.fill: parent
-        spacing: Style.space(1)
+        spacing: Style.space(2)
 
         Canvas {
             id: candleCanvas
             width: parent.width
-            height: parent.height - Style.space(11)
+            height: root.showWeekdays ? (parent.height - Style.space(16)) : parent.height
             antialiasing: true
 
             onPaint: {
@@ -77,7 +78,7 @@ Item {
                 if (!list || list.length === 0)
                     return;
 
-                var pad = 3;
+                var pad = Math.max(3, Math.min(6, Math.round(h * 0.08)));
                 var chartH = h - pad * 2;
                 var minP = root.minPrice;
                 var span = root.priceSpan;
@@ -90,11 +91,12 @@ Item {
                 // Draw OHLC candles: wicks and solid bodies
                 var count = list.length;
                 var colW = w / count;
-                var bodyW = Math.max(5, Math.min(12, colW * 0.55));
+                var bodyW = Math.max(8, Math.min(20, Math.round(colW * 0.58)));
+                var wickW = Math.max(1.5, Math.min(2.0, colW * 0.08));
 
                 for (var i = 0; i < count; i++) {
                     var c = list[i];
-                    var cx = i * colW + colW / 2;
+                    var cx = Math.floor(i * colW + colW / 2);
                     var o = Number(c.open);
                     var hi = Number(c.high);
                     var lo = Number(c.low);
@@ -109,24 +111,25 @@ Item {
 
                     // High-low wick
                     ctx.strokeStyle = cColor;
-                    ctx.lineWidth = 1.3;
+                    ctx.lineWidth = wickW;
                     ctx.beginPath();
-                    ctx.moveTo(cx, yHi);
-                    ctx.lineTo(cx, yLo);
+                    ctx.moveTo(cx, Math.round(yHi));
+                    ctx.lineTo(cx, Math.round(yLo));
                     ctx.stroke();
 
                     // Open-close body
-                    var bodyTop = Math.min(yO, yC);
-                    var bodyH = Math.max(2, Math.abs(yC - yO));
+                    var bodyTop = Math.round(Math.min(yO, yC));
+                    var bodyH = Math.max(3, Math.round(Math.abs(yC - yO)));
                     ctx.fillStyle = cColor;
-                    ctx.fillRect(cx - bodyW / 2, bodyTop, bodyW, bodyH);
+                    ctx.fillRect(Math.round(cx - bodyW / 2), bodyTop, bodyW, bodyH);
                 }
             }
         }
 
         Item {
+            visible: root.showWeekdays
             width: parent.width
-            height: Style.space(10)
+            height: Style.space(14)
 
             Row {
                 anchors.fill: parent
@@ -145,6 +148,7 @@ Item {
                             color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
+                            font.bold: true
                         }
                     }
                 }

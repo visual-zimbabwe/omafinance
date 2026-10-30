@@ -530,16 +530,6 @@ FloatingWindow {
                             font.pixelSize: Style.font.caption
                             font.bold: true
                         }
-
-                        Text {
-                            width: Style.space(90)
-                            horizontalAlignment: Text.AlignRight
-                            text: "WTD BARS"
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                            font.bold: true
-                        }
                     }
                 }
 
@@ -645,15 +635,6 @@ FloatingWindow {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.bodySmall
                                 }
-
-                                WtdCandlesStrip {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: Style.space(90)
-                                    height: Style.space(26)
-                                    wtdData: basketBlock.modelData.wtd
-                                    upColor: root.upColor
-                                    downColor: root.downColor
-                                }
                             }
 
                             MouseArea {
@@ -719,32 +700,29 @@ FloatingWindow {
                                         Rectangle {
                                             id: cCard
                                             required property var modelData
-                                            width: Style.space(168)
-                                            height: Style.space(48)
-                                            radius: Style.space(6)
-                                            color: cCardArea.containsMouse ? Style.hoverFillFor(Color.background, 0.5) : Style.hoverFillFor(Color.background, 0.2)
+                                            width: Style.space(184)
+                                            height: Style.space(112)
+                                            radius: Style.space(8)
+                                            color: "transparent"
                                             border.color: cCardArea.containsMouse ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
                                             border.width: 1
 
-                                            Row {
+                                            Column {
                                                 anchors.fill: parent
-                                                anchors.margins: Style.space(6)
-                                                spacing: Style.space(8)
+                                                anchors.margins: Style.space(8)
+                                                spacing: Style.space(4)
 
                                                 Text {
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    width: Style.space(52)
                                                     text: cCard.modelData.symbol
                                                     color: root.foreground
                                                     font.family: root.fontFamily
-                                                    font.pixelSize: Style.font.body
+                                                    font.pixelSize: Style.font.bodyLarge
                                                     font.bold: true
                                                 }
 
                                                 WtdCandlesStrip {
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    width: Style.space(92)
-                                                    height: Style.space(34)
+                                                    width: parent.width
+                                                    height: Style.space(74)
                                                     wtdData: cCard.modelData.wtd
                                                     upColor: root.upColor
                                                     downColor: root.downColor
@@ -803,32 +781,29 @@ FloatingWindow {
                                         Rectangle {
                                             id: lCard
                                             required property var modelData
-                                            width: Style.space(168)
-                                            height: Style.space(48)
-                                            radius: Style.space(6)
-                                            color: lCardArea.containsMouse ? Style.hoverFillFor(Color.background, 0.5) : Style.hoverFillFor(Color.background, 0.2)
+                                            width: Style.space(184)
+                                            height: Style.space(112)
+                                            radius: Style.space(8)
+                                            color: "transparent"
                                             border.color: lCardArea.containsMouse ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
                                             border.width: 1
 
-                                            Row {
+                                            Column {
                                                 anchors.fill: parent
-                                                anchors.margins: Style.space(6)
-                                                spacing: Style.space(8)
+                                                anchors.margins: Style.space(8)
+                                                spacing: Style.space(4)
 
                                                 Text {
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    width: Style.space(52)
                                                     text: lCard.modelData.symbol
                                                     color: root.foreground
                                                     font.family: root.fontFamily
-                                                    font.pixelSize: Style.font.body
+                                                    font.pixelSize: Style.font.bodyLarge
                                                     font.bold: true
                                                 }
 
                                                 WtdCandlesStrip {
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    width: Style.space(92)
-                                                    height: Style.space(34)
+                                                    width: parent.width
+                                                    height: Style.space(74)
                                                     wtdData: lCard.modelData.wtd
                                                     upColor: root.upColor
                                                     downColor: root.downColor
