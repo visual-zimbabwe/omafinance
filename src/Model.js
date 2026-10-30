@@ -1524,7 +1524,7 @@ function formatCandleTime(timestamp, rangeKey) {
   var mStr = (minutes < 10 ? "0" : "") + minutes
   var timeStr = h12 + ":" + mStr + " " + ampm
 
-  if (range === "60" || range === "30") {
+  if (range === "60" || range === "30" || range === "15" || range === "5" || range === "1") {
     var mon60 = months[d.getMonth()]
     var day60 = d.getDate()
     var year60 = d.getFullYear()
@@ -1548,7 +1548,7 @@ function formatTimeAxisLabel(timestamp, rangeKey, prevTimestamp) {
   var h12 = hours % 12 || 12
   var mStr = (minutes < 10 ? "0" : "") + minutes
 
-  if (range === "60" || range === "30") {
+  if (range === "60" || range === "30" || range === "15" || range === "5" || range === "1") {
     var isNewDay = !prevD || d.getDate() !== prevD.getDate() || d.getMonth() !== prevD.getMonth() || d.getFullYear() !== prevD.getFullYear()
     if (isNewDay) return months[d.getMonth()] + " " + d.getDate()
     return h12 + ":" + mStr + " " + ampm
@@ -4398,6 +4398,24 @@ function inHtfPeriod(ltfTs, htfTs, sourceTf) {
            dL.getUTCDate() === dH.getUTCDate() &&
            ltfTs >= htfTs && ltfTs < htfTs + 3600
   }
+  if (sourceTf === "30") {
+    return dL.getUTCFullYear() === dH.getUTCFullYear() &&
+           dL.getUTCMonth() === dH.getUTCMonth() &&
+           dL.getUTCDate() === dH.getUTCDate() &&
+           ltfTs >= htfTs && ltfTs < htfTs + 1800
+  }
+  if (sourceTf === "15") {
+    return dL.getUTCFullYear() === dH.getUTCFullYear() &&
+           dL.getUTCMonth() === dH.getUTCMonth() &&
+           dL.getUTCDate() === dH.getUTCDate() &&
+           ltfTs >= htfTs && ltfTs < htfTs + 900
+  }
+  if (sourceTf === "5") {
+    return dL.getUTCFullYear() === dH.getUTCFullYear() &&
+           dL.getUTCMonth() === dH.getUTCMonth() &&
+           dL.getUTCDate() === dH.getUTCDate() &&
+           ltfTs >= htfTs && ltfTs < htfTs + 300
+  }
   return ltfTs === htfTs
 }
 
@@ -4519,58 +4537,154 @@ function periodStartUtc(ts, tf) {
   return t
 }
 
-function buildReplayCandles(tf, rawCandles, ltf30Candles, htf60Candles, dailyCandles, cutoffTs) {
+function buildReplayCandles(tf, rawCandles, ltf30Candles, htf60Candles, dailyCandles, cutoffTs, subCandles) {
   if (!Array.isArray(rawCandles) || rawCandles.length === 0) return []
   var cutoff = finiteOrNull(cutoffTs)
   if (cutoff === null || cutoff <= 0) return rawCandles
 
   var range = String(tf || "1D")
+  var sub = Array.isArray(subCandles) ? subCandles : []
   var ltf30 = Array.isArray(ltf30Candles) ? ltf30Candles : []
   var htf60 = Array.isArray(htf60Candles) ? htf60Candles : []
   var daily = Array.isArray(dailyCandles) ? dailyCandles : []
-  var intradaySrc = ltf30.length > 0 ? ltf30 : htf60
+  var intradaySrc = sub.length > 0 ? sub : (ltf30.length > 0 ? ltf30 : htf60)
   var out = []
 
-  if (range === "1" || range === "5" || range === "15" || range === "30") {
+  if (range === "1" || range === "5") {
     for (var i = 0; i < rawCandles.length; i++) {
-      var c30 = rawCandles[i]
-      if (c30 && isFinite(c30.timestamp) && c30.timestamp < cutoff) {
+      var c = rawCandles[i]
+      if (c && isFinite(c.timestamp) && c.timestamp < cutoff) {
         out.push({
-          timestamp: c30.timestamp,
-          open: c30.open,
-          high: c30.high,
-          low: c30.low,
-          close: c30.close,
-          volume: c30.volume || 0
+          timestamp: c.timestamp,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          volume: c.volume || 0
         })
       }
     }
     return out
   }
 
+  if (range === "15") {
+    for (var j15 = 0; j15 < rawCandles.length; j15++) {
+      var b15 = rawCandles[j15]
+      if (!b15 || !isFinite(b15.timestamp) || b15.timestamp >= cutoff) continue
+      var needsPartial15 = (cutoff < b15.timestamp + 900) || (j15 === rawCandles.length - 1) || (j15 + 1 < rawCandles.length && rawCandles[j15 + 1].timestamp > cutoff)
+      if (needsPartial15 && sub.length > 0) {
+        var sub15 = []
+        for (var k15 = 0; k15 < sub.length; k15++) {
+          var s15 = sub[k15]
+          if (s15 && isFinite(s15.timestamp) && s15.timestamp < cutoff && inHtfPeriod(s15.timestamp, b15.timestamp, "15")) {
+            sub15.push(s15)
+          }
+        }
+        if (sub15.length > 0) {
+          var o15 = sub15[0].open
+          var h15 = sub15[0].high
+          var l15 = sub15[0].low
+          var cl15 = sub15[sub15.length - 1].close
+          var v15 = 0
+          for (var m15 = 0; m15 < sub15.length; m15++) {
+            if (sub15[m15].high > h15) h15 = sub15[m15].high
+            if (sub15[m15].low < l15) l15 = sub15[m15].low
+            v15 += (sub15[m15].volume || 0)
+          }
+          out.push({
+            timestamp: b15.timestamp,
+            open: o15,
+            high: h15,
+            low: l15,
+            close: cl15,
+            volume: v15
+          })
+          continue
+        }
+      }
+      out.push({
+        timestamp: b15.timestamp,
+        open: b15.open,
+        high: b15.high,
+        low: b15.low,
+        close: b15.close,
+        volume: b15.volume || 0
+      })
+    }
+    return out
+  }
+
+  if (range === "30") {
+    for (var j30 = 0; j30 < rawCandles.length; j30++) {
+      var b30 = rawCandles[j30]
+      if (!b30 || !isFinite(b30.timestamp) || b30.timestamp >= cutoff) continue
+      var needsPartial30 = (cutoff < b30.timestamp + 1800) || (j30 === rawCandles.length - 1) || (j30 + 1 < rawCandles.length && rawCandles[j30 + 1].timestamp > cutoff)
+      if (needsPartial30 && sub.length > 0) {
+        var sub30 = []
+        for (var k30 = 0; k30 < sub.length; k30++) {
+          var s30 = sub[k30]
+          if (s30 && isFinite(s30.timestamp) && s30.timestamp < cutoff && inHtfPeriod(s30.timestamp, b30.timestamp, "30")) {
+            sub30.push(s30)
+          }
+        }
+        if (sub30.length > 0) {
+          var o30 = sub30[0].open
+          var h30 = sub30[0].high
+          var l30 = sub30[0].low
+          var cl30 = sub30[sub30.length - 1].close
+          var v30 = 0
+          for (var m30 = 0; m30 < sub30.length; m30++) {
+            if (sub30[m30].high > h30) h30 = sub30[m30].high
+            if (sub30[m30].low < l30) l30 = sub30[m30].low
+            v30 += (sub30[m30].volume || 0)
+          }
+          out.push({
+            timestamp: b30.timestamp,
+            open: o30,
+            high: h30,
+            low: l30,
+            close: cl30,
+            volume: v30
+          })
+          continue
+        }
+      }
+      out.push({
+        timestamp: b30.timestamp,
+        open: b30.open,
+        high: b30.high,
+        low: b30.low,
+        close: b30.close,
+        volume: b30.volume || 0
+      })
+    }
+    return out
+  }
+
   if (range === "60") {
+    var sub60Src = sub.length > 0 ? sub : ltf30
     for (var j = 0; j < rawCandles.length; j++) {
       var b60 = rawCandles[j]
       if (!b60 || !isFinite(b60.timestamp) || b60.timestamp >= cutoff) continue
       var needsPartial = (cutoff < b60.timestamp + 3600) || (j === rawCandles.length - 1) || (j + 1 < rawCandles.length && rawCandles[j + 1].timestamp > cutoff)
-      if (needsPartial && ltf30.length > 0) {
-        var sub30 = []
-        for (var k = 0; k < ltf30.length; k++) {
-          var s = ltf30[k]
+      if (needsPartial && sub60Src.length > 0) {
+        var sub60 = []
+        for (var k = 0; k < sub60Src.length; k++) {
+          var s = sub60Src[k]
           if (s && isFinite(s.timestamp) && s.timestamp < cutoff && inHtfPeriod(s.timestamp, b60.timestamp, "60")) {
-            sub30.push(s)
+            sub60.push(s)
           }
         }
-        if (sub30.length > 0) {
-          var o60 = sub30[0].open
-          var h60 = sub30[0].high
-          var l60 = sub30[0].low
-          var cl60 = sub30[sub30.length - 1].close
+        if (sub60.length > 0) {
+          var o60 = sub60[0].open
+          var h60 = sub60[0].high
+          var l60 = sub60[0].low
+          var cl60 = sub60[sub60.length - 1].close
           var v60 = 0
-          for (var m = 0; m < sub30.length; m++) {
-            if (sub30[m].high > h60) h60 = sub30[m].high
-            if (sub30[m].low < l60) l60 = sub30[m].low
-            v60 += (sub30[m].volume || 0)
+          for (var m = 0; m < sub60.length; m++) {
+            if (sub60[m].high > h60) h60 = sub60[m].high
+            if (sub60[m].low < l60) l60 = sub60[m].low
+            v60 += (sub60[m].volume || 0)
           }
           out.push({
             timestamp: b60.timestamp,
@@ -4689,13 +4803,14 @@ function buildReplayCandles(tf, rawCandles, ltf30Candles, htf60Candles, dailyCan
   return out
 }
 
-function buildReplayQuote(liveQuote, ltf30Candles, htf60Candles, dailyCandles, cutoffTs) {
+function buildReplayQuote(liveQuote, ltf30Candles, htf60Candles, dailyCandles, cutoffTs, subCandles) {
   var cutoff = finiteOrNull(cutoffTs)
   if (cutoff === null || cutoff <= 0) return liveQuote
+  var sub = Array.isArray(subCandles) ? subCandles : []
   var ltf30 = Array.isArray(ltf30Candles) ? ltf30Candles : []
   var htf60 = Array.isArray(htf60Candles) ? htf60Candles : []
   var daily = Array.isArray(dailyCandles) ? dailyCandles : []
-  var intradaySrc = ltf30.length > 0 ? ltf30 : (htf60.length > 0 ? htf60 : daily)
+  var intradaySrc = sub.length > 0 ? sub : (ltf30.length > 0 ? ltf30 : (htf60.length > 0 ? htf60 : daily))
 
   var lastBar = null
   for (var i = 0; i < intradaySrc.length; i++) {
@@ -4744,19 +4859,38 @@ function stepReplayCutoff(rawCandles, currentCutoffTs, direction) {
   return rawCandles[nextIdx].timestamp
 }
 
-function formatReplayBadgeTime(cutoffTs, ltf30Candles, htf60Candles, dailyCandles) {
+function formatReplayBadgeTime(cutoffTs, stepCandlesOrLtf30, ltf30OrHtf60, htf60OrDaily, maybeDaily) {
   var cutoff = finiteOrNull(cutoffTs)
   if (cutoff === null || cutoff <= 0) return ""
-  var ltf30 = Array.isArray(ltf30Candles) ? ltf30Candles : []
-  var htf60 = Array.isArray(htf60Candles) ? htf60Candles : []
-  var daily = Array.isArray(dailyCandles) ? dailyCandles : []
-  var src = ltf30.length > 0 ? ltf30 : (htf60.length > 0 ? htf60 : daily)
-  var activeTs = cutoff
-  var tfKey = (ltf30.length > 0 || htf60.length > 0) ? "30" : "1D"
+  var step = []
+  var ltf30 = []
+  var htf60 = []
+  var daily = []
+  if (arguments.length >= 5) {
+    step = Array.isArray(stepCandlesOrLtf30) ? stepCandlesOrLtf30 : []
+    ltf30 = Array.isArray(ltf30OrHtf60) ? ltf30OrHtf60 : []
+    htf60 = Array.isArray(htf60OrDaily) ? htf60OrDaily : []
+    daily = Array.isArray(maybeDaily) ? maybeDaily : []
+  } else {
+    ltf30 = Array.isArray(stepCandlesOrLtf30) ? stepCandlesOrLtf30 : []
+    htf60 = Array.isArray(ltf30OrHtf60) ? ltf30OrHtf60 : []
+    daily = Array.isArray(htf60OrDaily) ? htf60OrDaily : []
+  }
+  var src = step.length > 0 ? step : (ltf30.length > 0 ? ltf30 : (htf60.length > 0 ? htf60 : daily))
+  var activeTs = null
   for (var i = 0; i < src.length; i++) {
     if (src[i] && isFinite(src[i].timestamp) && src[i].timestamp < cutoff) {
       activeTs = src[i].timestamp
     }
+  }
+  if (activeTs === null) {
+    activeTs = cutoff
+  }
+  var tfKey = "1D"
+  if (step.length > 0) {
+    tfKey = "5"
+  } else if (ltf30.length > 0 || htf60.length > 0) {
+    tfKey = "30"
   }
   return formatCandleTime(activeTs, tfKey)
 }

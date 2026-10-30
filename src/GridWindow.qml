@@ -53,6 +53,13 @@ FloatingWindow {
 
     function setReplayCutoff(ts) {
         root.replayCutoffTs = (isFinite(ts) && ts > 0) ? ts : 0;
+        if (root.replayCutoffTs > 0) {
+            var stepTf = Model.mapReplayStepInterval(root.replayStepInterval);
+            var sym = symbolForCell(root.activeCellIndex);
+            if (stepTf && sym) {
+                requestChartFetch(sym, stepTf, false);
+            }
+        }
     }
 
     function setReplayStepInterval(interval) {
@@ -175,14 +182,30 @@ FloatingWindow {
         var raw = root.chartCache[key] || [];
         if (root.replayCutoffTs <= 0)
             return raw;
-        return Model.buildReplayCandles(tf, raw, root.chartCache[cacheKey(sym, "30")] || [], root.chartCache[cacheKey(sym, "60")] || [], root.chartCache[cacheKey(sym, "1D")] || [], root.replayCutoffTs);
+        var stepTf = Model.mapReplayStepInterval(root.replayStepInterval);
+        var subBars = [];
+        if (stepTf && (stepTf === "1" || stepTf === "5" || stepTf === "15")) {
+            subBars = root.chartCache[cacheKey(sym, stepTf)] || [];
+        }
+        if (subBars.length === 0) {
+            subBars = root.chartCache[cacheKey(sym, "5")] || root.chartCache[cacheKey(sym, "15")] || root.chartCache[cacheKey(sym, "1")] || [];
+        }
+        return Model.buildReplayCandles(tf, raw, root.chartCache[cacheKey(sym, "30")] || [], root.chartCache[cacheKey(sym, "60")] || [], root.chartCache[cacheKey(sym, "1D")] || [], root.replayCutoffTs, subBars);
     }
 
     function getQuote(sym) {
         var q = root.quotes[sym] || null;
         if (root.replayCutoffTs <= 0)
             return q;
-        return Model.buildReplayQuote(q, root.chartCache[cacheKey(sym, "30")] || [], root.chartCache[cacheKey(sym, "60")] || [], root.chartCache[cacheKey(sym, "1D")] || [], root.replayCutoffTs);
+        var stepTf = Model.mapReplayStepInterval(root.replayStepInterval);
+        var subBars = [];
+        if (stepTf && (stepTf === "1" || stepTf === "5" || stepTf === "15")) {
+            subBars = root.chartCache[cacheKey(sym, stepTf)] || [];
+        }
+        if (subBars.length === 0) {
+            subBars = root.chartCache[cacheKey(sym, "5")] || root.chartCache[cacheKey(sym, "15")] || root.chartCache[cacheKey(sym, "1")] || [];
+        }
+        return Model.buildReplayQuote(q, root.chartCache[cacheKey(sym, "30")] || [], root.chartCache[cacheKey(sym, "60")] || [], root.chartCache[cacheKey(sym, "1D")] || [], root.replayCutoffTs, subBars);
     }
 
     function requestChartFetch(sym, tf, force) {
@@ -804,7 +827,13 @@ FloatingWindow {
 
                     readonly property color replayAmber: Qt.rgba(0.92, 0.65, 0.15, 1)
                     readonly property string activeSym: root.symbolForCell(root.activeCellIndex)
-                    readonly property string badgeTime: Model.formatReplayBadgeTime(root.replayCutoffTs, root.chartCache[root.cacheKey(activeSym, "30")] || [], root.chartCache[root.cacheKey(activeSym, "60")] || [], root.chartCache[root.cacheKey(activeSym, "1D")] || [])
+                    readonly property var replayStepCandles: {
+                        var stepTf = Model.mapReplayStepInterval(root.replayStepInterval);
+                        if (!stepTf)
+                            stepTf = root.timeframeForCell(root.activeCellIndex);
+                        return root.chartCache[root.cacheKey(activeSym, stepTf)] || root.chartCache[root.cacheKey(activeSym, "5")] || root.chartCache[root.cacheKey(activeSym, "30")] || [];
+                    }
+                    readonly property string badgeTime: Model.formatReplayBadgeTime(root.replayCutoffTs, replayStepCandles, root.chartCache[root.cacheKey(activeSym, "30")] || [], root.chartCache[root.cacheKey(activeSym, "60")] || [], root.chartCache[root.cacheKey(activeSym, "1D")] || [])
 
                     Text {
                         textFormat: Text.PlainText
