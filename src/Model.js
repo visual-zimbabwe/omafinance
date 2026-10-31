@@ -351,7 +351,10 @@ function chartSpec(range) {
     case "15m": return { range: "1mo", interval: "15m" }
     case "30": return { range: "1mo", interval: "30m" }
     case "60": return { range: "1mo", interval: "60m" }
-    case "1W": return { range: "5y", interval: "1wk" }
+    case "1W":
+    case "W":
+    case "1w":
+    case "week": return { period1: 0, period2: 9999999999, interval: "1wk" }
     case "1M": return { range: "10y", interval: "1mo" }
     case "1Y": return { range: "max", interval: "1mo" }
     default: return { period1: 0, period2: 9999999999, interval: "1d" }
@@ -529,7 +532,7 @@ function rangeCaption(rangeKey, quote) {
     case "30": return "30-Minute Candles (1 Month)"
     case "60": return "60-Minute Candles (1 Month)"
     case "1D": return "1-Day Candles (1 Year)"
-    case "1W": return "1-Week Candles (5 Years)"
+    case "1W": return "1-Week Candles (All Time)"
     case "1M": return "1-Month Candles (10 Years)"
     case "1Y": return "1-Year Candles (All Time)"
     default: return ""

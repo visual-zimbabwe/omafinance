@@ -389,7 +389,8 @@ Item {
 
         var minBars = 8;
         var isDaily = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
-        var defaultCount = isDaily ? Math.min(total, 140) : total;
+        var isWeekly = (root.rangeKey === "1W" || root.rangeKey === "W" || root.rangeKey === "week" || root.rangeKey === "1w");
+        var defaultCount = (isDaily || isWeekly) ? Math.min(total, 140) : total;
         var vCount = (root.viewCount > 0 && root.viewCount < total) ? Math.max(minBars, root.viewCount) : defaultCount;
         var maxStart = Math.max(0, total - vCount);
         var vStart = root.followLatest ? maxStart : Math.max(0, Math.min(maxStart, root.viewStart));
@@ -853,9 +854,11 @@ Item {
                 ctx.restore();
             }
 
-            // TheStrat Broadening Formation (BF) Lines (Daily timeframe)
+            // TheStrat Broadening Formation (BF) Lines (Daily or Weekly timeframe only; isolated per timeframe)
             var isDailyChart = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
-            if (root.showBroadening && isDailyChart && g.allCandles && g.allCandles.length >= 3 && g.innerW > 0) {
+            var isWeeklyChart = (root.rangeKey === "1W" || root.rangeKey === "W" || root.rangeKey === "week" || root.rangeKey === "1w");
+            var isBfTimeframe = isDailyChart || isWeeklyChart;
+            if (root.showBroadening && isBfTimeframe && g.allCandles && g.allCandles.length >= 3 && g.innerW > 0) {
                 var bf = Model.computeActiveBroadening(g.allCandles);
                 if (bf) {
                     var rightEdgeX = g.right;

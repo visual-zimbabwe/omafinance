@@ -111,4 +111,22 @@ if (bfOih.formations && bfOih.formations.length > 2 &&
   process.exit(1);
 }
 
-console.log("\n>>> ALL 6 TESTS PASSED SUCCESSFULLY! <<<\n");
+// 7. Weekly SPY Broadening Formation Check
+const spyWeeklyPath = path.join(__dirname, "spy_weekly.json");
+const spyWeeklyBars = JSON.parse(fs.readFileSync(spyWeeklyPath, "utf8"));
+const bfWeeklySpy = computeActiveBroadening(spyWeeklyBars);
+
+console.log("\n[Test 7] Weekly SPY Broadening Formation Check (Isolated Weekly Timeframe)");
+console.log("Weekly SPY Candles Total:", spyWeeklyBars.length);
+console.log("Weekly SPY Formations Count:", bfWeeklySpy.formations?.length);
+console.log("Weekly SPY Major Upper:", bfWeeklySpy.upper ? `${bfWeeklySpy.upper.anchor1.date} -> ${bfWeeklySpy.upper.anchor2.date}` : "none");
+console.log("Weekly SPY Major Lower:", bfWeeklySpy.lower ? `${bfWeeklySpy.lower.anchor1.date} -> ${bfWeeklySpy.lower.anchor2.date}` : "none");
+
+if (bfWeeklySpy.formations && bfWeeklySpy.formations.length > 0 && bfWeeklySpy.upper && bfWeeklySpy.lower) {
+  console.log("PASS: Weekly SPY generates valid Broadening Formations isolated to the weekly timeframe!");
+} else {
+  console.error("FAIL: Expected valid weekly broadening formations for SPY:", bfWeeklySpy);
+  process.exit(1);
+}
+
+console.log("\n>>> ALL 7 TESTS PASSED SUCCESSFULLY! <<<\n");
