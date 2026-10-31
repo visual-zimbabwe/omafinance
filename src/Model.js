@@ -5424,8 +5424,56 @@ function bfProject(ray, idx) {
   return ray ? ray.anchor1.price + ray.slope * (idx - ray.anchor1.index) : null;
 }
 
+// Collect first bar index of each calendar month within [minIdx, maxIdx)
+function bfMonthStarts(candles, minIdx, maxIdx) {
+  var starts = [];
+  var lastM = "";
+  for (var i = minIdx; i < maxIdx; i++) {
+    var d = candleDateIso(candles[i]);
+    var m = d ? d.slice(0, 7) : "";
+    if (m && m !== lastM) {
+      starts.push(i);
+      lastM = m;
+    }
+  }
+  return starts;
+}
+
+// A formation stays alive across subsequent months until price hits the projected opposite
+// boundary (target reached) or establishes a completely new higher-timeframe trend.
+function isFormationAlive(fu, fl, candles, n, currentMonthStartIdx) {
+  if (!fu && !fl) return false;
+  if (!fu || !fl) return true;
+
+  var u2 = fu.anchor2.index;
+  var l2 = fl.anchor2.index;
+
+  // If latest extreme was at the lower boundary, the target was the upper boundary
+  if (l2 > u2) {
+    for (var t = l2 + 1; t < n; t++) {
+      var projU = bfProject(fu, t);
+      if (candles[t].high >= projU) {
+        if (t < currentMonthStartIdx) return false;
+        return true;
+      }
+    }
+  } else if (u2 > l2) {
+    // If latest extreme was at the upper boundary, the target was the lower boundary
+    for (var t = u2 + 1; t < n; t++) {
+      var projL = bfProject(fl, t);
+      if (candles[t].low <= projL) {
+        if (t < currentMonthStartIdx) return false;
+        return true;
+      }
+    }
+  }
+  return true;
+}
+
 // One formation per start point: its upper and lower rays always come from the same start,
 // so a formation's two lines describe the same triangle.
+//   * Formations stay alive across subsequent months until price hits the projected opposite boundary
+//     (target reached) or establishes a completely new higher-timeframe trend.
 //   * A boundary (anchor2) already drawn by an outer, earlier-starting formation is not drawn
 //     again by a nested one; a nested formation that shares both extremes is the same triangle
 //     and is dropped.
@@ -5437,12 +5485,28 @@ function buildBroadeningFormations(candles, origins, n, pinFirst) {
   var cands = [];
   var allU = [];
   var allL = [];
+
+  var curD = candleDateIso(candles[lastIdx]);
+  var curMonth = curD ? curD.slice(0, 7) : "";
+  var curMonthStartIdx = lastIdx;
+  for (var mi = lastIdx; mi >= 0; mi--) {
+    var md = candleDateIso(candles[mi]);
+    if (md && md.slice(0, 7) !== curMonth) {
+      curMonthStartIdx = mi + 1;
+      break;
+    }
+  }
+
   for (var k = 0; k < origins.length; k++) {
     var o = origins[k];
     var u = computeRayForOrigin(candles, o, n, true);
     var l = computeRayForOrigin(candles, o, n, false);
     if (!u && !l) continue;
-    cands.push({ originIndex: o, upper: u, lower: l, pinned: pinFirst && k === 0 });
+    var isPinned = pinFirst && k === 0;
+    if (!isPinned && !isFormationAlive(u, l, candles, n, curMonthStartIdx)) {
+      continue;
+    }
+    cands.push({ originIndex: o, upper: u, lower: l, pinned: isPinned });
     if (u) allU.push(u);
     if (l) allL.push(l);
   }
@@ -5488,12 +5552,10 @@ function bfCacheKey(candles, lookbackBars) {
 }
 
 // Active broadening formations for a candle series.
-// lookbackBars (optional): the formation explicitly starts lookbackBars bars from the end (bar
-// replay / tests); that formation is pinned as the major. Without it, the major is the formation
-// that starts at the beginning of the BF_DEFAULT_WINDOW cycle window. In both modes every bar
-// that a Scenario 3 outside bar took out on both sides also starts a (nested) formation.
-// Results are memoised: the chart calls this from paint, which runs far more often than the
-// candles change.
+// For daily timeframe: uses monthly anchors only (Scenario 3 anchors are removed).
+// Formations stay alive across subsequent months until price hits the projected opposite boundary
+// (target reached) or establishes a completely new higher-timeframe trend.
+// lookbackBars (optional): explicitly pins origin lookbackBars from the end (bar replay / tests).
 function computeActiveBroadening(candles, lookbackBars) {
   if (!candles || candles.length < 5) return null;
 
@@ -5504,10 +5566,13 @@ function computeActiveBroadening(candles, lookbackBars) {
   var explicitStart = (typeof lookbackBars === "number" && lookbackBars >= 5);
   var startIdx = Math.max(0, n - (explicitStart ? lookbackBars : BF_DEFAULT_WINDOW));
 
-  var origins = [startIdx];
-  for (var i = startIdx + 1; i < n; i++) {
-    if (i - 1 > startIdx && stratScenario(candles[i], candles[i - 1]) === "3") {
-      origins.push(i - 1);
+  var origins;
+  if (explicitStart) {
+    origins = [startIdx];
+  } else {
+    origins = bfMonthStarts(candles, startIdx, n);
+    if (origins.length === 0 || origins[0] !== startIdx) {
+      origins.unshift(startIdx);
     }
   }
 

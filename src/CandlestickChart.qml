@@ -854,11 +854,9 @@ Item {
                 ctx.restore();
             }
 
-            // TheStrat Broadening Formation (BF) Lines (Daily or Weekly timeframe only; isolated per timeframe)
+            // TheStrat Broadening Formation (BF) Lines (Daily timeframe only; monthly anchored)
             var isDailyChart = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
-            var isWeeklyChart = (root.rangeKey === "1W" || root.rangeKey === "W" || root.rangeKey === "week" || root.rangeKey === "1w");
-            var isBfTimeframe = isDailyChart || isWeeklyChart;
-            if (root.showBroadening && isBfTimeframe && g.allCandles && g.allCandles.length >= 3 && g.innerW > 0) {
+            if (root.showBroadening && isDailyChart && g.allCandles && g.allCandles.length >= 3 && g.innerW > 0) {
                 var bf = Model.computeActiveBroadening(g.allCandles);
                 if (bf) {
                     var rightEdgeX = g.right;
