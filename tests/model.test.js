@@ -2671,5 +2671,89 @@ test("computeFocusBasketSupport computes 3-tier sizing, Option 3C macro directio
   assert.match(resPass.sizingReason, /Opposing sector pressure/)
 })
 
+test("sliceCandlesBefore binary search slices correctly before cutoff", () => {
+  const candles = [
+    { timestamp: 100, close: 10 },
+    { timestamp: 200, close: 20 },
+    { timestamp: 300, close: 30 }
+  ]
+  assert.deepEqual(Model.sliceCandlesBefore(candles, 250), [
+    { timestamp: 100, close: 10 },
+    { timestamp: 200, close: 20 }
+  ])
+  assert.deepEqual(Model.sliceCandlesBefore(candles, 200), [
+    { timestamp: 100, close: 10 }
+  ])
+  assert.deepEqual(Model.sliceCandlesBefore(candles, 100), [])
+  assert.deepEqual(Model.sliceCandlesBefore(candles, 350), candles)
+  assert.deepEqual(Model.sliceCandlesBefore([], 200), [])
+})
+
+test("computeFocusBasketSupport dynamically evaluates point-in-time replay at replayCutoffTs", () => {
+  const mockScanWithCandles = {
+    focusHoldings: {
+      "SMH": [
+        { symbol: "NVDA", name: "NVIDIA Corp" },
+        { symbol: "TSM", name: "Taiwan Semiconductor" },
+        { symbol: "AMD", name: "Advanced Micro Devices" }
+      ]
+    },
+    focusCandles: {
+      "30": {},
+      "60": {},
+      "1D": {
+        "NVDA": [
+          { timestamp: 100, open: 120, high: 125, low: 118, close: 122 },
+          { timestamp: 200, open: 122, high: 132, low: 121, close: 130 }, // 2u (ts 200)
+          { timestamp: 300, open: 130, high: 131, low: 115, close: 117 }  // 2d (ts 300)
+        ],
+        "TSM": [
+          { timestamp: 100, open: 150, high: 155, low: 148, close: 152 },
+          { timestamp: 200, open: 152, high: 162, low: 151, close: 160 }, // 2u Green
+          { timestamp: 300, open: 160, high: 161, low: 140, close: 142 }  // 2d Red
+        ],
+        "AMD": [
+          { timestamp: 100, open: 100, high: 105, low: 98, close: 102 },
+          { timestamp: 200, open: 102, high: 112, low: 101, close: 110 }, // 2u Green
+          { timestamp: 300, open: 110, high: 111, low: 90, close: 92 }   // 2d Red
+        ]
+      },
+      "1W": {},
+      "1M": {}
+    }
+  }
+
+  // Moment 1: Replay at cutoffTs = 250 (Includes ts 100 & 200, excludes ts 300)
+  // NVDA candles sliced to ts 250:
+  const nvdaAt250 = [
+    { timestamp: 100, open: 120, high: 125, low: 118, close: 122 },
+    { timestamp: 200, open: 122, high: 132, low: 121, close: 130 }
+  ]
+  const resAt250 = Model.computeFocusBasketSupport("NVDA", "1D", nvdaAt250, null, null, null, mockScanWithCandles, 250)
+  assert.equal(resAt250.direction, "bullish")
+  assert.equal(resAt250.supportPct, 100) // All 3 constituents breaking 2u at ts 200
+  assert.equal(resAt250.supportToken, "SUP 100%")
+  assert.equal(resAt250.peerToken, "TSM 2U")
+  assert.equal(resAt250.peerColor, "green")
+  assert.equal(resAt250.sizingTier, "full")
+  assert.equal(resAt250.positionSizing, "FULL (1.0x)")
+
+  // Moment 2: Replay at cutoffTs = 350 (Includes ts 100, 200 & 300)
+  // NVDA candles sliced to ts 350:
+  const nvdaAt350 = [
+    { timestamp: 100, open: 120, high: 125, low: 118, close: 122 },
+    { timestamp: 200, open: 122, high: 132, low: 121, close: 130 },
+    { timestamp: 300, open: 130, high: 131, low: 115, close: 117 }
+  ]
+  const resAt350 = Model.computeFocusBasketSupport("NVDA", "1D", nvdaAt350, null, null, null, mockScanWithCandles, 350)
+  assert.equal(resAt350.direction, "bearish")
+  assert.equal(resAt350.supportPct, 100) // All 3 constituents breaking 2d at ts 300
+  assert.equal(resAt350.supportToken, "SUP 100%")
+  assert.equal(resAt350.peerToken, "TSM 2D")
+  assert.equal(resAt350.peerColor, "red")
+  assert.equal(resAt350.sizingTier, "full")
+  assert.equal(resAt350.positionSizing, "FULL (1.0x)")
+})
+
 
 

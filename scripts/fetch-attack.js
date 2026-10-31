@@ -300,6 +300,28 @@ async function run() {
     };
   }
 
+  // Package Focus Basket Constituent Candle Histories for dynamic Replay
+  const focusCandles = {
+    "30": {},
+    "60": {},
+    "1D": {},
+    "1W": {},
+    "1M": {}
+  };
+  for (const s of focusSymsList) {
+    if (tf30Map[s]) focusCandles["30"][s] = tf30Map[s];
+    if (tf60Map[s]) focusCandles["60"][s] = tf60Map[s];
+    if (dailyMap[s]) focusCandles["1D"][s] = dailyMap[s];
+    if (weeklyMap[s]) focusCandles["1W"][s] = weeklyMap[s];
+    if (monthlyMap[s]) focusCandles["1M"][s] = monthlyMap[s];
+  }
+
+  const focusHoldings = {};
+  for (const fb of focusBasketSymbols) {
+    const bData = basketsMap[fb];
+    focusHoldings[fb] = (bData && bData.holdings) ? bData.holdings : [];
+  }
+
   const output = {
     timestamp: Date.now(),
     daily: {
@@ -315,6 +337,8 @@ async function run() {
       topLaggards: topWeeklyLaggards
     },
     focusPairs: focusPairsOutput,
+    focusCandles: focusCandles,
+    focusHoldings: focusHoldings,
     // Backwards compatibility with existing root properties
     baskets: sortedDailyBaskets,
     topBullishAttacks: topBullishDaily,

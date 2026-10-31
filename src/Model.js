@@ -3649,7 +3649,94 @@ function focusPairForSymbol(symbol) {
   return pairs[sym] || null
 }
 
-function computeFocusBasketSupport(symbol, timeframe, candles, quote, dailyCandles, weeklyCandles, attackScanResult) {
+function sliceCandlesBefore(raw, cutoff) {
+  if (!Array.isArray(raw) || raw.length === 0) return []
+  var cut = Number(cutoff)
+  if (!isFinite(cut) || cut <= 0) return raw
+  var low = 0
+  var high = raw.length
+  while (low < high) {
+    var mid = (low + high) >>> 1
+    if (raw[mid] && isFinite(raw[mid].timestamp) && raw[mid].timestamp < cut) {
+      low = mid + 1
+    } else {
+      high = mid
+    }
+  }
+  return raw.slice(0, low)
+}
+
+function computeReplayFocusPair(pair, focusCandles, focusHoldings, cutoffTs) {
+  if (!pair || !pair.basket || !focusCandles) return null
+  var cut = Number(cutoffTs)
+  if (!isFinite(cut) || cut <= 0) return null
+
+  var focusTfs = ["30", "60", "1D", "1W", "1M"]
+  var holdings = (focusHoldings && focusHoldings[pair.basket]) ? focusHoldings[pair.basket] : []
+  var tfDetails = {}
+
+  for (var i = 0; i < focusTfs.length; i++) {
+    var tfKey = focusTfs[i]
+    var cMap = focusCandles[tfKey] || {}
+    var slicedMap = {}
+
+    for (var hi = 0; hi < holdings.length; hi++) {
+      var h = holdings[hi]
+      if (!h || !h.symbol || h.delisted) continue
+      var sym = normalizeSymbol(h.symbol)
+      var raw = cMap[sym]
+      if (Array.isArray(raw) && raw.length > 0) {
+        slicedMap[sym] = sliceCandlesBefore(raw, cut)
+      }
+    }
+
+    var bMetrics = computeBasketAttackMetrics(pair.basket, pair.basket, "Sector", holdings, slicedMap, null, tfKey)
+
+    var peerRaw = cMap[pair.peer]
+    var peerCandles = slicedMap[pair.peer] || (Array.isArray(peerRaw) ? sliceCandlesBefore(peerRaw, cut) : [])
+    var peerInfo = { symbol: pair.peer, scenario: "-", color: "-", price: null, inForce: "-" }
+    if (peerCandles && peerCandles.length >= 2) {
+      var pLast = peerCandles[peerCandles.length - 1]
+      var pPrev = peerCandles[peerCandles.length - 2]
+      var sc = stratScenario(pLast, pPrev)
+      var col = (Number(pLast.close) >= Number(pLast.open)) ? "G" : "R"
+      var inf = "-"
+      if (sc === "2u") inf = Number(pLast.close) >= Number(pPrev.high) ? "In-Force" : "Triggered"
+      else if (sc === "2d") inf = Number(pLast.close) <= Number(pPrev.low) ? "In-Force" : "Triggered"
+      else if (sc === "1") inf = "Inside Bar"
+      peerInfo = {
+        symbol: pair.peer,
+        scenario: sc,
+        color: col,
+        price: Number(pLast.close),
+        inForce: inf
+      }
+    }
+
+    tfDetails[tfKey] = {
+      basket: pair.basket,
+      timeframe: tfKey,
+      status: bMetrics.status,
+      pct2u: bMetrics.pct2u,
+      pct2d: bMetrics.pct2d,
+      pctAttack2u: bMetrics.pctAttack2u,
+      pctAttack2d: bMetrics.pctAttack2d,
+      count2u: bMetrics.count2u,
+      count2d: bMetrics.count2d,
+      totalHoldings: bMetrics.totalHoldings,
+      peer: peerInfo
+    }
+  }
+
+  return {
+    symbol: pair.symbol,
+    basket: pair.basket,
+    peer: pair.peer,
+    timeframes: tfDetails
+  }
+}
+
+function computeFocusBasketSupport(symbol, timeframe, candles, quote, dailyCandles, weeklyCandles, attackScanResult, replayCutoffTs) {
   var emptyResult = {
     hasSupport: false,
     visible: false,
@@ -3684,8 +3771,15 @@ function computeFocusBasketSupport(symbol, timeframe, candles, quote, dailyCandl
   if (tf === "W") tf = "1W"
   if (tf === "M") tf = "1M"
 
-  // 1. Resolve Focus Pair data from attackScanResult
-  var focusData = (attackScanResult && attackScanResult.focusPairs) ? attackScanResult.focusPairs[pair.symbol || normalizeSymbol(symbol)] : null
+  // 1. Resolve Focus Pair data from attackScanResult (dynamic if replay mode active)
+  var isReplay = isFinite(replayCutoffTs) && Number(replayCutoffTs) > 0
+  var focusData = null
+  if (isReplay && attackScanResult && attackScanResult.focusCandles) {
+    focusData = computeReplayFocusPair(pair, attackScanResult.focusCandles, attackScanResult.focusHoldings, Number(replayCutoffTs))
+  }
+  if (!focusData && attackScanResult && attackScanResult.focusPairs) {
+    focusData = attackScanResult.focusPairs[pair.symbol || normalizeSymbol(symbol)]
+  }
   var tfData = focusData && focusData.timeframes ? focusData.timeframes[tf] : null
 
   // Fallback to searching attackScanResult.timeframes or daily/weekly
@@ -5708,6 +5802,8 @@ if (typeof module !== "undefined") {
     mapReplayStepInterval: mapReplayStepInterval,
     focusBasketPairs: focusBasketPairs,
     focusPairForSymbol: focusPairForSymbol,
+    sliceCandlesBefore: sliceCandlesBefore,
+    computeReplayFocusPair: computeReplayFocusPair,
     computeFocusBasketSupport: computeFocusBasketSupport,
     nodeCommand: nodeCommand
   }

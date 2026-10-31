@@ -19,7 +19,7 @@ Item {
     property real replayCutoffTs: 0
     readonly property var stratChecklist: Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote, root.replayCutoffTs > 0 ? new Date((root.replayCutoffTs - 1) * 1000) : null)
     property var attackScanResult: null
-    readonly property var focusSupport: Model.computeFocusBasketSupport(root.symbol, root.timeframe, root.candles, root.quote, root.dailyCandles, null, root.attackScanResult)
+    readonly property var focusSupport: Model.computeFocusBasketSupport(root.symbol, root.timeframe, root.candles, root.quote, root.dailyCandles, null, root.attackScanResult, root.replayCutoffTs)
     property bool syncSymbolActive: true
     readonly property bool isExecutionTimeframeCell: {
         if (!root.stratChecklist || !root.stratChecklist.setupTimeframe)
