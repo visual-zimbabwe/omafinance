@@ -5419,7 +5419,6 @@ function computeActiveBroadening(candles, lookbackBars) {
             projectedUpper: validU ? (mU.anchor1.price + mU.slope * (lastIdx - mU.anchor1.index)) : null,
             projectedLower: validL ? (mL.anchor1.price + mL.slope * (lastIdx - mL.anchor1.index)) : null
           });
-          if (minorFormations.length >= 4) break;
         }
       }
     }
@@ -5488,7 +5487,7 @@ function computeActiveBroadening(candles, lookbackBars) {
   candL.sort(function(a, b) { return b.span - a.span; });
 
   var formations = [];
-  var maxF = Math.min(5, Math.max(candU.length, candL.length));
+  var maxF = Math.max(candU.length, candL.length);
 
   for (var fi = 0; fi < maxF; fi++) {
     var formU = candU[fi] || null;
