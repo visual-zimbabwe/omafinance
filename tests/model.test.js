@@ -1656,12 +1656,12 @@ test("30m timeframe is supported across chartSpec, parseInterval, mergePeriodCan
   assert.ok(formatted.includes(":30"))
 })
 
-test("60m timeframe supports 3-month range and weekly Broadening Formations anchoring", () => {
+test("60m timeframe supports 1-month range and weekly Broadening Formations anchoring", () => {
   assert.ok(Model.chartRanges().includes("60"))
-  assert.deepEqual(Model.chartSpec("60"), { range: "3mo", interval: "60m" })
-  assert.deepEqual(Model.chartSpec("60m"), { range: "3mo", interval: "60m" })
-  assert.equal(Model.rangeCaption("60"), "60-Minute Candles (3 Months)")
-  assert.equal(Model.rangeCaption("60m"), "60-Minute Candles (3 Months)")
+  assert.deepEqual(Model.chartSpec("60"), { range: "1mo", interval: "60m" })
+  assert.deepEqual(Model.chartSpec("60m"), { range: "1mo", interval: "60m" })
+  assert.equal(Model.rangeCaption("60"), "60-Minute Candles (1 Month)")
+  assert.equal(Model.rangeCaption("60m"), "60-Minute Candles (1 Month)")
 
   // Weekly anchoring key on Monday
   const monBar = { timestamp: 1793021400 } // Monday 2026-10-26 13:30 UTC
