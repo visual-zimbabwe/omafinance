@@ -197,9 +197,6 @@ function parseState(raw) {
     if (gZooms) res.gridZooms = gZooms
     if (data.gridSplits !== undefined && typeof data.gridSplits === "object") res.gridSplits = data.gridSplits
     if (data.layouts !== undefined && typeof data.layouts === "object") res.layouts = parseLayouts(data.layouts)
-    if (data.breadthWeightMode === "cap" || data.breadthWeightMode === "equal") res.breadthWeightMode = data.breadthWeightMode
-    if (data.breadthSortTimeframe !== undefined) res.breadthSortTimeframe = String(data.breadthSortTimeframe)
-    if (data.breadthSortAsc !== undefined) res.breadthSortAsc = !!data.breadthSortAsc
     if (data.discordWebhook !== undefined) res.discordWebhook = String(data.discordWebhook || "").trim()
     return res
   } catch (e) {
@@ -207,7 +204,7 @@ function parseState(raw) {
   }
 }
 
-function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, breadthWeightMode, breadthSortTimeframe, breadthSortAsc, discordWebhook, gridTimeframes, gridZooms) {
+function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, arg9, arg10, arg11, arg12, arg13, arg14) {
   var list = Array.isArray(watchlist) ? watchlist.slice() : []
   var obj = {
     watchlist: list,
@@ -217,16 +214,31 @@ function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, grid
   if (gridMode !== undefined) obj.gridMode = gridMode
   if (gridSync !== undefined) obj.gridSync = gridSync
   if (gridSymbols !== undefined) obj.gridSymbols = gridSymbols
+  if (gridSplits !== undefined) obj.gridSplits = gridSplits
+  if (layouts !== undefined && layouts !== null && Object.keys(layouts).length > 0) obj.layouts = parseLayouts(layouts)
+
+  var discordWebhook = ""
+  var gridTimeframes = null
+  var gridZooms = null
+
+  if (typeof arg9 === "string" && (arg9.startsWith("http") || arg9 === "") && (Array.isArray(arg10) || Array.isArray(arg11))) {
+    discordWebhook = arg9
+    gridTimeframes = arg10
+    gridZooms = arg11
+  } else if (arguments.length >= 12) {
+    discordWebhook = arg12
+    gridTimeframes = arg13
+    gridZooms = arg14
+  } else if (typeof arg9 === "string" && arg9.startsWith("http")) {
+    discordWebhook = arg9
+  }
+
   var normTfs = normalizeTimeframeList(gridTimeframes)
   if (normTfs) obj.gridTimeframes = normTfs
   var normZooms = normalizeZoomList(gridZooms)
   if (normZooms) obj.gridZooms = normZooms
-  if (gridSplits !== undefined) obj.gridSplits = gridSplits
-  if (layouts !== undefined && layouts !== null && Object.keys(layouts).length > 0) obj.layouts = parseLayouts(layouts)
-  if (breadthWeightMode !== undefined) obj.breadthWeightMode = breadthWeightMode
-  if (breadthSortTimeframe !== undefined) obj.breadthSortTimeframe = breadthSortTimeframe
-  if (breadthSortAsc !== undefined) obj.breadthSortAsc = breadthSortAsc
-  if (discordWebhook !== undefined && discordWebhook !== "") obj.discordWebhook = discordWebhook
+  if (discordWebhook) obj.discordWebhook = discordWebhook
+
   return JSON.stringify(obj, null, 2) + "\n"
 }
 
@@ -3012,57 +3024,6 @@ function sortHoldings(holdings, sortKey, sortAsc, stratMap) {
   return list
 }
 
-function allSpdrSectorsList() {
-  return [
-    { symbol: "XLC", name: "Communication Services", seriesId: "S000062095" },
-    { symbol: "XLY", name: "Consumer Discretionary", seriesId: "S000006408" },
-    { symbol: "XLP", name: "Consumer Staples", seriesId: "S000006409" },
-    { symbol: "XLE", name: "Energy", seriesId: "S000006410" },
-    { symbol: "XLF", name: "Financials", seriesId: "S000006411" },
-    { symbol: "XLV", name: "Health Care", seriesId: "S000006412" },
-    { symbol: "XLI", name: "Industrials", seriesId: "S000006413" },
-    { symbol: "XLB", name: "Materials", seriesId: "S000006414" },
-    { symbol: "XLK", name: "Technology", seriesId: "S000006415" },
-    { symbol: "XLU", name: "Utilities", seriesId: "S000006416" },
-    { symbol: "XLRE", name: "Real Estate", seriesId: "S000051152" }
-  ]
-}
-
-function sparkCandlesUrl(symbols, interval, range) {
-  var syms = Array.isArray(symbols) ? symbols : [symbols]
-  var clean = []
-  for (var i = 0; i < syms.length; i++) {
-    var s = normalizeSymbol(syms[i])
-    if (s && clean.indexOf(s) === -1) clean.push(s)
-  }
-  if (clean.length === 0) return ""
-  var iv = interval || "1d"
-  var rg = range || "2y"
-  return "https://query1.finance.yahoo.com/v7/finance/spark?symbols=" + clean.join(",") + "&range=" + rg + "&interval=" + iv + "&includePrePost=false"
-}
-
-function parseSparkCandles(rawJson, interval) {
-  var out = {}
-  try {
-    var data = typeof rawJson === "string" ? JSON.parse(rawJson) : (rawJson || {})
-    var results = data.spark && data.spark.result ? data.spark.result : []
-    for (var i = 0; i < results.length; i++) {
-      var item = results[i]
-      var sym = normalizeSymbol(item && item.symbol)
-      var resp = item && item.response && item.response[0] ? item.response[0] : null
-      if (!sym || !resp) continue
-      var candles = parseCandles(resp.timestamp, resp.indicators)
-      if (candles.length === 0) continue
-      if (interval === "60m" || interval === "60" || interval === "1h") {
-        out[sym] = mergePeriodCandles(candles, "60")
-      } else {
-        out[sym] = candles
-      }
-    }
-  } catch (e) {}
-  return out
-}
-
 function prepareConstituentCandles(dailyCandlesMap) {
   var prepared = {}
   if (!dailyCandlesMap) return prepared
@@ -3119,151 +3080,6 @@ function computeHoldingsStratMap(holdings, hourlyCandlesMap, dailyCandlesMap, li
     map[sym] = computeHoldingStratMatrix(sym, prepared, hourlyCandlesMap, quote)
   }
   return map
-}
-
-function computeSectorBreadthMetrics(holdings, hourlyCandlesMap, dailyCandlesMap, weightMode, preparedCandles) {
-  var tfs = ["60", "1D", "1W", "1M", "1Y"]
-  var res = {}
-  var isCapWeight = (weightMode === "cap")
-  var list = Array.isArray(holdings) ? holdings : []
-  var prepared = preparedCandles || prepareConstituentCandles(dailyCandlesMap)
-
-  for (var t = 0; t < tfs.length; t++) {
-    var tf = tfs[t]
-    var count2u = 0
-    var count2d = 0
-    var countOther = 0
-    var totalCount = 0
-    var sum2u = 0
-    var sum2d = 0
-    var sumOther = 0
-    var totalWeight = 0
-
-    for (var i = 0; i < list.length; i++) {
-      var h = list[i]
-      if (!h || h.delisted) continue
-      var sym = normalizeSymbol(h.symbol)
-      if (!sym) continue
-
-      var candles = null
-      if (tf === "60") {
-        candles = hourlyCandlesMap ? hourlyCandlesMap[sym] : null
-      } else {
-        var p = prepared[sym]
-        candles = p ? p[tf] : null
-      }
-
-      if (!candles || candles.length < 2) continue
-
-      var current = candles[candles.length - 1]
-      var prev = candles[candles.length - 2]
-      var sc = stratScenario(current, prev)
-
-      if (sc === "-") continue
-
-      var w = 1
-      if (isCapWeight) {
-        var pct = Number(h.pctVal)
-        if (isFinite(pct) && pct > 0) {
-          w = pct
-        } else {
-          var val = Number(h.valUSD)
-          w = (isFinite(val) && val > 0) ? val : 1
-        }
-      }
-
-      totalCount++
-      totalWeight += w
-
-      if (sc === "2u") {
-        count2u++
-        sum2u += w
-      } else if (sc === "2d") {
-        count2d++
-        sum2d += w
-      } else {
-        countOther++
-        sumOther += w
-      }
-    }
-
-    var pct2u = 0
-    var pct2d = 0
-    var pctOther = 0
-    var netDelta = 0
-
-    if (totalWeight > 0) {
-      pct2u = (sum2u / totalWeight) * 100
-      pct2d = (sum2d / totalWeight) * 100
-      pctOther = (sumOther / totalWeight) * 100
-      netDelta = pct2u - pct2d
-    }
-
-    res[tf] = {
-      pct2u: pct2u,
-      pct2d: pct2d,
-      pctOther: pctOther,
-      netDelta: netDelta,
-      count2u: count2u,
-      count2d: count2d,
-      countOther: countOther,
-      totalCount: totalCount,
-      totalWeight: totalWeight
-    }
-  }
-
-  return res
-}
-
-function computeAllSectorsBreadth(sectorsHoldingsMap, hourlyCandlesMap, dailyCandlesMap, weightMode) {
-  var sectors = allSpdrSectorsList()
-  var prepared = prepareConstituentCandles(dailyCandlesMap)
-  var out = []
-  for (var i = 0; i < sectors.length; i++) {
-    var sec = sectors[i]
-    var sym = sec.symbol
-    var holdingsData = sectorsHoldingsMap ? sectorsHoldingsMap[sym] : null
-    var holdings = (holdingsData && holdingsData.holdings) ? holdingsData.holdings : (Array.isArray(holdingsData) ? holdingsData : [])
-    var tfMetrics = computeSectorBreadthMetrics(holdings, hourlyCandlesMap, dailyCandlesMap, weightMode, prepared)
-    out.push({
-      symbol: sym,
-      name: sec.name,
-      seriesId: sec.seriesId,
-      holdingsCount: holdings.length,
-      timeframes: tfMetrics
-    })
-  }
-  return out
-}
-
-function sortSectorBreadth(sectorsList, sortTimeframe, sortAsc) {
-  if (!Array.isArray(sectorsList)) return []
-  var list = sectorsList.slice()
-  var tf = sortTimeframe || "1Y"
-  var asc = !!sortAsc
-
-  list.sort(function (a, b) {
-    var aTf = (a && a.timeframes && a.timeframes[tf]) ? a.timeframes[tf] : null
-    var bTf = (b && b.timeframes && b.timeframes[tf]) ? b.timeframes[tf] : null
-    var aDelta = aTf ? Number(aTf.netDelta) : -9999
-    var bDelta = bTf ? Number(bTf.netDelta) : -9999
-    if (!isFinite(aDelta)) aDelta = -9999
-    if (!isFinite(bDelta)) bDelta = -9999
-
-    if (Math.abs(aDelta - bDelta) > 0.0001) {
-      return asc ? (aDelta - bDelta) : (bDelta - aDelta)
-    }
-    return String(a.symbol || "").localeCompare(String(b.symbol || ""))
-  })
-
-  return list
-}
-
-function formatNetDelta(val) {
-  var n = Number(val)
-  if (!isFinite(n)) return "0.0%"
-  var sign = n > 0 ? "+" : ""
-  return sign + n.toFixed(1) + "%"
 }
 
 function detectStratAttack(candles, liveQuote) {
@@ -5548,14 +5364,7 @@ if (typeof module !== "undefined") {
     resolveCusipToTicker: resolveCusipToTicker,
     parseNportXml: parseNportXml,
     sortHoldings: sortHoldings,
-    allSpdrSectorsList: allSpdrSectorsList,
-    sparkCandlesUrl: sparkCandlesUrl,
-    parseSparkCandles: parseSparkCandles,
     prepareConstituentCandles: prepareConstituentCandles,
-    computeSectorBreadthMetrics: computeSectorBreadthMetrics,
-    computeAllSectorsBreadth: computeAllSectorsBreadth,
-    sortSectorBreadth: sortSectorBreadth,
-    formatNetDelta: formatNetDelta,
     detectStratAttack: detectStratAttack,
     computeBasketAttackMetrics: computeBasketAttackMetrics,
     stratRuleRationales: stratRuleRationales,
