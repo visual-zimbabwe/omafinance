@@ -19,8 +19,6 @@ const qmlFiles = [
   "GridCell.qml",
   "GridWindow.qml",
   "SectorBreadthWindow.qml",
-  "StratAttackWindow.qml",
-  "WtdCandlesStrip.qml",
   "BasketSupportPopup.qml"
 ]
 
@@ -592,47 +590,33 @@ test("grid window and panel persist cellTimeframes across state and layouts and 
   assert.match(chart, /signal replayRequested\(real timestamp\)/)
 })
 
-test("panel, list view, and detail view integrate StratAttackWindow and attack scanner", () => {
-  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
-  const listView = fs.readFileSync(source("FinanceListView.qml"), "utf8")
-  const detailView = fs.readFileSync(source("FinanceDetailView.qml"), "utf8")
-  const attackWin = fs.readFileSync(source("StratAttackWindow.qml"), "utf8")
+test("grid cell and basket support popup integrate focus basket tokens and inspector flyout", () => {
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const popup = fs.readFileSync(source("BasketSupportPopup.qml"), "utf8")
 
-  assert.match(panel, /property var activeAttackWindow:\s*null/)
-  assert.match(panel, /function openStratAttack\(\)/)
-  assert.match(panel, /stratAttackWindowComponent\.createObject/)
-  assert.match(panel, /id:\s*stratAttackWindowComponent/)
-  assert.match(panel, /StratAttackWindow\s*\{/)
+  assert.match(cell, /readonly property var focusSupport:\s*Model\.computeFocusBasketSupport/)
+  assert.match(cell, /id:\s*focusSupportBadgeItem/)
+  assert.match(cell, /root\.focusSupport\.attackToken/)
+  assert.match(cell, /root\.focusSupport\.peerToken/)
+  assert.match(cell, /root\.focusSupport\.supportToken/)
+  assert.match(cell, /id:\s*cellSupportPopup/)
 
-  assert.match(listView, /id:\s*attackBtn/)
-  assert.match(listView, /tooltipText:\s*"TheStrat Attack Scanner"/)
-  assert.match(listView, /controller\.openStratAttack\(\)/)
-
-  assert.match(detailView, /id:\s*holdingsAttackLink/)
-  assert.match(detailView, /controller\.openStratAttack\(\)/)
-
-  assert.match(attackWin, /title:\s*"Omafinance - TheStrat Attack Scanner"/)
-  assert.match(attackWin, /Model\.nodeCommand\(scriptPath\)/)
-  assert.match(attackWin, /id:\s*attackRunnerProc/)
-  assert.match(attackWin, /property var attackData:/)
-  assert.match(attackWin, /property var topBullish:/)
-  assert.match(attackWin, /property var topBearish:/)
-  assert.match(attackWin, /property var topLaggards:/)
-  assert.match(attackWin, /WtdCandlesStrip\s*\{/)
-  assert.match(attackWin, /gridMode:\s*"2\+3"/)
-  assert.match(attackWin, /root\.controller\.openGrid/)
+  assert.match(popup, /property var supportData/)
+  assert.match(popup, /allTimeframes/)
+  assert.match(popup, /positionSizing/)
+  assert.match(popup, /sizingReason/)
 })
 
-test("fetch-attack runner exists and produces structured basket attack output", () => {
+test("fetch-attack runner exists and produces structured focus basket output", () => {
   const scriptPath = path.join(root, "scripts", "fetch-attack.js")
   assert.ok(fs.existsSync(scriptPath), "scripts/fetch-attack.js should exist")
   const code = fs.readFileSync(scriptPath, "utf8")
-  assert.match(code, /Model\.allAttackBasketsList\(\)/)
+  assert.match(code, /focusBasketSymbols\s*=\s*\[\s*"XLC",\s*"SMH"\s*\]/)
   assert.match(code, /resolveEtfHoldings/)
   assert.match(code, /Model\.computeBasketAttackMetrics/)
-  assert.match(code, /topBullishAttacks/)
-  assert.match(code, /topBearishAttacks/)
-  assert.match(code, /topLaggards/)
+  assert.match(code, /focusPairs/)
+  assert.match(code, /focusCandles/)
+  assert.match(code, /focusHoldings/)
 })
 
 

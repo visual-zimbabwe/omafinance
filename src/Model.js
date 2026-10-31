@@ -3342,107 +3342,6 @@ function detectStratAttack(candles, liveQuote) {
   return emptyResult
 }
 
-function allAttackBasketsList() {
-  return [
-    { symbol: "SPY", name: "S&P 500 Index", category: "Index" },
-    { symbol: "QQQ", name: "Nasdaq 100 Index", category: "Index" },
-    { symbol: "IWM", name: "Russell 2000 Index", category: "Index" },
-    { symbol: "DIA", name: "Dow Jones 30", category: "Index" },
-    { symbol: "XLK", name: "Technology", category: "Sector" },
-    { symbol: "XLF", name: "Financials", category: "Sector" },
-    { symbol: "XLC", name: "Communication Services", category: "Sector" },
-    { symbol: "XLY", name: "Consumer Discretionary", category: "Sector" },
-    { symbol: "XLI", name: "Industrials", category: "Sector" },
-    { symbol: "XLV", name: "Health Care", category: "Sector" },
-    { symbol: "XLE", name: "Energy", category: "Sector" },
-    { symbol: "XLP", name: "Consumer Staples", category: "Sector" },
-    { symbol: "XLB", name: "Materials", category: "Sector" },
-    { symbol: "XLU", name: "Utilities", category: "Sector" },
-    { symbol: "XLRE", name: "Real Estate", category: "Sector" },
-    { symbol: "SMH", name: "Semiconductors", category: "Thematic" },
-    { symbol: "SOXX", name: "Semiconductors iShares", category: "Thematic" },
-    { symbol: "ARKG", name: "Genomics", category: "Thematic" },
-    { symbol: "ARKK", name: "Innovation", category: "Thematic" },
-    { symbol: "XBI", name: "Biotechnology", category: "Thematic" },
-    { symbol: "KRE", name: "Regional Banking", category: "Thematic" },
-    { symbol: "XOP", name: "Oil & Gas Exploration", category: "Thematic" },
-    { symbol: "GDX", name: "Gold Miners", category: "Thematic" },
-    { symbol: "XRT", name: "Retail", category: "Thematic" },
-    { symbol: "ITB", name: "Homebuilders", category: "Thematic" }
-  ]
-}
-
-function extractWtdDailyCandles(candles, liveQuote, triggerPrice, triggerDirection, timeframe) {
-  if (!Array.isArray(candles) || candles.length === 0) {
-    return { candles: [], weekHigh: 0, weekLow: 0, triggerPrice: 0, triggerDirection: "neutral" }
-  }
-
-  var tf = timeframe || "1D"
-  var cList = candles.slice()
-  var n = cList.length
-  var lastC = Object.assign({}, cList[n - 1])
-  var livePx = stratLivePrice(liveQuote)
-  if (livePx !== null && isFinite(livePx)) {
-    lastC.close = livePx
-    if (lastC.high === null || livePx > lastC.high) lastC.high = livePx
-    if (lastC.low === null || livePx < lastC.low) lastC.low = livePx
-  }
-  cList[n - 1] = lastC
-
-  var weekBars = []
-  if (tf === "1W") {
-    // Recent 5 weekly bars
-    weekBars = cList.slice(Math.max(0, n - 5))
-  } else {
-    // Current Week-To-Date daily bars starting Monday midnight
-    var dLast = new Date(lastC.timestamp * 1000)
-    var dayOfWeek = dLast.getUTCDay()
-    var daysSinceMon = (dayOfWeek + 6) % 7
-    var monMidnight = new Date(dLast.getTime() - daysSinceMon * 86400 * 1000)
-    monMidnight.setUTCHours(0, 0, 0, 0)
-    var monTs = Math.floor(monMidnight.getTime() / 1000)
-
-    weekBars = cList.filter(function(c) { return c && c.timestamp >= monTs; })
-    if (weekBars.length === 0) weekBars = [lastC]
-  }
-
-  var dayMap = ["Sun", "M", "T", "W", "Th", "F", "Sat"]
-  var wtdCandles = []
-  for (var i = 0; i < weekBars.length; i++) {
-    var c = weekBars[i]
-    var idx = cList.indexOf(c)
-    var prev = idx > 0 ? cList[idx - 1] : null
-    var sc = prev ? stratScenario(c, prev) : "-"
-    var d = new Date(c.timestamp * 1000)
-    var dayLabel = tf === "1W" ? ((d.getUTCMonth() + 1) + "/" + d.getUTCDate()) : (dayMap[d.getUTCDay()] || "-")
-    wtdCandles.push({
-      day: dayLabel,
-      timestamp: c.timestamp,
-      open: Number(c.open),
-      high: Number(c.high),
-      low: Number(c.low),
-      close: Number(c.close),
-      color: (Number(c.close) >= Number(c.open)) ? "G" : "R",
-      scenario: sc,
-      prevHigh: prev ? Number(prev.high) : null,
-      prevLow: prev ? Number(prev.low) : null
-    })
-  }
-
-  var highs = weekBars.map(function(c) { return Number(c.high); })
-  var lows = weekBars.map(function(c) { return Number(c.low); })
-  var weekHigh = Math.max.apply(null, highs)
-  var weekLow = Math.min.apply(null, lows)
-
-  return {
-    candles: wtdCandles,
-    weekHigh: weekHigh,
-    weekLow: weekLow,
-    triggerPrice: triggerPrice || null,
-    triggerDirection: triggerDirection || "neutral"
-  }
-}
-
 function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings, dailyCandlesMap, liveQuotesMap, timeframe) {
   var tf = timeframe || "1D"
   var list = Array.isArray(holdings) ? holdings : []
@@ -3451,8 +3350,6 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
   var count2d = 0
   var countAttack2u = 0
   var countAttack2d = 0
-  var attackConstituents = []
-  var laggards = []
 
   for (var i = 0; i < list.length; i++) {
     var h = list[i]
@@ -3469,57 +3366,14 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     var cLast = candles[candles.length - 1]
     var cPrev = candles[candles.length - 2]
     var s0 = stratScenario(cLast, cPrev)
-    var color0 = (cLast.close >= cLast.open) ? "G" : "R"
-    var price = stratLivePrice(quote) || cLast.close
 
     if (s0 === "2u") count2u++
     if (s0 === "2d") count2d++
 
     if (attack.direction === "bullish") {
       countAttack2u++
-      attackConstituents.push({
-        symbol: sym,
-        name: h.name || sym,
-        pctVal: h.pctVal || 0,
-        attackType: attack.attackType,
-        direction: "bullish",
-        consecutiveCount: attack.consecutiveCount,
-        triggerPrice: attack.triggerPrice,
-        price: price,
-        wtd: extractWtdDailyCandles(candles, quote, attack.triggerPrice, "bullish", tf)
-      })
     } else if (attack.direction === "bearish") {
       countAttack2d++
-      attackConstituents.push({
-        symbol: sym,
-        name: h.name || sym,
-        pctVal: h.pctVal || 0,
-        attackType: attack.attackType,
-        direction: "bearish",
-        consecutiveCount: attack.consecutiveCount,
-        triggerPrice: attack.triggerPrice,
-        price: price,
-        wtd: extractWtdDailyCandles(candles, quote, attack.triggerPrice, "bearish", tf)
-      })
-    } else {
-      var trigHigh = Number(cPrev.high)
-      var trigLow = Number(cPrev.low)
-      if (price && isFinite(price)) {
-        var distToHigh = trigHigh > 0 ? ((trigHigh - price) / trigHigh) * 100 : 999
-        var distToLow = trigLow > 0 ? ((price - trigLow) / trigLow) * 100 : 999
-        laggards.push({
-          symbol: sym,
-          name: h.name || sym,
-          pctVal: h.pctVal || 0,
-          scenario: s0,
-          color: color0,
-          price: price,
-          triggerHigh: trigHigh,
-          triggerLow: trigLow,
-          distToHighPct: distToHigh,
-          distToLowPct: distToLow
-        })
-      }
     }
   }
 
@@ -3544,33 +3398,6 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     }
   }
 
-  var relevantLaggards = []
-  if (pct2u >= pct2d) {
-    relevantLaggards = laggards.filter(function(l) { return l.distToHighPct >= 0 && l.distToHighPct <= 3.5 }).map(function(l) {
-      var lCandles = dailyCandlesMap ? dailyCandlesMap[l.symbol] : null
-      var lQuote = liveQuotesMap ? liveQuotesMap[l.symbol] : null
-      return Object.assign({}, l, {
-        direction: "bullish",
-        distToTriggerPct: l.distToHighPct,
-        triggerPrice: l.triggerHigh,
-        wtd: extractWtdDailyCandles(lCandles, lQuote, l.triggerHigh, "bullish", tf)
-      })
-    })
-    relevantLaggards.sort(function(a, b) { return a.distToTriggerPct - b.distToTriggerPct })
-  } else {
-    relevantLaggards = laggards.filter(function(l) { return l.distToLowPct >= 0 && l.distToLowPct <= 3.5 }).map(function(l) {
-      var lCandles2 = dailyCandlesMap ? dailyCandlesMap[l.symbol] : null
-      var lQuote2 = liveQuotesMap ? liveQuotesMap[l.symbol] : null
-      return Object.assign({}, l, {
-        direction: "bearish",
-        distToTriggerPct: l.distToLowPct,
-        triggerPrice: l.triggerLow,
-        wtd: extractWtdDailyCandles(lCandles2, lQuote2, l.triggerLow, "bearish", tf)
-      })
-    })
-    relevantLaggards.sort(function(a, b) { return a.distToTriggerPct - b.distToTriggerPct })
-  }
-
   return {
     symbol: basketSymbol,
     name: basketName,
@@ -3586,53 +3413,8 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     pctAttack2u: pctAttack2u,
     pctAttack2d: pctAttack2d,
     netAttackDelta: netAttackDelta,
-    status: status,
-    attackConstituents: attackConstituents,
-    laggards: relevantLaggards
+    status: status
   }
-}
-
-function computeAllAttackBaskets(basketsHoldingsMap, dailyCandlesMap, liveQuotesMap) {
-  var baskets = allAttackBasketsList()
-  var out = []
-  for (var i = 0; i < baskets.length; i++) {
-    var b = baskets[i]
-    var sym = b.symbol
-    var holdingsData = basketsHoldingsMap ? basketsHoldingsMap[sym] : null
-    var holdings = (holdingsData && holdingsData.holdings) ? holdingsData.holdings : (Array.isArray(holdingsData) ? holdingsData : [])
-    var metrics = computeBasketAttackMetrics(sym, b.name, b.category, holdings, dailyCandlesMap, liveQuotesMap)
-    out.push(metrics)
-  }
-  return out
-}
-
-function sortAttackBaskets(basketsList, sortKey, sortAsc) {
-  if (!Array.isArray(basketsList)) return []
-  var list = basketsList.slice()
-  var asc = !!sortAsc
-  var sk = String(sortKey || "attack").toLowerCase()
-
-  list.sort(function (a, b) {
-    if (sk === "symbol" || sk === "ticker") {
-      return asc ? a.symbol.localeCompare(b.symbol) : b.symbol.localeCompare(a.symbol)
-    }
-    if (sk === "name") {
-      return asc ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name)
-    }
-    if (sk === "pct2u") {
-      return asc ? (a.pct2u - b.pct2u) : (b.pct2u - a.pct2u)
-    }
-    if (sk === "pct2d") {
-      return asc ? (a.pct2d - b.pct2d) : (b.pct2d - a.pct2d)
-    }
-    var diff = Number(a.netAttackDelta) - Number(b.netAttackDelta)
-    if (Math.abs(diff) > 0.0001) {
-      return asc ? diff : -diff
-    }
-    return Math.abs(b.pctAttack2u + b.pctAttack2d) - Math.abs(a.pctAttack2u + a.pctAttack2d)
-  })
-
-  return list
 }
 
 function focusBasketPairs() {
@@ -5775,11 +5557,7 @@ if (typeof module !== "undefined") {
     sortSectorBreadth: sortSectorBreadth,
     formatNetDelta: formatNetDelta,
     detectStratAttack: detectStratAttack,
-    allAttackBasketsList: allAttackBasketsList,
     computeBasketAttackMetrics: computeBasketAttackMetrics,
-    computeAllAttackBaskets: computeAllAttackBaskets,
-    sortAttackBaskets: sortAttackBaskets,
-    extractWtdDailyCandles: extractWtdDailyCandles,
     stratRuleRationales: stratRuleRationales,
     resolveDominoHtfSignal: resolveDominoHtfSignal,
     resolveUntaggedHtfTargets: resolveUntaggedHtfTargets,

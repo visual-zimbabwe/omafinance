@@ -2431,20 +2431,7 @@ test("detectStratAttack detects 2u-2u, 2u-2u-2u, 2d-2d, 2d-2d-2d and in-force vs
   assert.equal(resPullback.state, "confirmed")
 })
 
-test("allAttackBasketsList returns core indices, sectors, and thematic ETFs", () => {
-  const baskets = Model.allAttackBasketsList()
-  assert.ok(Array.isArray(baskets))
-  assert.equal(baskets.length, 25)
-
-  const symbols = baskets.map(b => b.symbol)
-  assert.ok(symbols.includes("SPY"))
-  assert.ok(symbols.includes("QQQ"))
-  assert.ok(symbols.includes("XLK"))
-  assert.ok(symbols.includes("SMH"))
-  assert.ok(symbols.includes("XBI"))
-})
-
-test("computeBasketAttackMetrics and sortAttackBaskets evaluate group attacks and laggards", () => {
+test("computeBasketAttackMetrics evaluates group attacks and breakout metrics", () => {
   const holdings = [
     { symbol: "AAA", name: "Alpha Inc", pctVal: 40 },
     { symbol: "BBB", name: "Beta Corp", pctVal: 30 },
@@ -2486,66 +2473,7 @@ test("computeBasketAttackMetrics and sortAttackBaskets evaluate group attacks an
   assert.equal(metrics.count2d, 1)
   assert.equal(metrics.pctAttack2d, 0)
   assert.equal(metrics.netAttackDelta, 50)
-  assert.equal(metrics.attackConstituents.length, 2)
-  assert.equal(metrics.attackConstituents[0].symbol, "AAA")
-  assert.ok(metrics.attackConstituents[0].wtd)
-  assert.ok(Array.isArray(metrics.attackConstituents[0].wtd.candles))
-
-  assert.equal(metrics.laggards.length, 1)
-  assert.equal(metrics.laggards[0].symbol, "CCC")
-  assert.equal(metrics.laggards[0].direction, "bullish")
-  assert.ok(metrics.laggards[0].distToTriggerPct > 0 && metrics.laggards[0].distToTriggerPct < 3.5)
-  assert.ok(metrics.laggards[0].wtd)
-  assert.ok(Array.isArray(metrics.laggards[0].wtd.candles))
-
-  const b1 = { symbol: "B1", netAttackDelta: 80, pctAttack2u: 80, pctAttack2d: 0, pct2u: 90, pct2d: 10 }
-  const b2 = { symbol: "B2", netAttackDelta: -50, pctAttack2u: 10, pctAttack2d: 60, pct2u: 20, pct2d: 80 }
-  const sortedDesc = Model.sortAttackBaskets([b2, b1], "attack", false)
-  assert.equal(sortedDesc[0].symbol, "B1")
-  assert.equal(sortedDesc[1].symbol, "B2")
-
-  const sortedAsc = Model.sortAttackBaskets([b2, b1], "attack", true)
-  assert.equal(sortedAsc[0].symbol, "B2")
-  assert.equal(sortedAsc[1].symbol, "B1")
-})
-
-test("extractWtdDailyCandles extracts Week-To-Date daily bars, scenarios, and week extremes", () => {
-  assert.equal(Model.extractWtdDailyCandles([]).candles.length, 0)
-
-  const cFri = { timestamp: 1792762200, open: 100, high: 102, low: 99, close: 101 }
-  const cMon = { timestamp: 1793021400, open: 101, high: 105, low: 100, close: 104 }
-  const cTue = { timestamp: 1793107800, open: 104, high: 110, low: 103, close: 109 }
-
-  const resTue = Model.extractWtdDailyCandles([cFri, cMon, cTue], null, 105, "bullish")
-  assert.equal(resTue.candles.length, 2, "Tuesday should have exactly 2 WTD bars (Mon, Tue)")
-  assert.equal(resTue.candles[0].day, "M")
-  assert.equal(resTue.candles[1].day, "T")
-  assert.equal(resTue.candles[0].scenario, "2u")
-  assert.equal(resTue.candles[1].scenario, "2u")
-  assert.equal(resTue.candles[0].color, "G")
-  assert.equal(resTue.candles[1].color, "G")
-  assert.equal(resTue.weekHigh, 110)
-  assert.equal(resTue.weekLow, 100)
-  assert.equal(resTue.triggerPrice, 105)
-  assert.equal(resTue.triggerDirection, "bullish")
-
-  const liveQuote = { regularMarketPrice: 112 }
-  const resLive = Model.extractWtdDailyCandles([cFri, cMon, cTue], liveQuote, 105, "bullish")
-  assert.equal(resLive.candles[1].close, 112)
-  assert.equal(resLive.candles[1].high, 112)
-  assert.equal(resLive.weekHigh, 112)
-
-  // 1W timeframe slices recent weekly bars with M/D labels
-  const w1 = { timestamp: 1780000000, open: 100, high: 105, low: 95, close: 102 }
-  const w2 = { timestamp: 1780604800, open: 102, high: 108, low: 101, close: 107 }
-  const w3 = { timestamp: 1781209600, open: 107, high: 112, low: 106, close: 111 }
-  const resWeekly = Model.extractWtdDailyCandles([w1, w2, w3], null, 108, "bullish", "1W")
-  assert.equal(resWeekly.candles.length, 3)
-  assert.ok(resWeekly.candles[0].day.includes("/"))
-  assert.equal(resWeekly.candles[1].scenario, "2u")
-  assert.equal(resWeekly.candles[2].scenario, "2u")
-  assert.equal(resWeekly.weekHigh, 112)
-  assert.equal(resWeekly.weekLow, 95)
+  assert.equal(metrics.status, "BULLISH ATTACK")
 })
 
 test("focusBasketPairs and focusPairForSymbol map focus tickers and hide non-focus tickers", () => {
