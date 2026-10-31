@@ -894,24 +894,14 @@ Item {
                         }
 
                         var lvl = (typeof formIdx === "number") ? formIdx : 0;
-                        var strokeColor;
-                        if (isUpper) {
-                            if (lvl === 0) strokeColor = "#3879E3";       // Major Upper (Royal Blue)
-                            else if (lvl === 1) strokeColor = "#00B4D8";  // Intermediate Upper (Sky Blue)
-                            else if (lvl === 2) strokeColor = "#818CF8";  // Minor Upper (Indigo)
-                            else strokeColor = "#2DD4BF";                 // Inner Minor Upper (Teal)
-                        } else {
-                            if (lvl === 0) strokeColor = "#FE0000";       // Major Lower (Crimson)
-                            else if (lvl === 1) strokeColor = "#FB7185";  // Intermediate Lower (Coral)
-                            else if (lvl === 2) strokeColor = "#F472B6";  // Minor Lower (Rose)
-                            else strokeColor = "#FBBF24";                 // Inner Minor Lower (Amber)
-                        }
-
+                        var strokeColor = "#FFFFFF";
                         var lineWidth = (lvl === 0) ? 0.60 : ((lvl === 1) ? 0.50 : 0.45);
                         var dotRadius = (lvl === 0) ? 1.8 : ((lvl === 1) ? 1.5 : 1.3);
-                        var dashPattern = (lvl === 0) ? [6, 4] : ((lvl === 1) ? [4, 3] : [3, 3]);
+                        var dashPattern = (lvl === 0) ? [] : ((lvl === 1) ? [6, 4] : [2, 3]);
+                        var lineAlpha = (lvl === 0) ? 1.0 : ((lvl === 1) ? 0.75 : 0.40);
 
                         ctx.save();
+                        ctx.globalAlpha = lineAlpha;
                         ctx.strokeStyle = strokeColor;
                         ctx.lineWidth = lineWidth;
                         if (ctx.setLineDash) ctx.setLineDash(dashPattern);
