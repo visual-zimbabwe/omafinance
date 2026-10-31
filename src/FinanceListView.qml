@@ -62,28 +62,6 @@ Column {
             spacing: Style.space(4)
 
             PanelActionButton {
-                id: breadthBtn
-                iconText: "\uf080"
-                tooltipText: "Sector Strat Breadth"
-                foreground: controller.dim
-                fontFamily: controller.contentFontFamily
-                hasCursor: controller.listChrome === "breadth"
-                bordered: controller.listChrome === "breadth"
-                onClicked: controller.openSectorBreadth()
-            }
-
-            PanelActionButton {
-                id: attackBtn
-                iconText: "\uf135"
-                tooltipText: "TheStrat Attack Scanner"
-                foreground: controller.dim
-                fontFamily: controller.contentFontFamily
-                hasCursor: controller.listChrome === "attack"
-                bordered: controller.listChrome === "attack"
-                onClicked: controller.openStratAttack()
-            }
-
-            PanelActionButton {
                 id: layoutBtn
                 iconText: "\uf009"
                 tooltipText: "Chart Layouts"

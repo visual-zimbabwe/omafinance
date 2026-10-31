@@ -965,144 +965,6 @@ test("parseNportXml handles dual-class shares (NWSA vs NWS) and delisted tickers
   assert.equal(nws.delisted, false)
 })
 
-test("allSpdrSectorsList returns all 11 GICS sector ETFs", () => {
-  const sectors = Model.allSpdrSectorsList()
-  assert.equal(sectors.length, 11)
-  const symbols = sectors.map(s => s.symbol)
-  assert.ok(symbols.includes("XLC"))
-  assert.ok(symbols.includes("XLY"))
-  assert.ok(symbols.includes("XLP"))
-  assert.ok(symbols.includes("XLE"))
-  assert.ok(symbols.includes("XLF"))
-  assert.ok(symbols.includes("XLV"))
-  assert.ok(symbols.includes("XLI"))
-  assert.ok(symbols.includes("XLB"))
-  assert.ok(symbols.includes("XLK"))
-  assert.ok(symbols.includes("XLU"))
-  assert.ok(symbols.includes("XLRE"))
-})
-
-test("sparkCandlesUrl generates valid URLs and filters duplicates", () => {
-  const url1 = Model.sparkCandlesUrl(["AAPL", "msft", "AAPL"], "1d", "2y")
-  assert.equal(url1, "https://query1.finance.yahoo.com/v7/finance/spark?symbols=AAPL,MSFT&range=2y&interval=1d&includePrePost=false")
-
-  const url2 = Model.sparkCandlesUrl("NVDA", "60m", "1mo")
-  assert.equal(url2, "https://query1.finance.yahoo.com/v7/finance/spark?symbols=NVDA&range=1mo&interval=60m&includePrePost=false")
-})
-
-test("computeSectorBreadthMetrics computes equal weight and cap weight strat breadth", () => {
-  const holdings = [
-    { symbol: "SYM1", pctVal: 50.0, delisted: false }, // 2u
-    { symbol: "SYM2", pctVal: 30.0, delisted: false }, // 2d
-    { symbol: "SYM3", pctVal: 20.0, delisted: false }, // 1 (inside)
-    { symbol: "EA", pctVal: 10.0, delisted: true }      // delisted -> skipped
-  ]
-
-  // Daily candles:
-  // SYM1: prev [100, 90], curr [105, 95] -> 2u
-  // SYM2: prev [100, 90], curr [95, 85] -> 2d
-  // SYM3: prev [100, 90], curr [98, 92] -> 1
-  const dailyMap = {
-    "SYM1": [
-      { timestamp: 1704067200, open: 95, high: 100, low: 90, close: 98, volume: 100 },
-      { timestamp: 1704153600, open: 98, high: 105, low: 95, close: 102, volume: 100 }
-    ],
-    "SYM2": [
-      { timestamp: 1704067200, open: 95, high: 100, low: 90, close: 98, volume: 100 },
-      { timestamp: 1704153600, open: 90, high: 95, low: 85, close: 88, volume: 100 }
-    ],
-    "SYM3": [
-      { timestamp: 1704067200, open: 95, high: 100, low: 90, close: 98, volume: 100 },
-      { timestamp: 1704153600, open: 94, high: 98, low: 92, close: 96, volume: 100 }
-    ]
-  }
-
-  // Equal Weight
-  const eq = Model.computeSectorBreadthMetrics(holdings, {}, dailyMap, "equal")
-  assert.ok(eq["1D"])
-  assert.equal(eq["1D"].totalCount, 3)
-  assert.equal(eq["1D"].count2u, 1)
-  assert.equal(eq["1D"].count2d, 1)
-  assert.equal(eq["1D"].countOther, 1)
-  assert.equal(Math.round(eq["1D"].pct2u), 33)
-  assert.equal(Math.round(eq["1D"].pct2d), 33)
-  assert.equal(Math.round(eq["1D"].netDelta), 0)
-
-  // Cap Weight (Total weight = 50 + 30 + 20 = 100)
-  const cap = Model.computeSectorBreadthMetrics(holdings, {}, dailyMap, "cap")
-  assert.ok(cap["1D"])
-  assert.equal(cap["1D"].pct2u, 50)
-  assert.equal(cap["1D"].pct2d, 30)
-  assert.equal(cap["1D"].pctOther, 20)
-  assert.equal(cap["1D"].netDelta, 20)
-})
-
-test("sortSectorBreadth sorts sectors by timeframe net buyer strength", () => {
-  const sectors = [
-    {
-      symbol: "XLF",
-      timeframes: {
-        "1Y": { netDelta: 10.0 },
-        "1D": { netDelta: -20.0 }
-      }
-    },
-    {
-      symbol: "XLK",
-      timeframes: {
-        "1Y": { netDelta: 45.0 },
-        "1D": { netDelta: 15.0 }
-      }
-    },
-    {
-      symbol: "XLE",
-      timeframes: {
-        "1Y": { netDelta: -15.0 },
-        "1D": { netDelta: 30.0 }
-      }
-    }
-  ]
-
-  // Default 1Y descending: XLK (45) -> XLF (10) -> XLE (-15)
-  const sorted1YDesc = Model.sortSectorBreadth(sectors, "1Y", false)
-  assert.deepEqual(sorted1YDesc.map(s => s.symbol), ["XLK", "XLF", "XLE"])
-
-  // 1Y ascending: XLE (-15) -> XLF (10) -> XLK (45)
-  const sorted1YAsc = Model.sortSectorBreadth(sectors, "1Y", true)
-  assert.deepEqual(sorted1YAsc.map(s => s.symbol), ["XLE", "XLF", "XLK"])
-
-  // 1D descending: XLE (30) -> XLK (15) -> XLF (-20)
-  const sorted1DDesc = Model.sortSectorBreadth(sectors, "1D", false)
-  assert.deepEqual(sorted1DDesc.map(s => s.symbol), ["XLE", "XLK", "XLF"])
-})
-
-test("formatNetDelta formats signed percent strings", () => {
-  assert.equal(Model.formatNetDelta(25.46), "+25.5%")
-  assert.equal(Model.formatNetDelta(-12.34), "-12.3%")
-  assert.equal(Model.formatNetDelta(0), "0.0%")
-  assert.equal(Model.formatNetDelta(null), "0.0%")
-})
-
-test("state persistence preserves breadth settings", () => {
-  const serialized = Model.serializeState(
-    ["AAPL"],
-    [],
-    "1D",
-    "2x2",
-    {},
-    [],
-    {},
-    {},
-    "cap",
-    "1W",
-    true
-  )
-
-  const parsed = Model.parseState(serialized)
-  assert.equal(parsed.breadthWeightMode, "cap")
-  assert.equal(parsed.breadthSortTimeframe, "1W")
-  assert.equal(parsed.breadthSortAsc, true)
-})
-
 test("computeStratDetails computes bar, polarity, inForce, 3-bar sequence, and triggers", () => {
   // Candles:
   // c0: O:100 H:105 L:95 C:100
@@ -2431,20 +2293,7 @@ test("detectStratAttack detects 2u-2u, 2u-2u-2u, 2d-2d, 2d-2d-2d and in-force vs
   assert.equal(resPullback.state, "confirmed")
 })
 
-test("allAttackBasketsList returns core indices, sectors, and thematic ETFs", () => {
-  const baskets = Model.allAttackBasketsList()
-  assert.ok(Array.isArray(baskets))
-  assert.equal(baskets.length, 25)
-
-  const symbols = baskets.map(b => b.symbol)
-  assert.ok(symbols.includes("SPY"))
-  assert.ok(symbols.includes("QQQ"))
-  assert.ok(symbols.includes("XLK"))
-  assert.ok(symbols.includes("SMH"))
-  assert.ok(symbols.includes("XBI"))
-})
-
-test("computeBasketAttackMetrics and sortAttackBaskets evaluate group attacks and laggards", () => {
+test("computeBasketAttackMetrics evaluates group attacks and breakout metrics", () => {
   const holdings = [
     { symbol: "AAA", name: "Alpha Inc", pctVal: 40 },
     { symbol: "BBB", name: "Beta Corp", pctVal: 30 },
@@ -2486,54 +2335,214 @@ test("computeBasketAttackMetrics and sortAttackBaskets evaluate group attacks an
   assert.equal(metrics.count2d, 1)
   assert.equal(metrics.pctAttack2d, 0)
   assert.equal(metrics.netAttackDelta, 50)
-  assert.equal(metrics.attackConstituents.length, 2)
-  assert.equal(metrics.attackConstituents[0].symbol, "AAA")
-  assert.ok(metrics.attackConstituents[0].wtd)
-  assert.ok(Array.isArray(metrics.attackConstituents[0].wtd.candles))
-
-  assert.equal(metrics.laggards.length, 1)
-  assert.equal(metrics.laggards[0].symbol, "CCC")
-  assert.equal(metrics.laggards[0].direction, "bullish")
-  assert.ok(metrics.laggards[0].distToTriggerPct > 0 && metrics.laggards[0].distToTriggerPct < 3.5)
-  assert.ok(metrics.laggards[0].wtd)
-  assert.ok(Array.isArray(metrics.laggards[0].wtd.candles))
-
-  const b1 = { symbol: "B1", netAttackDelta: 80, pctAttack2u: 80, pctAttack2d: 0, pct2u: 90, pct2d: 10 }
-  const b2 = { symbol: "B2", netAttackDelta: -50, pctAttack2u: 10, pctAttack2d: 60, pct2u: 20, pct2d: 80 }
-  const sortedDesc = Model.sortAttackBaskets([b2, b1], "attack", false)
-  assert.equal(sortedDesc[0].symbol, "B1")
-  assert.equal(sortedDesc[1].symbol, "B2")
-
-  const sortedAsc = Model.sortAttackBaskets([b2, b1], "attack", true)
-  assert.equal(sortedAsc[0].symbol, "B2")
-  assert.equal(sortedAsc[1].symbol, "B1")
+  assert.equal(metrics.status, "BULLISH ATTACK")
 })
 
-test("extractWtdDailyCandles extracts Week-To-Date daily bars, scenarios, and week extremes", () => {
-  assert.equal(Model.extractWtdDailyCandles([]).candles.length, 0)
+test("focusBasketPairs and focusPairForSymbol map focus tickers and hide non-focus tickers", () => {
+  const pairs = Model.focusBasketPairs()
+  assert.ok(pairs.GOOGL)
+  assert.equal(pairs.GOOGL.basket, "XLC")
+  assert.equal(pairs.GOOGL.peer, "META")
 
-  const cFri = { timestamp: 1792762200, open: 100, high: 102, low: 99, close: 101 }
-  const cMon = { timestamp: 1793021400, open: 101, high: 105, low: 100, close: 104 }
-  const cTue = { timestamp: 1793107800, open: 104, high: 110, low: 103, close: 109 }
+  assert.ok(pairs.NVDA)
+  assert.equal(pairs.NVDA.basket, "SMH")
+  assert.equal(pairs.NVDA.peer, "TSM")
 
-  const resTue = Model.extractWtdDailyCandles([cFri, cMon, cTue], null, 105, "bullish")
-  assert.equal(resTue.candles.length, 2, "Tuesday should have exactly 2 WTD bars (Mon, Tue)")
-  assert.equal(resTue.candles[0].day, "M")
-  assert.equal(resTue.candles[1].day, "T")
-  assert.equal(resTue.candles[0].scenario, "2u")
-  assert.equal(resTue.candles[1].scenario, "2u")
-  assert.equal(resTue.candles[0].color, "G")
-  assert.equal(resTue.candles[1].color, "G")
-  assert.equal(resTue.weekHigh, 110)
-  assert.equal(resTue.weekLow, 100)
-  assert.equal(resTue.triggerPrice, 105)
-  assert.equal(resTue.triggerDirection, "bullish")
+  assert.equal(Model.focusPairForSymbol("googl").basket, "XLC")
+  assert.equal(Model.focusPairForSymbol("NVDA").peer, "TSM")
+  assert.equal(Model.focusPairForSymbol("SPY"), null)
+  assert.equal(Model.focusPairForSymbol("QQQ"), null)
+  assert.equal(Model.focusPairForSymbol(""), null)
+})
 
-  const liveQuote = { regularMarketPrice: 112 }
-  const resLive = Model.extractWtdDailyCandles([cFri, cMon, cTue], liveQuote, 105, "bullish")
-  assert.equal(resLive.candles[1].close, 112)
-  assert.equal(resLive.candles[1].high, 112)
-  assert.equal(resLive.weekHigh, 112)
+test("computeFocusBasketSupport computes 3-tier sizing, Option 3C macro direction, and tokens without emojis", () => {
+  // Non-focus ticker returns hidden
+  const nonFocus = Model.computeFocusBasketSupport("SPY", "60", [], null, null, null, null)
+  assert.equal(nonFocus.hasSupport, false)
+  assert.equal(nonFocus.visible, false)
+
+  // Mock attackScanResult with multi-timeframe focus pairs
+  const mockScan = {
+    focusPairs: {
+      "GOOGL": {
+        symbol: "GOOGL",
+        basket: "XLC",
+        peer: "META",
+        timeframes: {
+          "60": {
+            basket: "XLC",
+            timeframe: "60",
+            status: "BULLISH ATTACK",
+            pct2u: 74,
+            pct2d: 18,
+            pctAttack2u: 26,
+            pctAttack2d: 4,
+            peer: { symbol: "META", scenario: "2u", color: "G", price: 584.20, inForce: "In-Force" }
+          },
+          "1D": {
+            basket: "XLC",
+            timeframe: "1D",
+            status: "BULLISH ATTACK",
+            pct2u: 70,
+            pct2d: 20,
+            pctAttack2u: 22,
+            pctAttack2d: 5,
+            peer: { symbol: "META", scenario: "2u", color: "G", price: 584.20, inForce: "In-Force" }
+          }
+        }
+      }
+    }
+  }
+
+  // Case 1: GOOGL active 2u breakout aligned with XLC Bullish Attack & META 2U -> FULL SIZE (1.0x)
+  const googl2uCandles = [
+    { open: 170, high: 172, low: 169, close: 171 },
+    { open: 171, high: 175, low: 170.5, close: 174.5 } // 2u breakout
+  ]
+  const resFull = Model.computeFocusBasketSupport("GOOGL", "60", googl2uCandles, null, null, null, mockScan)
+  assert.equal(resFull.hasSupport, true)
+  assert.equal(resFull.visible, true)
+  assert.equal(resFull.attackToken, "ATK")
+  assert.equal(resFull.attackColor, "green")
+  assert.equal(resFull.peerToken, "META 2U")
+  assert.equal(resFull.peerColor, "green")
+  assert.equal(resFull.supportToken, "SUP 74%")
+  assert.equal(resFull.supportColor, "green")
+  assert.equal(resFull.sizingTier, "full")
+  assert.equal(resFull.positionSizing, "FULL (1.0x)")
+  assert.equal(resFull.sizingColor, "green")
+  assert.match(resFull.sizingReason, /Strong basket support/)
+  assert.doesNotMatch(resFull.attackTooltip, /[\u{1F300}-\u{1F6FF}]/u, "Zero emojis in tooltips")
+  assert.doesNotMatch(resFull.positionSizing, /[\u{1F300}-\u{1F6FF}]/u, "Zero emojis in sizing")
+
+  // Case 2: GOOGL inside bar (1) with Option 3C inheriting daily green -> assumes Long, measures pct2u
+  const googlInsideCandles = [
+    { open: 170, high: 175, low: 169, close: 174 },
+    { open: 172, high: 173, low: 171, close: 172.5 } // 1 inside bar
+  ]
+  const dailyGreen = [{ open: 168, high: 176, low: 167, close: 174 }] // daily close > open (Green)
+  const resInsideGreen = Model.computeFocusBasketSupport("GOOGL", "60", googlInsideCandles, null, dailyGreen, null, mockScan)
+  assert.equal(resInsideGreen.direction, "bullish")
+  assert.equal(resInsideGreen.supportPct, 74)
+  assert.equal(resInsideGreen.supportToken, "SUP 74%")
+
+  // Case 3: GOOGL inside bar (1) with Option 3C inheriting daily red -> assumes Short, measures pct2d
+  const dailyRed = [{ open: 176, high: 177, low: 168, close: 170 }] // daily close < open (Red)
+  const resInsideRed = Model.computeFocusBasketSupport("GOOGL", "60", googlInsideCandles, null, dailyRed, null, mockScan)
+  assert.equal(resInsideRed.direction, "bearish")
+  assert.equal(resInsideRed.supportPct, 18) // pct2d from mockScan
+
+  // Case 4: Opposing sector pressure (XLC Bearish Attack while GOOGL is long 2u) -> STAND DOWN (0x)
+  const opposingScan = {
+    focusPairs: {
+      "GOOGL": {
+        symbol: "GOOGL",
+        basket: "XLC",
+        peer: "META",
+        timeframes: {
+          "60": {
+            basket: "XLC",
+            timeframe: "60",
+            status: "BEARISH ATTACK",
+            pct2u: 15,
+            pct2d: 72,
+            pctAttack2u: 2,
+            pctAttack2d: 25,
+            peer: { symbol: "META", scenario: "2d", color: "R", price: 570.00, inForce: "In-Force" }
+          }
+        }
+      }
+    }
+  }
+  const resPass = Model.computeFocusBasketSupport("GOOGL", "60", googl2uCandles, null, null, null, opposingScan)
+  assert.equal(resPass.sizingTier, "pass")
+  assert.equal(resPass.positionSizing, "STAND DOWN (0x)")
+  assert.equal(resPass.sizingColor, "red")
+  assert.match(resPass.sizingReason, /Opposing sector pressure/)
+})
+
+test("sliceCandlesBefore binary search slices correctly before cutoff", () => {
+  const candles = [
+    { timestamp: 100, close: 10 },
+    { timestamp: 200, close: 20 },
+    { timestamp: 300, close: 30 }
+  ]
+  assert.deepEqual(Model.sliceCandlesBefore(candles, 250), [
+    { timestamp: 100, close: 10 },
+    { timestamp: 200, close: 20 }
+  ])
+  assert.deepEqual(Model.sliceCandlesBefore(candles, 200), [
+    { timestamp: 100, close: 10 }
+  ])
+  assert.deepEqual(Model.sliceCandlesBefore(candles, 100), [])
+  assert.deepEqual(Model.sliceCandlesBefore(candles, 350), candles)
+  assert.deepEqual(Model.sliceCandlesBefore([], 200), [])
+})
+
+test("computeFocusBasketSupport dynamically evaluates point-in-time replay at replayCutoffTs", () => {
+  const mockScanWithCandles = {
+    focusHoldings: {
+      "SMH": [
+        { symbol: "NVDA", name: "NVIDIA Corp" },
+        { symbol: "TSM", name: "Taiwan Semiconductor" },
+        { symbol: "AMD", name: "Advanced Micro Devices" }
+      ]
+    },
+    focusCandles: {
+      "30": {},
+      "60": {},
+      "1D": {
+        "NVDA": [
+          { timestamp: 100, open: 120, high: 125, low: 118, close: 122 },
+          { timestamp: 200, open: 122, high: 132, low: 121, close: 130 }, // 2u (ts 200)
+          { timestamp: 300, open: 130, high: 131, low: 115, close: 117 }  // 2d (ts 300)
+        ],
+        "TSM": [
+          { timestamp: 100, open: 150, high: 155, low: 148, close: 152 },
+          { timestamp: 200, open: 152, high: 162, low: 151, close: 160 }, // 2u Green
+          { timestamp: 300, open: 160, high: 161, low: 140, close: 142 }  // 2d Red
+        ],
+        "AMD": [
+          { timestamp: 100, open: 100, high: 105, low: 98, close: 102 },
+          { timestamp: 200, open: 102, high: 112, low: 101, close: 110 }, // 2u Green
+          { timestamp: 300, open: 110, high: 111, low: 90, close: 92 }   // 2d Red
+        ]
+      },
+      "1W": {},
+      "1M": {}
+    }
+  }
+
+  // Moment 1: Replay at cutoffTs = 250 (Includes ts 100 & 200, excludes ts 300)
+  // NVDA candles sliced to ts 250:
+  const nvdaAt250 = [
+    { timestamp: 100, open: 120, high: 125, low: 118, close: 122 },
+    { timestamp: 200, open: 122, high: 132, low: 121, close: 130 }
+  ]
+  const resAt250 = Model.computeFocusBasketSupport("NVDA", "1D", nvdaAt250, null, null, null, mockScanWithCandles, 250)
+  assert.equal(resAt250.direction, "bullish")
+  assert.equal(resAt250.supportPct, 100) // All 3 constituents breaking 2u at ts 200
+  assert.equal(resAt250.supportToken, "SUP 100%")
+  assert.equal(resAt250.peerToken, "TSM 2U")
+  assert.equal(resAt250.peerColor, "green")
+  assert.equal(resAt250.sizingTier, "full")
+  assert.equal(resAt250.positionSizing, "FULL (1.0x)")
+
+  // Moment 2: Replay at cutoffTs = 350 (Includes ts 100, 200 & 300)
+  // NVDA candles sliced to ts 350:
+  const nvdaAt350 = [
+    { timestamp: 100, open: 120, high: 125, low: 118, close: 122 },
+    { timestamp: 200, open: 122, high: 132, low: 121, close: 130 },
+    { timestamp: 300, open: 130, high: 131, low: 115, close: 117 }
+  ]
+  const resAt350 = Model.computeFocusBasketSupport("NVDA", "1D", nvdaAt350, null, null, null, mockScanWithCandles, 350)
+  assert.equal(resAt350.direction, "bearish")
+  assert.equal(resAt350.supportPct, 100) // All 3 constituents breaking 2d at ts 300
+  assert.equal(resAt350.supportToken, "SUP 100%")
+  assert.equal(resAt350.peerToken, "TSM 2D")
+  assert.equal(resAt350.peerColor, "red")
+  assert.equal(resAt350.sizingTier, "full")
+  assert.equal(resAt350.positionSizing, "FULL (1.0x)")
 })
 
 

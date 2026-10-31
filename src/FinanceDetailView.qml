@@ -581,26 +581,6 @@ Column {
                     font.family: controller.contentFontFamily
                     font.pixelSize: Style.font.bodySmall
                 }
-
-                Text {
-                    id: holdingsAttackLink
-                    text: "· Strat Attack"
-                    color: attackLinkMouseArea.containsMouse ? controller.contentForeground : controller.dim
-                    font.family: controller.contentFontFamily
-                    font.pixelSize: Style.font.bodySmall
-
-                    MouseArea {
-                        id: attackLinkMouseArea
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (controller && typeof controller.openStratAttack === "function") {
-                                controller.openStratAttack();
-                            }
-                        }
-                    }
-                }
             }
 
             MouseArea {

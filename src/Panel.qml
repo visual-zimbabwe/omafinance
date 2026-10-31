@@ -38,15 +38,6 @@ Panel {
     property var gridZooms: [-1, -1, -1, -1, -1]
     property var gridSplits: ({})
     property var activeGridWindows: []
-    property string breadthWeightMode: "equal"
-    property string breadthSortTimeframe: "1Y"
-    property bool breadthSortAsc: false
-    property var activeBreadthWindow: null
-    property var activeAttackWindow: null
-    property var sectorsHoldings: ({})
-    property var breadthEqualMetrics: []
-    property var breadthCapMetrics: []
-    property double breadthLastFetchedAt: 0
     property var layouts: ({})
     property string activeLayoutName: ""
     property string layoutActionStatus: ""
@@ -374,7 +365,7 @@ Panel {
     }
 
     function persist() {
-        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, breadthWeightMode, breadthSortTimeframe, breadthSortAsc, discordWebhook, gridTimeframes, gridZooms));
+        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, discordWebhook, gridTimeframes, gridZooms));
     }
 
     function persistSettings(values) {
@@ -491,12 +482,6 @@ Panel {
             layouts = state.layouts;
         else
             layouts = ({});
-        if (state.breadthWeightMode)
-            breadthWeightMode = state.breadthWeightMode;
-        if (state.breadthSortTimeframe)
-            breadthSortTimeframe = state.breadthSortTimeframe;
-        if (state.breadthSortAsc !== undefined)
-            breadthSortAsc = state.breadthSortAsc;
         if (state.discordWebhook !== undefined)
             discordWebhook = state.discordWebhook;
         clampSelected();
@@ -1929,86 +1914,6 @@ Panel {
         if (win) {
             nextWindows.push(win);
             root.activeGridWindows = nextWindows;
-        }
-    }
-
-    function openSectorBreadth() {
-        if (root.activeBreadthWindow && root.activeBreadthWindow.visible) {
-            if (typeof root.activeBreadthWindow.raise === "function")
-                root.activeBreadthWindow.raise();
-            if (typeof root.activeBreadthWindow.requestActivate === "function")
-                root.activeBreadthWindow.requestActivate();
-            return;
-        }
-
-        var win = sectorBreadthWindowComponent.createObject(root, {
-            controller: root,
-            sectorsHoldings: root.sectorsHoldings || ({}),
-            equalMetrics: root.breadthEqualMetrics || [],
-            capMetrics: root.breadthCapMetrics || [],
-            lastFetchedAt: root.breadthLastFetchedAt || 0,
-            weightMode: root.breadthWeightMode || "equal",
-            sortTimeframe: root.breadthSortTimeframe || "1Y",
-            sortAsc: root.breadthSortAsc === true
-        });
-
-        if (win) {
-            root.activeBreadthWindow = win;
-        }
-    }
-
-    function openStratAttack() {
-        if (root.activeAttackWindow && root.activeAttackWindow.visible) {
-            if (typeof root.activeAttackWindow.raise === "function")
-                root.activeAttackWindow.raise();
-            if (typeof root.activeAttackWindow.requestActivate === "function")
-                root.activeAttackWindow.requestActivate();
-            return;
-        }
-
-        var win = stratAttackWindowComponent.createObject(root, {
-            controller: root
-        });
-
-        if (win) {
-            root.activeAttackWindow = win;
-        }
-    }
-
-    Component {
-        id: sectorBreadthWindowComponent
-        SectorBreadthWindow {
-            id: breadthWin
-            visible: true
-
-            onStateSaveRequested: function (weightMode, sortTimeframe, sortAsc) {
-                root.breadthWeightMode = weightMode;
-                root.breadthSortTimeframe = sortTimeframe;
-                root.breadthSortAsc = sortAsc;
-                root.persist();
-            }
-
-            onVisibleChanged: {
-                if (!visible) {
-                    root.activeBreadthWindow = null;
-                    breadthWin.destroy();
-                }
-            }
-        }
-    }
-
-    Component {
-        id: stratAttackWindowComponent
-        StratAttackWindow {
-            id: attackWin
-            visible: true
-
-            onVisibleChanged: {
-                if (!visible) {
-                    root.activeAttackWindow = null;
-                    attackWin.destroy();
-                }
-            }
         }
     }
 

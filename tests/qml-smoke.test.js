@@ -18,9 +18,7 @@ const qmlFiles = [
   "GridSplitter.qml",
   "GridCell.qml",
   "GridWindow.qml",
-  "SectorBreadthWindow.qml",
-  "StratAttackWindow.qml",
-  "WtdCandlesStrip.qml"
+  "BasketSupportPopup.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
@@ -399,64 +397,6 @@ test("grid cell provides live ticker search suggestions with debouncing and keyb
   assert.match(gridCell, /Qt\.Key_Up[\s\S]*?root\.suggestionIndex/)
 })
 
-test("list view provides sector strat breadth entry point button next to layouts", () => {
-  const list = fs.readFileSync(source("FinanceListView.qml"), "utf8")
-
-  assert.match(list, /id:\s*breadthBtn/)
-  assert.match(list, /iconText:\s*"\\uf080"/)
-  assert.match(list, /tooltipText:\s*"Sector Strat Breadth"/)
-  assert.match(list, /onClicked:\s*controller\.openSectorBreadth\(\)/)
-  assert.match(list, /id:\s*breadthBtn[\s\S]*?id:\s*layoutBtn/)
-})
-
-test("panel configures and opens SectorBreadthWindow with state persistence", () => {
-  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
-
-  assert.match(panel, /property string breadthWeightMode:\s*"equal"/)
-  assert.match(panel, /property string breadthSortTimeframe:\s*"1Y"/)
-  assert.match(panel, /property bool breadthSortAsc:\s*false/)
-  assert.match(panel, /property var activeBreadthWindow:\s*null/)
-  assert.match(panel, /function openSectorBreadth\(\)/)
-  assert.match(panel, /id:\s*sectorBreadthWindowComponent/)
-  assert.match(panel, /SectorBreadthWindow\s*\{/)
-  assert.match(panel, /root\.breadthWeightMode = weightMode/)
-  assert.match(panel, /root\.breadthSortTimeframe = sortTimeframe/)
-  assert.match(panel, /root\.breadthSortAsc = sortAsc/)
-})
-
-test("sector breadth window renders matrix, weighting toggles, sorting, and hover tooltip", () => {
-  const breadth = fs.readFileSync(source("SectorBreadthWindow.qml"), "utf8")
-
-  assert.match(breadth, /FloatingWindow\s*\{/)
-  assert.match(breadth, /property string weightMode:\s*"equal"/)
-  assert.match(breadth, /property string sortTimeframe:\s*"1Y"/)
-  assert.match(breadth, /property bool sortAsc:\s*false/)
-  assert.match(breadth, /function startFullRefresh\(\)/)
-  assert.match(breadth, /function recalculateMetrics\(\)/)
-  assert.match(breadth, /Model\.computeAllSectorsBreadth/)
-  assert.match(breadth, /Model\.sortSectorBreadth/)
-  assert.match(breadth, /id:\s*runnerProc/)
-  assert.match(breadth, /id:\s*holdingsFetchProc/)
-  assert.match(breadth, /id:\s*dailySparkProc/)
-  assert.match(breadth, /id:\s*hourlySparkProc/)
-  assert.match(breadth, /text:\s*"Equal Weight"/)
-  assert.match(breadth, /text:\s*"Cap Weight"/)
-  assert.match(breadth, /id:\s*tooltipOverlay/)
-  assert.match(breadth, /▲ 2U \(Buyers\):/)
-  assert.match(breadth, /▼ 2D \(Sellers\):/)
-  assert.match(breadth, /Net Directional Delta:/)
-  assert.match(breadth, /root\.controller\.openDetail\(sectorRow\.modelData\.symbol\)/)
-})
-
-test("fetch-breadth script exists and executes successfully", () => {
-  const scriptPath = path.join(__dirname, "..", "scripts", "fetch-breadth.js")
-  assert.ok(fs.existsSync(scriptPath))
-  const scriptContent = fs.readFileSync(scriptPath, "utf8")
-  assert.match(scriptContent, /Model\.allSpdrSectorsList/)
-  assert.match(scriptContent, /Model\.holdingsUrl/)
-  assert.match(scriptContent, /Model\.sparkCandlesUrl/)
-})
-
 test("detail view holdings table renders Strat timeframe columns and hover tooltip", () => {
   const detail = fs.readFileSync(source("FinanceDetailView.qml"), "utf8")
   const panel = fs.readFileSync(source("Panel.qml"), "utf8")
@@ -591,47 +531,33 @@ test("grid window and panel persist cellTimeframes across state and layouts and 
   assert.match(chart, /signal replayRequested\(real timestamp\)/)
 })
 
-test("panel, list view, and detail view integrate StratAttackWindow and attack scanner", () => {
-  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
-  const listView = fs.readFileSync(source("FinanceListView.qml"), "utf8")
-  const detailView = fs.readFileSync(source("FinanceDetailView.qml"), "utf8")
-  const attackWin = fs.readFileSync(source("StratAttackWindow.qml"), "utf8")
+test("grid cell and basket support popup integrate focus basket tokens and inspector flyout", () => {
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const popup = fs.readFileSync(source("BasketSupportPopup.qml"), "utf8")
 
-  assert.match(panel, /property var activeAttackWindow:\s*null/)
-  assert.match(panel, /function openStratAttack\(\)/)
-  assert.match(panel, /stratAttackWindowComponent\.createObject/)
-  assert.match(panel, /id:\s*stratAttackWindowComponent/)
-  assert.match(panel, /StratAttackWindow\s*\{/)
+  assert.match(cell, /readonly property var focusSupport:\s*Model\.computeFocusBasketSupport/)
+  assert.match(cell, /id:\s*focusSupportBadgeItem/)
+  assert.match(cell, /root\.focusSupport\.attackToken/)
+  assert.match(cell, /root\.focusSupport\.peerToken/)
+  assert.match(cell, /root\.focusSupport\.supportToken/)
+  assert.match(cell, /id:\s*cellSupportPopup/)
 
-  assert.match(listView, /id:\s*attackBtn/)
-  assert.match(listView, /tooltipText:\s*"TheStrat Attack Scanner"/)
-  assert.match(listView, /controller\.openStratAttack\(\)/)
-
-  assert.match(detailView, /id:\s*holdingsAttackLink/)
-  assert.match(detailView, /controller\.openStratAttack\(\)/)
-
-  assert.match(attackWin, /title:\s*"Omafinance - TheStrat Attack Scanner"/)
-  assert.match(attackWin, /Model\.nodeCommand\(scriptPath\)/)
-  assert.match(attackWin, /id:\s*attackRunnerProc/)
-  assert.match(attackWin, /property var attackData:/)
-  assert.match(attackWin, /property var topBullish:/)
-  assert.match(attackWin, /property var topBearish:/)
-  assert.match(attackWin, /property var topLaggards:/)
-  assert.match(attackWin, /WtdCandlesStrip\s*\{/)
-  assert.match(attackWin, /gridMode:\s*"2\+3"/)
-  assert.match(attackWin, /root\.controller\.openGrid/)
+  assert.match(popup, /property var supportData/)
+  assert.match(popup, /allTimeframes/)
+  assert.match(popup, /positionSizing/)
+  assert.match(popup, /sizingReason/)
 })
 
-test("fetch-attack runner exists and produces structured basket attack output", () => {
+test("fetch-attack runner exists and produces structured focus basket output", () => {
   const scriptPath = path.join(root, "scripts", "fetch-attack.js")
   assert.ok(fs.existsSync(scriptPath), "scripts/fetch-attack.js should exist")
   const code = fs.readFileSync(scriptPath, "utf8")
-  assert.match(code, /Model\.allAttackBasketsList\(\)/)
+  assert.match(code, /focusBasketSymbols\s*=\s*\[\s*"XLC",\s*"SMH"\s*\]/)
   assert.match(code, /resolveEtfHoldings/)
   assert.match(code, /Model\.computeBasketAttackMetrics/)
-  assert.match(code, /topBullishAttacks/)
-  assert.match(code, /topBearishAttacks/)
-  assert.match(code, /topLaggards/)
+  assert.match(code, /focusPairs/)
+  assert.match(code, /focusCandles/)
+  assert.match(code, /focusHoldings/)
 })
 
 
