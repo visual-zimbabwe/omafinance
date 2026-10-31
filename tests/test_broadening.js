@@ -96,4 +96,19 @@ if (bfOih.major && bfOih.minor && (bfOih.minor.upper || bfOih.minor.lower)) {
   process.exit(1);
 }
 
-console.log("\n>>> ALL 5 TESTS PASSED SUCCESSFULLY! <<<\n");
+// 6. Multi-Scale Broadening Formation Array Check (> 2 BFs simultaneously)
+console.log("\n[Test 6] Multi-Scale Formations Array Count Check (> 2 BFs)");
+console.log("OIH Formations Count:", bfOih.formations?.length);
+console.log("SPY Formations Count:", bfSpy.formations?.length);
+console.log("IWM Formations Count:", bfIwm.formations?.length);
+
+if (bfOih.formations && bfOih.formations.length > 2 &&
+    bfSpy.formations && bfSpy.formations.length > 2 &&
+    bfIwm.formations && bfIwm.formations.length > 2) {
+  console.log("PASS: Multi-scale engine successfully generates and retains > 2 distinct active broadening formations!");
+} else {
+  console.error("FAIL: Expected > 2 formations on OIH, SPY, and IWM!");
+  process.exit(1);
+}
+
+console.log("\n>>> ALL 6 TESTS PASSED SUCCESSFULLY! <<<\n");

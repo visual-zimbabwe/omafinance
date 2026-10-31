@@ -862,7 +862,11 @@ Item {
                     var futureIdxAtRight = g.vStart + Math.round((rightEdgeX - g.xs[0]) / g.slotW);
                     var drawnBadgeYs = [];
 
-                    var drawBFRay = function(ray, isUpper, isMinor) {
+                    var forms = (bf.formations && Array.isArray(bf.formations) && bf.formations.length > 0)
+                        ? bf.formations
+                        : [bf.major, bf.minor].filter(Boolean);
+
+                    var drawBFRay = function(ray, isUpper, formIdx) {
                         if (!ray) return;
                         var a1X = Math.round(g.xs[0] + (ray.anchor1.index - g.vStart) * g.slotW) + 0.5;
                         var a1Y = Math.round(root.priceToYVal(ray.anchor1.price, g)) + 0.5;
@@ -872,10 +876,23 @@ Item {
                         var projPrice = ray.anchor1.price + ray.slope * (futureIdxAtRight - ray.anchor1.index);
                         var projY = Math.round(root.priceToYVal(projPrice, g)) + 0.5;
 
-                        var strokeColor = isUpper ? (isMinor ? "#00B4D8" : "#3879E3") : (isMinor ? "#FB7185" : "#FE0000");
-                        var lineWidth = isMinor ? 0.5 : 0.6;
-                        var dotRadius = isMinor ? 1.5 : 1.8;
-                        var dashPattern = isMinor ? [4, 3] : [6, 4];
+                        var lvl = (typeof formIdx === "number") ? formIdx : 0;
+                        var strokeColor;
+                        if (isUpper) {
+                            if (lvl === 0) strokeColor = "#3879E3";       // Major Upper (Royal Blue)
+                            else if (lvl === 1) strokeColor = "#00B4D8";  // Intermediate Upper (Sky Blue)
+                            else if (lvl === 2) strokeColor = "#818CF8";  // Minor Upper (Indigo)
+                            else strokeColor = "#2DD4BF";                 // Inner Minor Upper (Teal)
+                        } else {
+                            if (lvl === 0) strokeColor = "#FE0000";       // Major Lower (Crimson)
+                            else if (lvl === 1) strokeColor = "#FB7185";  // Intermediate Lower (Coral)
+                            else if (lvl === 2) strokeColor = "#F472B6";  // Minor Lower (Rose)
+                            else strokeColor = "#FBBF24";                 // Inner Minor Lower (Amber)
+                        }
+
+                        var lineWidth = (lvl === 0) ? 0.60 : ((lvl === 1) ? 0.50 : 0.45);
+                        var dotRadius = (lvl === 0) ? 1.8 : ((lvl === 1) ? 1.5 : 1.3);
+                        var dashPattern = (lvl === 0) ? [6, 4] : ((lvl === 1) ? [4, 3] : [3, 3]);
 
                         ctx.save();
                         ctx.strokeStyle = strokeColor;
@@ -928,19 +945,12 @@ Item {
                         ctx.restore();
                     };
 
-                    // Draw Major Formation Rays
-                    if (bf.major) {
-                        if (bf.major.upper) drawBFRay(bf.major.upper, true, false);
-                        if (bf.major.lower) drawBFRay(bf.major.lower, false, false);
-                    } else {
-                        if (bf.upper) drawBFRay(bf.upper, true, false);
-                        if (bf.lower) drawBFRay(bf.lower, false, false);
-                    }
-
-                    // Draw Minor (Nested) Formation Rays
-                    if (bf.minor) {
-                        if (bf.minor.upper) drawBFRay(bf.minor.upper, true, true);
-                        if (bf.minor.lower) drawBFRay(bf.minor.lower, false, true);
+                    // Draw all detected active broadening formations
+                    for (var fi = 0; fi < forms.length; fi++) {
+                        var f = forms[fi];
+                        if (!f) continue;
+                        if (f.upper) drawBFRay(f.upper, true, fi);
+                        if (f.lower) drawBFRay(f.lower, false, fi);
                     }
                 }
             }

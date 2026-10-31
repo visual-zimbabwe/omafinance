@@ -5376,6 +5376,7 @@ function isRayRedundant(r1, r2) {
 function computeActiveBroadening(candles, lookbackBars) {
   if (!candles || candles.length < 5) return null;
   var n = candles.length;
+  var lastIdx = n - 1;
 
   var startIdx = (typeof lookbackBars === "number" && lookbackBars >= 5) ?
     Math.max(0, n - lookbackBars) :
@@ -5385,7 +5386,6 @@ function computeActiveBroadening(candles, lookbackBars) {
   if (typeof lookbackBars === "number" && lookbackBars >= 5) {
     var up = computeRayForOrigin(candles, startIdx, n, true);
     var lo = computeRayForOrigin(candles, startIdx, n, false);
-    var lastIdx = n - 1;
     var projUp = up ? (up.anchor1.price + up.slope * (lastIdx - up.anchor1.index)) : null;
     var projLo = lo ? (lo.anchor1.price + lo.slope * (lastIdx - lo.anchor1.index)) : null;
 
@@ -5395,15 +5395,33 @@ function computeActiveBroadening(candles, lookbackBars) {
         minorOrigins.push(mi - 1);
       }
     }
-    var minorUp = null;
-    var minorLo = null;
+    var minorFormations = [];
     for (var mk = minorOrigins.length - 1; mk >= 0; mk--) {
       var origM = minorOrigins[mk];
       var mU = computeRayForOrigin(candles, origM, n, true);
       var mL = computeRayForOrigin(candles, origM, n, false);
-      if (mU && !isRayRedundant(up, mU) && !minorUp) minorUp = mU;
-      if (mL && !isRayRedundant(lo, mL) && !minorLo) minorLo = mL;
-      if (minorUp || minorLo) break;
+      var validU = mU && (!up || !isRayRedundant(up, mU));
+      var validL = mL && (!lo || !isRayRedundant(lo, mL));
+      if (validU || validL) {
+        var already = false;
+        for (var mfi = 0; mfi < minorFormations.length; mfi++) {
+          if ((validU && minorFormations[mfi].upper && isRayRedundant(minorFormations[mfi].upper, mU)) ||
+              (validL && minorFormations[mfi].lower && isRayRedundant(minorFormations[mfi].lower, mL))) {
+            already = true;
+            break;
+          }
+        }
+        if (!already) {
+          minorFormations.push({
+            originIndex: origM,
+            upper: validU ? mU : null,
+            lower: validL ? mL : null,
+            projectedUpper: validU ? (mU.anchor1.price + mU.slope * (lastIdx - mU.anchor1.index)) : null,
+            projectedLower: validL ? (mL.anchor1.price + mL.slope * (lastIdx - mL.anchor1.index)) : null
+          });
+          if (minorFormations.length >= 4) break;
+        }
+      }
     }
 
     var majorExplicit = (up || lo) ? {
@@ -5414,18 +5432,17 @@ function computeActiveBroadening(candles, lookbackBars) {
       projectedLower: projLo
     } : null;
 
-    var minorExplicit = (minorUp || minorLo) ? {
-      originIndex: Math.min(minorUp ? minorUp.anchor1.index : n, minorLo ? minorLo.anchor1.index : n),
-      upper: minorUp,
-      lower: minorLo,
-      projectedUpper: minorUp ? (minorUp.anchor1.price + minorUp.slope * (lastIdx - minorUp.anchor1.index)) : null,
-      projectedLower: minorLo ? (minorLo.anchor1.price + minorLo.slope * (lastIdx - minorLo.anchor1.index)) : null
-    } : null;
+    var formsExplicit = [];
+    if (majorExplicit) formsExplicit.push(majorExplicit);
+    for (var fei = 0; fei < minorFormations.length; fei++) {
+      formsExplicit.push(minorFormations[fei]);
+    }
 
     return {
       originIndex: startIdx,
+      formations: formsExplicit,
       major: majorExplicit,
-      minor: minorExplicit,
+      minor: formsExplicit.length > 1 ? formsExplicit[1] : null,
       upper: up,
       lower: lo,
       projectedUpper: projUp,
@@ -5470,47 +5487,35 @@ function computeActiveBroadening(candles, lookbackBars) {
   candU.sort(function(a, b) { return b.span - a.span; });
   candL.sort(function(a, b) { return b.span - a.span; });
 
-  var majorU = candU.length > 0 ? candU[0] : null;
-  var majorL = candL.length > 0 ? candL[0] : null;
+  var formations = [];
+  var maxF = Math.min(5, Math.max(candU.length, candL.length));
 
-  var minorU = null;
-  for (var mui = 1; mui < candU.length; mui++) {
-    if (!isRayRedundant(candU[mui], majorU)) { minorU = candU[mui]; break; }
+  for (var fi = 0; fi < maxF; fi++) {
+    var formU = candU[fi] || null;
+    var formL = candL[fi] || null;
+    if (formU || formL) {
+      formations.push({
+        originIndex: Math.min(formU ? formU.anchor1.index : n, formL ? formL.anchor1.index : n),
+        upper: formU,
+        lower: formL,
+        projectedUpper: formU ? (formU.anchor1.price + formU.slope * (lastIdx - formU.anchor1.index)) : null,
+        projectedLower: formL ? (formL.anchor1.price + formL.slope * (lastIdx - formL.anchor1.index)) : null
+      });
+    }
   }
 
-  var minorL = null;
-  for (var mli = 1; mli < candL.length; mli++) {
-    if (!isRayRedundant(candL[mli], majorL)) { minorL = candL[mli]; break; }
-  }
-
-  var lastIdxFull = n - 1;
-  var projU = majorU ? (majorU.anchor1.price + majorU.slope * (lastIdxFull - majorU.anchor1.index)) : null;
-  var projL = majorL ? (majorL.anchor1.price + majorL.slope * (lastIdxFull - majorL.anchor1.index)) : null;
-
-  var majorAuto = (majorU || majorL) ? {
-    originIndex: Math.min(majorU ? majorU.anchor1.index : n, majorL ? majorL.anchor1.index : n),
-    upper: majorU,
-    lower: majorL,
-    projectedUpper: projU,
-    projectedLower: projL
-  } : null;
-
-  var minorAuto = (minorU || minorL) ? {
-    originIndex: Math.min(minorU ? minorU.anchor1.index : n, minorL ? minorL.anchor1.index : n),
-    upper: minorU,
-    lower: minorL,
-    projectedUpper: minorU ? (minorU.anchor1.price + minorU.slope * (lastIdxFull - minorU.anchor1.index)) : null,
-    projectedLower: minorL ? (minorL.anchor1.price + minorL.slope * (lastIdxFull - minorL.anchor1.index)) : null
-  } : null;
+  var majorAuto = formations.length > 0 ? formations[0] : null;
+  var minorAuto = formations.length > 1 ? formations[1] : null;
 
   return {
-    originIndex: majorAuto ? majorAuto.originIndex : (minorAuto ? minorAuto.originIndex : startIdx),
+    originIndex: majorAuto ? majorAuto.originIndex : startIdx,
+    formations: formations,
     major: majorAuto,
     minor: minorAuto,
-    upper: majorU,
-    lower: majorL,
-    projectedUpper: projU,
-    projectedLower: projL
+    upper: majorAuto ? majorAuto.upper : null,
+    lower: majorAuto ? majorAuto.lower : null,
+    projectedUpper: majorAuto ? majorAuto.projectedUpper : null,
+    projectedLower: majorAuto ? majorAuto.projectedLower : null
   };
 }
 
