@@ -854,10 +854,12 @@ Item {
                 ctx.restore();
             }
 
-            // TheStrat Broadening Formation (BF) Lines (Daily timeframe only; monthly anchored)
+            // TheStrat Broadening Formation (BF) Lines (Daily: monthly anchored; 60m: weekly anchored)
             var isDailyChart = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
-            if (root.showBroadening && isDailyChart && g.allCandles && g.allCandles.length >= 3 && g.innerW > 0) {
-                var bf = Model.computeActiveBroadening(g.allCandles);
+            var isHourlyChart = (root.rangeKey === "60" || root.rangeKey === "60m" || root.rangeKey === "1h");
+            if (root.showBroadening && (isDailyChart || isHourlyChart) && g.allCandles && g.allCandles.length >= 3 && g.innerW > 0) {
+                var anchorMode = isHourlyChart ? "week" : "month";
+                var bf = Model.computeActiveBroadening(g.allCandles, null, anchorMode);
                 if (bf) {
                     var rightEdgeX = g.right;
 

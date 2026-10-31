@@ -566,6 +566,8 @@ test("candlestick chart renders broadening formation lines with white #FFFFFF an
   assert.match(chart, /var dashPattern = \(lvl === 0\) \? \[\] : \(\(lvl === 1\) \? \[6, 4\] : \[2, 3\]\)/)
   assert.match(chart, /var lineAlpha = \(lvl === 0\) \? 1\.0 : \(\(lvl === 1\) \? 0\.75 : 0\.40\)/)
   assert.match(chart, /ctx\.globalAlpha = lineAlpha/)
+  assert.match(chart, /var isHourlyChart = \(root\.rangeKey === "60"/)
+  assert.match(chart, /var anchorMode = isHourlyChart \? "week" : "month"/)
 })
 
 

@@ -1656,6 +1656,21 @@ test("30m timeframe is supported across chartSpec, parseInterval, mergePeriodCan
   assert.ok(formatted.includes(":30"))
 })
 
+test("60m timeframe supports 3-month range and weekly Broadening Formations anchoring", () => {
+  assert.ok(Model.chartRanges().includes("60"))
+  assert.deepEqual(Model.chartSpec("60"), { range: "3mo", interval: "60m" })
+  assert.deepEqual(Model.chartSpec("60m"), { range: "3mo", interval: "60m" })
+  assert.equal(Model.rangeCaption("60"), "60-Minute Candles (3 Months)")
+  assert.equal(Model.rangeCaption("60m"), "60-Minute Candles (3 Months)")
+
+  // Weekly anchoring key on Monday
+  const monBar = { timestamp: 1793021400 } // Monday 2026-10-26 13:30 UTC
+  const wedBar = { timestamp: 1793194200 } // Wednesday 2026-10-28 13:30 UTC
+  assert.equal(Model.candleWeekKey(monBar), "2026-10-26")
+  assert.equal(Model.candleWeekKey(wedBar), "2026-10-26")
+  assert.deepEqual(Model.bfWeekStarts([monBar, wedBar], 0, 2), [0])
+})
+
 test("HTF price levels cascade to LTF and anchor to the exact LTF bar that printed the HTF OHLC", () => {
   // Visibility hierarchy: HTF shows on same and LTF, but not on higher TF
   const lvl1D = { sourceTf: "1D", anchorTs: 1776864600, ohlcField: "high", price: 280.5 }

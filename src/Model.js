@@ -350,7 +350,8 @@ function chartSpec(range) {
     case "15":
     case "15m": return { range: "1mo", interval: "15m" }
     case "30": return { range: "1mo", interval: "30m" }
-    case "60": return { range: "1mo", interval: "60m" }
+    case "60":
+    case "60m": return { range: "3mo", interval: "60m" }
     case "1W":
     case "W":
     case "1w":
@@ -465,8 +466,8 @@ function chartCommand(symbol, rangeKey) {
   var rk = String(rangeKey || "1D")
   if (isHyperliquidCryptoSymbol(sym) && (rk === "30" || rk === "60" || rk === "1D" || rk === "1W")) {
     var coin = cryptoBaseSymbol(sym)
-    var interval = (rk === "30") ? "30m" : ((rk === "60") ? "1h" : "1d")
-    var lookbackDays = (rk === "30" || rk === "60") ? 30 : 400
+    var interval = (rk === "30") ? "30m" : ((rk === "60" || rk === "60m") ? "1h" : "1d")
+    var lookbackDays = (rk === "30") ? 30 : ((rk === "60" || rk === "60m") ? 90 : 400)
     var startTime = Date.now() - (lookbackDays * 86400000)
     var payload = JSON.stringify({
       type: "candleSnapshot",
@@ -530,7 +531,8 @@ function sessionFromMeta(meta) {
 function rangeCaption(rangeKey, quote) {
   switch (String(rangeKey || "1D")) {
     case "30": return "30-Minute Candles (1 Month)"
-    case "60": return "60-Minute Candles (1 Month)"
+    case "60":
+    case "60m": return "60-Minute Candles (3 Months)"
     case "1D": return "1-Day Candles (1 Year)"
     case "1W": return "1-Week Candles (All Time)"
     case "1M": return "1-Month Candles (10 Years)"
@@ -5439,9 +5441,45 @@ function bfMonthStarts(candles, minIdx, maxIdx) {
   return starts;
 }
 
-// A formation stays alive across subsequent months until price hits the projected opposite
+function candleWeekKey(candle) {
+  if (!candle) return "";
+  var ts = candle.timestamp || candle.time;
+  if (!ts && candle.date) {
+    var parts = String(candle.date).split("-");
+    if (parts.length === 3) {
+      var d = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])));
+      var day = d.getUTCDay();
+      var diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
+      var mon = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), diff));
+      return mon.toISOString().slice(0, 10);
+    }
+    return "";
+  }
+  if (!ts) return "";
+  var dt = new Date(ts > 1e11 ? ts : ts * 1000);
+  var dayOfWeek = dt.getUTCDay();
+  var diffToMon = dt.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+  var monday = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), diffToMon));
+  return monday.toISOString().slice(0, 10);
+}
+
+// Collect first bar index of each calendar week within [minIdx, maxIdx)
+function bfWeekStarts(candles, minIdx, maxIdx) {
+  var starts = [];
+  var lastW = "";
+  for (var i = minIdx; i < maxIdx; i++) {
+    var w = candleWeekKey(candles[i]);
+    if (w && w !== lastW) {
+      starts.push(i);
+      lastW = w;
+    }
+  }
+  return starts;
+}
+
+// A formation stays alive across subsequent periods until price hits the projected opposite
 // boundary (target reached) or establishes a completely new higher-timeframe trend.
-function isFormationAlive(fu, fl, candles, n, currentMonthStartIdx) {
+function isFormationAlive(fu, fl, candles, n, currentPeriodStartIdx) {
   if (!fu && !fl) return false;
   if (!fu || !fl) return true;
 
@@ -5453,7 +5491,7 @@ function isFormationAlive(fu, fl, candles, n, currentMonthStartIdx) {
     for (var t = l2 + 1; t < n; t++) {
       var projU = bfProject(fu, t);
       if (candles[t].high >= projU) {
-        if (t < currentMonthStartIdx) return false;
+        if (t < currentPeriodStartIdx) return false;
         return true;
       }
     }
@@ -5462,7 +5500,7 @@ function isFormationAlive(fu, fl, candles, n, currentMonthStartIdx) {
     for (var t = u2 + 1; t < n; t++) {
       var projL = bfProject(fl, t);
       if (candles[t].low <= projL) {
-        if (t < currentMonthStartIdx) return false;
+        if (t < currentPeriodStartIdx) return false;
         return true;
       }
     }
@@ -5472,7 +5510,7 @@ function isFormationAlive(fu, fl, candles, n, currentMonthStartIdx) {
 
 // One formation per start point: its upper and lower rays always come from the same start,
 // so a formation's two lines describe the same triangle.
-//   * Formations stay alive across subsequent months until price hits the projected opposite boundary
+//   * Formations stay alive across subsequent periods until price hits the projected opposite boundary
 //     (target reached) or establishes a completely new higher-timeframe trend.
 //   * A boundary (anchor2) already drawn by an outer, earlier-starting formation is not drawn
 //     again by a nested one; a nested formation that shares both extremes is the same triangle
@@ -5480,19 +5518,20 @@ function isFormationAlive(fu, fl, candles, n, currentMonthStartIdx) {
 //   * Superseded rays are dropped (except for a pinned formation, see below).
 //   * Formations are ordered outermost (earliest start) first, so index 0 is the major formation.
 // pinFirst: origins[0] is an explicit formation start (e.g. bar replay); its rays are always kept.
-function buildBroadeningFormations(candles, origins, n, pinFirst) {
+// anchorMode: "month" (default for daily) or "week" (for 60m/hourly).
+function buildBroadeningFormations(candles, origins, n, pinFirst, anchorMode) {
   var lastIdx = n - 1;
   var cands = [];
   var allU = [];
   var allL = [];
+  var isWeekly = (anchorMode === "week");
 
-  var curD = candleDateIso(candles[lastIdx]);
-  var curMonth = curD ? curD.slice(0, 7) : "";
-  var curMonthStartIdx = lastIdx;
-  for (var mi = lastIdx; mi >= 0; mi--) {
-    var md = candleDateIso(candles[mi]);
-    if (md && md.slice(0, 7) !== curMonth) {
-      curMonthStartIdx = mi + 1;
+  var curPeriod = isWeekly ? candleWeekKey(candles[lastIdx]) : (candleDateIso(candles[lastIdx]) || "").slice(0, 7);
+  var curPeriodStartIdx = lastIdx;
+  for (var pi = lastIdx; pi >= 0; pi--) {
+    var pKey = isWeekly ? candleWeekKey(candles[pi]) : (candleDateIso(candles[pi]) || "").slice(0, 7);
+    if (pKey && pKey !== curPeriod) {
+      curPeriodStartIdx = pi + 1;
       break;
     }
   }
@@ -5503,7 +5542,7 @@ function buildBroadeningFormations(candles, origins, n, pinFirst) {
     var l = computeRayForOrigin(candles, o, n, false);
     if (!u && !l) continue;
     var isPinned = pinFirst && k === 0;
-    if (!isPinned && !isFormationAlive(u, l, candles, n, curMonthStartIdx)) {
+    if (!isPinned && !isFormationAlive(u, l, candles, n, curPeriodStartIdx)) {
       continue;
     }
     cands.push({ originIndex: o, upper: u, lower: l, pinned: isPinned });
@@ -5538,13 +5577,14 @@ function buildBroadeningFormations(candles, origins, n, pinFirst) {
 
 var _bfCache = { order: [], map: {} };
 
-function bfCacheKey(candles, lookbackBars) {
+function bfCacheKey(candles, lookbackBars, anchorMode) {
   var n = candles.length;
   var first = candles[0];
   var mid = candles[Math.floor(n / 2)];
   var last = candles[n - 1];
   return [
     n, (typeof lookbackBars === "number") ? lookbackBars : "",
+    anchorMode || "",
     first.timestamp || first.time, first.high, first.low,
     mid.high, mid.low,
     last.timestamp || last.time, last.high, last.low
@@ -5553,22 +5593,43 @@ function bfCacheKey(candles, lookbackBars) {
 
 // Active broadening formations for a candle series.
 // For daily timeframe: uses monthly anchors only (Scenario 3 anchors are removed).
-// Formations stay alive across subsequent months until price hits the projected opposite boundary
+// For 60m/hourly timeframe: uses weekly anchors (Scenario 3 anchors are removed).
+// Formations stay alive across subsequent periods until price hits the projected opposite boundary
 // (target reached) or establishes a completely new higher-timeframe trend.
 // lookbackBars (optional): explicitly pins origin lookbackBars from the end (bar replay / tests).
-function computeActiveBroadening(candles, lookbackBars) {
+// anchorMode (optional): "month" (default for daily) or "week" (default for intraday/hourly).
+function computeActiveBroadening(candles, lookbackBars, anchorMode) {
   if (!candles || candles.length < 5) return null;
 
-  var cacheKey = bfCacheKey(candles, lookbackBars);
+  var isWeekly = (anchorMode === "week");
+  if (!anchorMode && candles.length >= 2) {
+    var t0 = candles[0].timestamp || candles[0].time;
+    var t1 = candles[1].timestamp || candles[1].time;
+    if (t0 && t1) {
+      var deltaSec = Math.abs(t1 - t0);
+      if (deltaSec > 0 && deltaSec < 14400) {
+        isWeekly = true;
+      }
+    }
+  }
+  var resolvedAnchorMode = isWeekly ? "week" : "month";
+
+  var cacheKey = bfCacheKey(candles, lookbackBars, resolvedAnchorMode);
   if (Object.prototype.hasOwnProperty.call(_bfCache.map, cacheKey)) return _bfCache.map[cacheKey];
 
   var n = candles.length;
   var explicitStart = (typeof lookbackBars === "number" && lookbackBars >= 5);
-  var startIdx = Math.max(0, n - (explicitStart ? lookbackBars : BF_DEFAULT_WINDOW));
+  var defaultWindow = isWeekly ? 500 : BF_DEFAULT_WINDOW;
+  var startIdx = Math.max(0, n - (explicitStart ? lookbackBars : defaultWindow));
 
   var origins;
   if (explicitStart) {
     origins = [startIdx];
+  } else if (isWeekly) {
+    origins = bfWeekStarts(candles, startIdx, n);
+    if (origins.length === 0 || origins[0] !== startIdx) {
+      origins.unshift(startIdx);
+    }
   } else {
     origins = bfMonthStarts(candles, startIdx, n);
     if (origins.length === 0 || origins[0] !== startIdx) {
@@ -5576,7 +5637,7 @@ function computeActiveBroadening(candles, lookbackBars) {
     }
   }
 
-  var formations = buildBroadeningFormations(candles, origins, n, explicitStart);
+  var formations = buildBroadeningFormations(candles, origins, n, explicitStart, resolvedAnchorMode);
   var major = formations.length > 0 ? formations[0] : null;
   var result = {
     originIndex: major ? major.originIndex : startIdx,
@@ -5713,6 +5774,8 @@ if (typeof module !== "undefined") {
     sliceCandlesBefore: sliceCandlesBefore,
     computeReplayFocusPair: computeReplayFocusPair,
     computeFocusBasketSupport: computeFocusBasketSupport,
+    candleWeekKey: candleWeekKey,
+    bfWeekStarts: bfWeekStarts,
     computeActiveBroadening: computeActiveBroadening,
     nodeCommand: nodeCommand
   }
