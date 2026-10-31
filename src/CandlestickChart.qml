@@ -894,7 +894,7 @@ Item {
                         }
 
                         var lvl = (typeof formIdx === "number") ? formIdx : 0;
-                        var strokeColor = isUpper ? "#3879E3" : "#FE0000";
+                        var strokeColor = "#FFFFFF";
                         var lineWidth = (lvl === 0) ? 0.60 : ((lvl === 1) ? 0.50 : 0.45);
                         var dotRadius = (lvl === 0) ? 1.8 : ((lvl === 1) ? 1.5 : 1.3);
                         var dashPattern = (lvl === 0) ? [] : ((lvl === 1) ? [6, 4] : [2, 3]);
