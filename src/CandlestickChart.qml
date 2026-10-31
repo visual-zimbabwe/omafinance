@@ -28,6 +28,8 @@ Item {
     readonly property int scaleGutterWidth: showPriceScale ? Style.space(52) : 0
     property bool showTimeScale: true
     readonly property int timeScaleHeight: showTimeScale ? Style.space(18) : 0
+    property bool showBroadening: false
+    onShowBroadeningChanged: refreshGeometry()
 
     signal crosshairMoved(real timestamp, real price, var candle)
     signal crosshairCleared
@@ -386,7 +388,9 @@ Item {
             return unset;
 
         var minBars = 8;
-        var vCount = (root.viewCount > 0 && root.viewCount < total) ? Math.max(minBars, root.viewCount) : total;
+        var isDaily = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
+        var defaultCount = isDaily ? Math.min(total, 140) : total;
+        var vCount = (root.viewCount > 0 && root.viewCount < total) ? Math.max(minBars, root.viewCount) : defaultCount;
         var maxStart = Math.max(0, total - vCount);
         var vStart = root.followLatest ? maxStart : Math.max(0, Math.min(maxStart, root.viewStart));
 
@@ -847,6 +851,98 @@ Item {
                 ctx.lineTo(g.right, extLineY);
                 ctx.stroke();
                 ctx.restore();
+            }
+
+            // TheStrat Broadening Formation (BF) Lines (Daily timeframe)
+            var isDailyChart = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
+            if (root.showBroadening && isDailyChart && g.allCandles && g.allCandles.length >= 3 && g.innerW > 0) {
+                var bf = Model.computeActiveBroadening(g.allCandles);
+                if (bf) {
+                    var rightEdgeX = g.right;
+                    var futureIdxAtRight = g.vStart + Math.round((rightEdgeX - g.xs[0]) / g.slotW);
+                    var drawnBadgeYs = [];
+
+                    var drawBFRay = function(ray, isUpper, isMinor) {
+                        if (!ray) return;
+                        var a1X = Math.round(g.xs[0] + (ray.anchor1.index - g.vStart) * g.slotW) + 0.5;
+                        var a1Y = Math.round(root.priceToYVal(ray.anchor1.price, g)) + 0.5;
+                        var a2X = Math.round(g.xs[0] + (ray.anchor2.index - g.vStart) * g.slotW) + 0.5;
+                        var a2Y = Math.round(root.priceToYVal(ray.anchor2.price, g)) + 0.5;
+
+                        var projPrice = ray.anchor1.price + ray.slope * (futureIdxAtRight - ray.anchor1.index);
+                        var projY = Math.round(root.priceToYVal(projPrice, g)) + 0.5;
+
+                        var strokeColor = isUpper ? (isMinor ? "#00B4D8" : "#3879E3") : (isMinor ? "#FB7185" : "#FE0000");
+                        var lineWidth = isMinor ? 0.5 : 0.6;
+                        var dotRadius = isMinor ? 1.5 : 1.8;
+                        var dashPattern = isMinor ? [4, 3] : [6, 4];
+
+                        ctx.save();
+                        ctx.strokeStyle = strokeColor;
+                        ctx.lineWidth = lineWidth;
+                        if (ctx.setLineDash) ctx.setLineDash(dashPattern);
+
+                        ctx.beginPath();
+                        ctx.moveTo(a1X, a1Y);
+                        ctx.lineTo(rightEdgeX, projY);
+                        ctx.stroke();
+
+                        // Anchor Rings / Dots
+                        if (ctx.setLineDash) ctx.setLineDash([]);
+                        ctx.fillStyle = strokeColor;
+                        if (a1X >= g.left && a1X <= g.right) {
+                            ctx.beginPath();
+                            ctx.arc(a1X, a1Y, dotRadius, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        if (a2X >= g.left && a2X <= g.right) {
+                            ctx.beginPath();
+                            ctx.arc(a2X, a2Y, dotRadius, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+
+                        // Right Gutter Price Badge
+                        if (root.showPriceScale && projY >= g.top && projY <= g.bot) {
+                            var badgeW = root.scaleGutterWidth - Style.space(4);
+                            var badgeH = Style.space(13);
+                            var badgeX = g.right + Style.space(2);
+                            var targetY = Math.max(g.top, Math.min(g.bot - badgeH, Math.round(projY - badgeH / 2)));
+
+                            for (var bi = 0; bi < drawnBadgeYs.length; bi++) {
+                                if (Math.abs(targetY - drawnBadgeYs[bi]) < badgeH + 2) {
+                                    targetY = (targetY <= drawnBadgeYs[bi]) ? (drawnBadgeYs[bi] - badgeH - 2) : (drawnBadgeYs[bi] + badgeH + 2);
+                                }
+                            }
+                            targetY = Math.max(g.top, Math.min(g.bot - badgeH, targetY));
+                            drawnBadgeYs.push(targetY);
+
+                            var badgeLabel = Model.formatPrice(projPrice, root.currency, root.priceHint);
+                            ctx.fillStyle = strokeColor;
+                            ctx.fillRect(badgeX, targetY, badgeW, badgeH);
+                            ctx.font = "bold " + (Style.font.bodySmall - 1) + "px " + root.fontFamily;
+                            ctx.fillStyle = "#FFFFFF";
+                            ctx.textAlign = "center";
+                            ctx.textBaseline = "middle";
+                            ctx.fillText(badgeLabel, badgeX + badgeW / 2, targetY + badgeH / 2);
+                        }
+                        ctx.restore();
+                    };
+
+                    // Draw Major Formation Rays
+                    if (bf.major) {
+                        if (bf.major.upper) drawBFRay(bf.major.upper, true, false);
+                        if (bf.major.lower) drawBFRay(bf.major.lower, false, false);
+                    } else {
+                        if (bf.upper) drawBFRay(bf.upper, true, false);
+                        if (bf.lower) drawBFRay(bf.lower, false, false);
+                    }
+
+                    // Draw Minor (Nested) Formation Rays
+                    if (bf.minor) {
+                        if (bf.minor.upper) drawBFRay(bf.minor.upper, true, true);
+                        if (bf.minor.lower) drawBFRay(bf.minor.lower, false, true);
+                    }
+                }
             }
 
             // User-Drawn Trigger / Target Price Level Lines

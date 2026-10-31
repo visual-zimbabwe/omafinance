@@ -21,6 +21,7 @@ FloatingWindow {
     property bool syncTimeframe: false
     property bool syncCrosshair: true
     property bool syncTime: true
+    property bool showBroadening: false
     property string discordWebhook: ""
 
     property int activeCellIndex: 0
@@ -615,7 +616,8 @@ FloatingWindow {
             symbol: root.syncSymbol,
             timeframe: root.syncTimeframe,
             crosshair: root.syncCrosshair,
-            time: root.syncTime
+            time: root.syncTime,
+            broadening: root.showBroadening
         };
         root.stateSaveRequested(root.gridMode, sync, root.cellSymbols, splits);
     }
@@ -1148,6 +1150,25 @@ FloatingWindow {
                             }
                         }
                     }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: "BF " + (root.showBroadening ? "[ON]" : "[OFF]")
+                        color: root.showBroadening ? root.foreground : root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: root.showBroadening
+
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.showBroadening = !root.showBroadening;
+                                root.saveGridState();
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1187,6 +1208,7 @@ FloatingWindow {
                         replayCutoffTs: root.replayCutoffTs
                         attackScanResult: root.attackScanResult
                         activeFocusCell: true
+                        showBroadening: root.showBroadening
 
                         onFocusRequested: function (idx) {
                             root.activeCellIndex = idx;
@@ -1250,6 +1272,7 @@ FloatingWindow {
                             replayCutoffTs: root.replayCutoffTs
                             attackScanResult: root.attackScanResult
                             activeFocusCell: root.activeCellIndex === 0
+                            showBroadening: root.showBroadening
 
                             onFocusRequested: function (idx) {
                                 root.activeCellIndex = idx;
@@ -1314,6 +1337,7 @@ FloatingWindow {
                             replayCutoffTs: root.replayCutoffTs
                             attackScanResult: root.attackScanResult
                             activeFocusCell: root.activeCellIndex === 1
+                            showBroadening: root.showBroadening
 
                             onFocusRequested: function (idx) {
                                 root.activeCellIndex = idx;
@@ -1396,6 +1420,7 @@ FloatingWindow {
                                 replayCutoffTs: root.replayCutoffTs
                                 attackScanResult: root.attackScanResult
                                 activeFocusCell: root.activeCellIndex === 2
+                                showBroadening: root.showBroadening
 
                                 onFocusRequested: function (idx) {
                                     root.activeCellIndex = idx;
@@ -1460,6 +1485,7 @@ FloatingWindow {
                                 replayCutoffTs: root.replayCutoffTs
                                 attackScanResult: root.attackScanResult
                                 activeFocusCell: root.activeCellIndex === 3
+                                showBroadening: root.showBroadening
 
                                 onFocusRequested: function (idx) {
                                     root.activeCellIndex = idx;
@@ -1522,6 +1548,7 @@ FloatingWindow {
                                 replayCutoffTs: root.replayCutoffTs
                                 attackScanResult: root.attackScanResult
                                 activeFocusCell: root.activeCellIndex === 2
+                                showBroadening: root.showBroadening
 
                                 onFocusRequested: function (idx) {
                                     root.activeCellIndex = idx;
@@ -1586,6 +1613,7 @@ FloatingWindow {
                                 replayCutoffTs: root.replayCutoffTs
                                 attackScanResult: root.attackScanResult
                                 activeFocusCell: root.activeCellIndex === 3
+                                showBroadening: root.showBroadening
 
                                 onFocusRequested: function (idx) {
                                     root.activeCellIndex = idx;
@@ -1650,6 +1678,7 @@ FloatingWindow {
                                 replayCutoffTs: root.replayCutoffTs
                                 attackScanResult: root.attackScanResult
                                 activeFocusCell: root.activeCellIndex === 4
+                                showBroadening: root.showBroadening
 
                                 onFocusRequested: function (idx) {
                                     root.activeCellIndex = idx;

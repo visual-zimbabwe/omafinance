@@ -15,7 +15,7 @@ function defaultGridMode() {
 }
 
 function defaultGridSync() {
-  return { symbol: true, timeframe: false, crosshair: true, time: true }
+  return { symbol: true, timeframe: false, crosshair: true, time: true, broadening: false }
 }
 
 function defaultGridSplits() {
@@ -354,7 +354,7 @@ function chartSpec(range) {
     case "1W": return { range: "5y", interval: "1wk" }
     case "1M": return { range: "10y", interval: "1mo" }
     case "1Y": return { range: "max", interval: "1mo" }
-    default: return { range: "1y", interval: "1d" }
+    default: return { period1: 0, period2: 9999999999, interval: "1d" }
   }
 }
 
@@ -432,6 +432,14 @@ function yahooChartUrl(symbol, rangeKey) {
   var sym = normalizeSymbol(symbol)
   var spec = chartSpec(rangeKey)
   var prepost = "false"
+  if (spec.period1 !== undefined && spec.period2 !== undefined) {
+    return "https://query1.finance.yahoo.com/v8/finance/chart/"
+      + encodeURIComponent(sym)
+      + "?period1=" + spec.period1
+      + "&period2=" + spec.period2
+      + "&interval=" + spec.interval
+      + "&includePrePost=" + prepost
+  }
   return "https://query1.finance.yahoo.com/v8/finance/chart/"
     + encodeURIComponent(sym)
     + "?range=" + spec.range
@@ -5276,6 +5284,236 @@ function nodeCommand(scriptPath, extraArgs) {
   return cmd;
 }
 
+function candleDateIso(candle) {
+  if (!candle) return "";
+  if (candle.date) return String(candle.date);
+  var ts = candle.timestamp || candle.time;
+  if (!ts) return "";
+  var d = new Date(ts > 1e11 ? ts : ts * 1000);
+  var y = d.getUTCFullYear();
+  var m = d.getUTCMonth() + 1;
+  var day = d.getUTCDate();
+  return y + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day;
+}
+
+function computeRayForOrigin(candles, startIdx, endIdx, isUpper) {
+  var n = endIdx;
+  var cand = [];
+
+  for (var a2 = startIdx + 4; a2 < n; a2++) {
+    var isPeak = isUpper ?
+      ((candles[a2].high >= candles[a2 - 1].high) && (a2 === n - 1 || candles[a2].high >= candles[a2 + 1].high)) :
+      ((candles[a2].low <= candles[a2 - 1].low) && (a2 === n - 1 || candles[a2].low <= candles[a2 + 1].low));
+
+    if (!isPeak) continue;
+
+    var p2 = isUpper ? candles[a2].high : candles[a2].low;
+    var bestA1 = -1;
+    var bestSlope = isUpper ? Infinity : -Infinity;
+
+    for (var j = startIdx; j <= a2 - 4; j++) {
+      var p1 = isUpper ? candles[j].high : candles[j].low;
+      var m = (p2 - p1) / (a2 - j);
+      if (isUpper && m < -0.0001) continue;
+      if (!isUpper && m > 0.0001) continue;
+
+      var valid = true;
+      for (var mid = j + 1; mid < a2; mid++) {
+        var midP = isUpper ? candles[mid].high : candles[mid].low;
+        var lineY = p1 + m * (mid - j);
+        if (isUpper && midP > lineY + 0.001) { valid = false; break; }
+        if (!isUpper && midP < lineY - 0.001) { valid = false; break; }
+      }
+      if (valid) {
+        if (isUpper && m < bestSlope) {
+          bestSlope = m;
+          bestA1 = j;
+        } else if (!isUpper && m > bestSlope) {
+          bestSlope = m;
+          bestA1 = j;
+        }
+      }
+    }
+
+    if (bestA1 !== -1) {
+      var breach = 0;
+      for (var post = a2 + 1; post < n; post++) {
+        var postP = isUpper ? candles[post].high : candles[post].low;
+        var lineY = (isUpper ? candles[bestA1].high : candles[bestA1].low) + bestSlope * (post - bestA1);
+        if (isUpper && postP > lineY + 0.005 * postP) breach++;
+        if (!isUpper && postP < lineY - 0.005 * postP) breach++;
+      }
+      if (breach === 0) {
+        cand.push({
+          anchor1: { index: bestA1, price: isUpper ? candles[bestA1].high : candles[bestA1].low, date: candleDateIso(candles[bestA1]), time: candles[bestA1].time || candles[bestA1].timestamp },
+          anchor2: { index: a2, price: p2, date: candleDateIso(candles[a2]), time: candles[a2].time || candles[a2].timestamp },
+          slope: bestSlope,
+          span: a2 - bestA1
+        });
+      }
+    }
+  }
+
+  if (cand.length === 0) return null;
+  cand.sort(function(a, b) {
+    if (isUpper) {
+      if (b.anchor2.price !== a.anchor2.price) return b.anchor2.price - a.anchor2.price;
+    } else {
+      if (a.anchor2.price !== b.anchor2.price) return a.anchor2.price - b.anchor2.price;
+    }
+    return b.anchor2.index - a.anchor2.index;
+  });
+  return cand[0];
+}
+
+function isRayRedundant(r1, r2) {
+  if (!r1 || !r2) return false;
+  if (r1.anchor1.index === r2.anchor1.index && r1.anchor2.index === r2.anchor2.index) return true;
+  if (Math.abs(r1.anchor2.index - r2.anchor2.index) <= 2 && Math.abs(r1.anchor1.index - r2.anchor1.index) <= 3) return true;
+  return false;
+}
+
+function computeActiveBroadening(candles, lookbackBars) {
+  if (!candles || candles.length < 5) return null;
+  var n = candles.length;
+
+  var startIdx = (typeof lookbackBars === "number" && lookbackBars >= 5) ?
+    Math.max(0, n - lookbackBars) :
+    Math.max(0, n - 260);
+
+  // If a specific lookback is provided (e.g. from bar replay), evaluate from startIdx:
+  if (typeof lookbackBars === "number" && lookbackBars >= 5) {
+    var up = computeRayForOrigin(candles, startIdx, n, true);
+    var lo = computeRayForOrigin(candles, startIdx, n, false);
+    var lastIdx = n - 1;
+    var projUp = up ? (up.anchor1.price + up.slope * (lastIdx - up.anchor1.index)) : null;
+    var projLo = lo ? (lo.anchor1.price + lo.slope * (lastIdx - lo.anchor1.index)) : null;
+
+    var minorOrigins = [];
+    for (var mi = startIdx + Math.max(5, Math.floor(lookbackBars * 0.4)); mi < n; mi++) {
+      if (stratScenario(candles[mi], candles[mi - 1]) === "3") {
+        minorOrigins.push(mi - 1);
+      }
+    }
+    var minorUp = null;
+    var minorLo = null;
+    for (var mk = minorOrigins.length - 1; mk >= 0; mk--) {
+      var origM = minorOrigins[mk];
+      var mU = computeRayForOrigin(candles, origM, n, true);
+      var mL = computeRayForOrigin(candles, origM, n, false);
+      if (mU && !isRayRedundant(up, mU) && !minorUp) minorUp = mU;
+      if (mL && !isRayRedundant(lo, mL) && !minorLo) minorLo = mL;
+      if (minorUp || minorLo) break;
+    }
+
+    var majorExplicit = (up || lo) ? {
+      originIndex: startIdx,
+      upper: up,
+      lower: lo,
+      projectedUpper: projUp,
+      projectedLower: projLo
+    } : null;
+
+    var minorExplicit = (minorUp || minorLo) ? {
+      originIndex: Math.min(minorUp ? minorUp.anchor1.index : n, minorLo ? minorLo.anchor1.index : n),
+      upper: minorUp,
+      lower: minorLo,
+      projectedUpper: minorUp ? (minorUp.anchor1.price + minorUp.slope * (lastIdx - minorUp.anchor1.index)) : null,
+      projectedLower: minorLo ? (minorLo.anchor1.price + minorLo.slope * (lastIdx - minorLo.anchor1.index)) : null
+    } : null;
+
+    return {
+      originIndex: startIdx,
+      major: majorExplicit,
+      minor: minorExplicit,
+      upper: up,
+      lower: lo,
+      projectedUpper: projUp,
+      projectedLower: projLo
+    };
+  }
+
+  // Event-driven mode (no lookbackBars passed):
+  // Scan all Scenario 3 bars in the cycle window (up to 260 trading days)
+  var origins = [];
+  for (var i = startIdx + 1; i < n; i++) {
+    if (stratScenario(candles[i], candles[i - 1]) === "3") {
+      origins.push(i - 1);
+    }
+  }
+  if (origins.indexOf(startIdx) === -1) {
+    origins.unshift(startIdx);
+  }
+
+  var candU = [];
+  var candL = [];
+  for (var k = 0; k < origins.length; k++) {
+    var orig = origins[k];
+    var u = computeRayForOrigin(candles, orig, n, true);
+    var l = computeRayForOrigin(candles, orig, n, false);
+    if (u) {
+      var existsU = false;
+      for (var ui = 0; ui < candU.length; ui++) {
+        if (isRayRedundant(candU[ui], u)) { existsU = true; break; }
+      }
+      if (!existsU) candU.push(u);
+    }
+    if (l) {
+      var existsL = false;
+      for (var li = 0; li < candL.length; li++) {
+        if (isRayRedundant(candL[li], l)) { existsL = true; break; }
+      }
+      if (!existsL) candL.push(l);
+    }
+  }
+
+  candU.sort(function(a, b) { return b.span - a.span; });
+  candL.sort(function(a, b) { return b.span - a.span; });
+
+  var majorU = candU.length > 0 ? candU[0] : null;
+  var majorL = candL.length > 0 ? candL[0] : null;
+
+  var minorU = null;
+  for (var mui = 1; mui < candU.length; mui++) {
+    if (!isRayRedundant(candU[mui], majorU)) { minorU = candU[mui]; break; }
+  }
+
+  var minorL = null;
+  for (var mli = 1; mli < candL.length; mli++) {
+    if (!isRayRedundant(candL[mli], majorL)) { minorL = candL[mli]; break; }
+  }
+
+  var lastIdxFull = n - 1;
+  var projU = majorU ? (majorU.anchor1.price + majorU.slope * (lastIdxFull - majorU.anchor1.index)) : null;
+  var projL = majorL ? (majorL.anchor1.price + majorL.slope * (lastIdxFull - majorL.anchor1.index)) : null;
+
+  var majorAuto = (majorU || majorL) ? {
+    originIndex: Math.min(majorU ? majorU.anchor1.index : n, majorL ? majorL.anchor1.index : n),
+    upper: majorU,
+    lower: majorL,
+    projectedUpper: projU,
+    projectedLower: projL
+  } : null;
+
+  var minorAuto = (minorU || minorL) ? {
+    originIndex: Math.min(minorU ? minorU.anchor1.index : n, minorL ? minorL.anchor1.index : n),
+    upper: minorU,
+    lower: minorL,
+    projectedUpper: minorU ? (minorU.anchor1.price + minorU.slope * (lastIdxFull - minorU.anchor1.index)) : null,
+    projectedLower: minorL ? (minorL.anchor1.price + minorL.slope * (lastIdxFull - minorL.anchor1.index)) : null
+  } : null;
+
+  return {
+    originIndex: majorAuto ? majorAuto.originIndex : (minorAuto ? minorAuto.originIndex : startIdx),
+    major: majorAuto,
+    minor: minorAuto,
+    upper: majorU,
+    lower: majorL,
+    projectedUpper: projU,
+    projectedLower: projL
+  };
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -5392,6 +5630,7 @@ if (typeof module !== "undefined") {
     sliceCandlesBefore: sliceCandlesBefore,
     computeReplayFocusPair: computeReplayFocusPair,
     computeFocusBasketSupport: computeFocusBasketSupport,
+    computeActiveBroadening: computeActiveBroadening,
     nodeCommand: nodeCommand
   }
 }
