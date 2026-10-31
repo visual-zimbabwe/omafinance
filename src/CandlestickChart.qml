@@ -859,22 +859,38 @@ Item {
                 var bf = Model.computeActiveBroadening(g.allCandles);
                 if (bf) {
                     var rightEdgeX = g.right;
-                    var futureIdxAtRight = g.vStart + Math.round((rightEdgeX - g.xs[0]) / g.slotW);
-                    var drawnBadgeYs = [];
 
                     var forms = (bf.formations && Array.isArray(bf.formations) && bf.formations.length > 0)
                         ? bf.formations
                         : [bf.major, bf.minor].filter(Boolean);
 
+                    var getAnchorX = function(idx) {
+                        var localIdx = idx - g.vStart;
+                        if (localIdx >= 0 && localIdx < g.xs.length) {
+                            return Math.round(g.xs[localIdx]) + 0.5;
+                        }
+                        return Math.round(g.xs[0] + localIdx * g.slotW) + 0.5;
+                    };
+
                     var drawBFRay = function(ray, isUpper, formIdx) {
                         if (!ray) return;
-                        var a1X = Math.round(g.xs[0] + (ray.anchor1.index - g.vStart) * g.slotW) + 0.5;
+                        var a1X = getAnchorX(ray.anchor1.index);
                         var a1Y = Math.round(root.priceToYVal(ray.anchor1.price, g)) + 0.5;
-                        var a2X = Math.round(g.xs[0] + (ray.anchor2.index - g.vStart) * g.slotW) + 0.5;
+                        var a2X = getAnchorX(ray.anchor2.index);
                         var a2Y = Math.round(root.priceToYVal(ray.anchor2.price, g)) + 0.5;
 
-                        var projPrice = ray.anchor1.price + ray.slope * (futureIdxAtRight - ray.anchor1.index);
-                        var projY = Math.round(root.priceToYVal(projPrice, g)) + 0.5;
+                        var dx = a2X - a1X;
+                        if (dx <= 0) return;
+
+                        var screenSlope = (a2Y - a1Y) / dx;
+                        var projY = Math.round(a1Y + screenSlope * (rightEdgeX - a1X)) + 0.5;
+
+                        var startX = a1X;
+                        var startY = a1Y;
+                        if (startX < g.left) {
+                            startX = g.left;
+                            startY = Math.round(a1Y + screenSlope * (startX - a1X)) + 0.5;
+                        }
 
                         var lvl = (typeof formIdx === "number") ? formIdx : 0;
                         var strokeColor;
@@ -900,7 +916,10 @@ Item {
                         if (ctx.setLineDash) ctx.setLineDash(dashPattern);
 
                         ctx.beginPath();
-                        ctx.moveTo(a1X, a1Y);
+                        ctx.moveTo(startX, startY);
+                        if (a2X > startX && a2X < rightEdgeX) {
+                            ctx.lineTo(a2X, a2Y);
+                        }
                         ctx.lineTo(rightEdgeX, projY);
                         ctx.stroke();
 
@@ -916,31 +935,6 @@ Item {
                             ctx.beginPath();
                             ctx.arc(a2X, a2Y, dotRadius, 0, Math.PI * 2);
                             ctx.fill();
-                        }
-
-                        // Right Gutter Price Badge
-                        if (root.showPriceScale && projY >= g.top && projY <= g.bot) {
-                            var badgeW = root.scaleGutterWidth - Style.space(4);
-                            var badgeH = Style.space(13);
-                            var badgeX = g.right + Style.space(2);
-                            var targetY = Math.max(g.top, Math.min(g.bot - badgeH, Math.round(projY - badgeH / 2)));
-
-                            for (var bi = 0; bi < drawnBadgeYs.length; bi++) {
-                                if (Math.abs(targetY - drawnBadgeYs[bi]) < badgeH + 2) {
-                                    targetY = (targetY <= drawnBadgeYs[bi]) ? (drawnBadgeYs[bi] - badgeH - 2) : (drawnBadgeYs[bi] + badgeH + 2);
-                                }
-                            }
-                            targetY = Math.max(g.top, Math.min(g.bot - badgeH, targetY));
-                            drawnBadgeYs.push(targetY);
-
-                            var badgeLabel = Model.formatPrice(projPrice, root.currency, root.priceHint);
-                            ctx.fillStyle = strokeColor;
-                            ctx.fillRect(badgeX, targetY, badgeW, badgeH);
-                            ctx.font = "bold " + (Style.font.bodySmall - 1) + "px " + root.fontFamily;
-                            ctx.fillStyle = "#FFFFFF";
-                            ctx.textAlign = "center";
-                            ctx.textBaseline = "middle";
-                            ctx.fillText(badgeLabel, badgeX + badgeW / 2, targetY + badgeH / 2);
                         }
                         ctx.restore();
                     };
