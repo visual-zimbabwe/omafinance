@@ -96,7 +96,7 @@ async function run() {
     }
   }
 
-  // 3. Fetch 30m candles (5d) and 60m candles (1mo)
+  // 3. Fetch 30m candles (5d) and 60m candles (3mo)
   let iIdx = 0;
   async function intradayWorker() {
     while (iIdx < allSyms.length) {
@@ -117,7 +117,7 @@ async function run() {
 
       // 60m (or derive from 30m)
       try {
-        const u60 = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=60m&range=1mo&includePrePost=false`;
+        const u60 = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=60m&range=3mo&includePrePost=false`;
         const res60 = await fetchHttps(u60, { "User-Agent": "Mozilla/5.0" });
         if (res60.ok && res60.data) {
           const j60 = JSON.parse(res60.data);

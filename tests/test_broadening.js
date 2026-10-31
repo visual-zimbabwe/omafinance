@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { computeActiveBroadening } = require("../src/Model.js");
+const { computeActiveBroadening, candleWeekKey, bfWeekStarts } = require("../src/Model.js");
 
 console.log("==================================================");
 console.log("   TheStrat Broadening Formation Test Suite       ");
@@ -141,4 +141,43 @@ const spyOrigins = bfSpy.formations.map(f => f.originIndex);
 console.log("SPY Formation Origins:", spyOrigins);
 console.log("PASS: Daily broadening formations anchored strictly to month starts, scenario 3 anchors removed!");
 
-console.log("\n>>> ALL 8 TESTS PASSED SUCCESSFULLY! <<<\n");
+// 9. 60m Timeframe Weekly Anchor Origin Detection
+const meta60Path = path.join(__dirname, "meta_60m.json");
+const meta60Bars = JSON.parse(fs.readFileSync(meta60Path, "utf8"));
+const meta60WeekStarts = bfWeekStarts(meta60Bars, 0, meta60Bars.length);
+
+console.log("\n[Test 9] 60m Timeframe Weekly Anchor Origin Detection");
+console.log("60m Weekly Origins Detected:", meta60WeekStarts);
+
+if (meta60WeekStarts.length === 5 &&
+    meta60WeekStarts[0] === 0 &&
+    meta60WeekStarts[1] === 21 &&
+    meta60WeekStarts[2] === 56 &&
+    meta60WeekStarts[3] === 91 &&
+    meta60WeekStarts[4] === 126) {
+  console.log("PASS: 60m weekly anchor origins strictly align with Monday market open bars (indexes [0, 21, 56, 91, 126])!");
+} else {
+  console.error("FAIL: 60m weekly anchor origins mismatch:", meta60WeekStarts);
+  process.exit(1);
+}
+
+// 10. 60m Weekly Broadening Formation Multi-Scale & Ray Generation
+const bf60Explicit = computeActiveBroadening(meta60Bars, null, "week");
+const bf60Auto = computeActiveBroadening(meta60Bars); // Auto-detection of intraday 60m
+
+console.log("\n[Test 10] 60m Weekly Broadening Formation Multi-Scale & Ray Generation");
+console.log("60m Formations Count (Explicit 'week'):", bf60Explicit.formations?.length);
+console.log("60m Formations Count (Auto-detected):", bf60Auto.formations?.length);
+console.log("60m Major Upper Ray:", bf60Explicit.upper ? `${bf60Explicit.upper.anchor1.index} -> ${bf60Explicit.upper.anchor2.index}` : "null");
+console.log("60m Major Lower Ray:", bf60Explicit.lower ? `${bf60Explicit.lower.anchor1.index} -> ${bf60Explicit.lower.anchor2.index}` : "null");
+
+if (bf60Explicit.formations && bf60Explicit.formations.length > 0 &&
+    bf60Auto.formations && bf60Auto.formations.length === bf60Explicit.formations.length &&
+    bf60Explicit.upper && bf60Explicit.lower) {
+  console.log("PASS: 60m broadening formations correctly constructed with weekly anchoring & dual rays!");
+} else {
+  console.error("FAIL: 60m weekly broadening formations generation failed:", bf60Explicit);
+  process.exit(1);
+}
+
+console.log("\n>>> ALL 10 TESTS PASSED SUCCESSFULLY! <<<\n");
