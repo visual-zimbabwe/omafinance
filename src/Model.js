@@ -5299,263 +5299,237 @@ function candleDateIso(candle) {
   return y + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day;
 }
 
-function computeRayForOrigin(candles, startIdx, endIdx, isUpper, minSpan) {
-  minSpan = (typeof minSpan === "number") ? minSpan : 2;
-  var n = endIdx;
-  var cand = [];
+// ---------------------------------------------------------------------------
+// TheStrat Broadening Formations (Truth #3: price discovery is a broadening formation)
+// ---------------------------------------------------------------------------
+// Every tolerance below is a fraction of price, so the same rule behaves the same on a
+// $5 stock and a $5,000 index.
 
-  for (var a2 = startIdx + minSpan; a2 < n; a2++) {
-    var isPeak = isUpper ?
-      ((candles[a2].high >= candles[a2 - 1].high) && (a2 === n - 1 || candles[a2].high >= candles[a2 + 1].high)) :
-      ((candles[a2].low <= candles[a2 - 1].low) && (a2 === n - 1 || candles[a2].low <= candles[a2 + 1].low));
+// Float-noise guard: how far a bar may sit above the upper line (or below the lower line)
+// and still count as "on the line", and how far a newer anchor may fall short of the older
+// one and still count as broadening. 1e-5 = 0.001% of price (about 0.1 cent on a $100 stock).
+var BF_EPS_REL = 0.00001;
+// A later bar may poke through a finished ray by up to 0.5% of its own price before the ray
+// counts as traded through (it is then replaced by the redraw from the newer extreme).
+var BF_BREACH_TOL_REL = 0.005;
+// Cycle window used when no explicit formation start is given (about one trading year of dailies).
+var BF_DEFAULT_WINDOW = 260;
+// Minimum number of bars between the two anchors of a ray.
+var BF_MIN_SPAN = 2;
+// Memoised computeActiveBroadening results kept per Model.js instance (charts repaint often).
+var BF_CACHE_LIMIT = 24;
 
-    if (!isPeak) continue;
-
-    var p2 = isUpper ? candles[a2].high : candles[a2].low;
-    var bestA1 = -1;
-    var bestSlope = isUpper ? Infinity : -Infinity;
-
-    for (var j = startIdx; j <= a2 - minSpan; j++) {
-      var p1 = isUpper ? candles[j].high : candles[j].low;
-      var m = (p2 - p1) / (a2 - j);
-      if (isUpper && m < -0.0001) continue;
-      if (!isUpper && m > 0.0001) continue;
-
-      var valid = true;
-      for (var mid = j + 1; mid < a2; mid++) {
-        var midP = isUpper ? candles[mid].high : candles[mid].low;
-        var lineY = p1 + m * (mid - j);
-        if (isUpper && midP > lineY + 0.001) { valid = false; break; }
-        if (!isUpper && midP < lineY - 0.001) { valid = false; break; }
-      }
-      if (valid) {
-        if (isUpper && m < bestSlope) {
-          bestSlope = m;
-          bestA1 = j;
-        } else if (!isUpper && m > bestSlope) {
-          bestSlope = m;
-          bestA1 = j;
-        }
-      }
-    }
-
-    if (bestA1 !== -1) {
-      var breach = 0;
-      for (var post = a2 + 1; post < n; post++) {
-        var postP = isUpper ? candles[post].high : candles[post].low;
-        var lineY = (isUpper ? candles[bestA1].high : candles[bestA1].low) + bestSlope * (post - bestA1);
-        if (isUpper && postP > lineY + 0.005 * postP) breach++;
-        if (!isUpper && postP < lineY - 0.005 * postP) breach++;
-      }
-      if (breach === 0) {
-        cand.push({
-          anchor1: { index: bestA1, price: isUpper ? candles[bestA1].high : candles[bestA1].low, date: candleDateIso(candles[bestA1]), time: candles[bestA1].time || candles[bestA1].timestamp },
-          anchor2: { index: a2, price: p2, date: candleDateIso(candles[a2]), time: candles[a2].time || candles[a2].timestamp },
-          slope: bestSlope,
-          span: a2 - bestA1
-        });
-      }
-    }
-  }
-
-  if (cand.length === 0) return null;
-  cand.sort(function(a, b) {
-    if (isUpper) {
-      if (b.anchor2.price !== a.anchor2.price) return b.anchor2.price - a.anchor2.price;
-    } else {
-      if (a.anchor2.price !== b.anchor2.price) return a.anchor2.price - b.anchor2.price;
-    }
-    return b.anchor2.index - a.anchor2.index;
-  });
-  return cand[0];
+function bfExtreme(candle, isUpper) {
+  return Number(isUpper ? candle.high : candle.low);
 }
 
-function isRayRedundant(r1, r2) {
-  if (!r1 || !r2) return false;
-  if (r1.anchor1.index === r2.anchor1.index && r1.anchor2.index === r2.anchor2.index) return true;
-  if (Math.abs(r1.anchor2.index - r2.anchor2.index) <= 2 && Math.abs(r1.anchor1.index - r2.anchor1.index) <= 3) return true;
+function bfAnchor(candles, idx, isUpper) {
+  var c = candles[idx];
+  return { index: idx, price: bfExtreme(c, isUpper), date: candleDateIso(c), time: c.time || c.timestamp };
+}
+
+// Boundary ray of a formation that starts at startIdx, drawn TheStrat-style: from the most
+// extreme swing high (or low) since the start, right to left, back to the earlier high (low)
+// that keeps every high (low) between them on or under (over) the line.
+//
+// Runs in "q-space" (q = +high for the upper ray, -low for the lower ray) so one upper-hull
+// routine serves both sides. For a fixed anchor2, anchor1 = j is valid iff every bar strictly
+// between j and anchor2 stays under the line, which reduces to
+//   slope(j) <= min over mid in (j, a2) of (q[a2] - q[mid] + eps) / (a2 - mid)
+// and is tracked as a running minimum while walking j right to left: O(n) per anchor2,
+// O(n^2) per call (was O(n^3)).
+function computeRayForOrigin(candles, startIdx, endIdx, isUpper, minSpan) {
+  minSpan = (typeof minSpan === "number") ? minSpan : BF_MIN_SPAN;
+  var n = endIdx;
+  if (n - startIdx <= minSpan) return null;
+  var dir = isUpper ? 1 : -1;
+
+  var q = [];
+  for (var qi = 0; qi < n; qi++) {
+    q.push(qi >= startIdx ? dir * bfExtreme(candles[qi], isUpper) : NaN);
+  }
+
+  var bestA1 = -1;
+  var bestA2 = -1;
+  var bestSlopeQ = 0;
+
+  for (var a2 = startIdx + minSpan; a2 < n; a2++) {
+    var p2 = q[a2];
+    // anchor2 must be a swing extreme: at least as extreme as both neighbours
+    if (p2 < q[a2 - 1]) continue;
+    if (a2 < n - 1 && p2 < q[a2 + 1]) continue;
+    // The winner is the most extreme anchor2 (latest on ties), so a less extreme one cannot win
+    if (bestA2 !== -1 && p2 < q[bestA2]) continue;
+
+    var eps = BF_EPS_REL * Math.abs(p2);
+    var ceiling = Infinity;
+    for (var m0 = a2 - 1; m0 > a2 - minSpan; m0--) {
+      ceiling = Math.min(ceiling, (p2 - q[m0] + eps) / (a2 - m0));
+    }
+
+    // Flattest valid line; earliest anchor1 on ties. Broadening: anchor2 must be at least as
+    // extreme as anchor1 (within eps), i.e. the boundary never tilts back inward.
+    var a1 = -1;
+    var slopeQ = Infinity;
+    for (var j = a2 - minSpan; j >= startIdx; j--) {
+      var m = (p2 - q[j]) / (a2 - j);
+      if (p2 - q[j] >= -eps && m <= ceiling && m <= slopeQ) {
+        slopeQ = m;
+        a1 = j;
+      }
+      ceiling = Math.min(ceiling, (p2 - q[j] + eps) / (a2 - j));
+    }
+    if (a1 === -1) continue;
+
+    // No later bar may have traded through the finished ray
+    var breached = false;
+    for (var post = a2 + 1; post < n; post++) {
+      if (q[post] > p2 + slopeQ * (post - a2) + BF_BREACH_TOL_REL * Math.abs(q[post])) {
+        breached = true;
+        break;
+      }
+    }
+    if (breached) continue;
+
+    bestA1 = a1;
+    bestA2 = a2;
+    bestSlopeQ = slopeQ;
+  }
+
+  if (bestA2 === -1) return null;
+  return {
+    anchor1: bfAnchor(candles, bestA1, isUpper),
+    anchor2: bfAnchor(candles, bestA2, isUpper),
+    slope: dir * bestSlopeQ,
+    span: bestA2 - bestA1
+  };
+}
+
+// A ray is superseded when a ray with a later anchor2, starting at or before it, expanded the
+// same boundary further (a higher high for the upper side, a lower low for the lower side).
+function isRaySuperseded(ray, rays, isUpper) {
+  for (var i = 0; i < rays.length; i++) {
+    var other = rays[i];
+    if (!other || other === ray) continue;
+    if (other.anchor2.index <= ray.anchor2.index) continue;
+    if (other.anchor1.index > ray.anchor1.index) continue;
+    if (isUpper ? other.anchor2.price >= ray.anchor2.price : other.anchor2.price <= ray.anchor2.price) {
+      return true;
+    }
+  }
   return false;
 }
 
-function filterActiveRays(rawRays, isUpper) {
-  if (!rawRays || rawRays.length === 0) return [];
-
-  // 1. Group rays by anchor2 index: keep only the widest span (the true tangent anchor)
-  var byAnchor2 = {};
-  for (var i = 0; i < rawRays.length; i++) {
-    var r = rawRays[i];
-    var k = String(r.anchor2.index);
-    if (!byAnchor2[k] || r.span > byAnchor2[k].span) {
-      byAnchor2[k] = r;
-    }
-  }
-
-  var uniqueRays = [];
-  for (var key in byAnchor2) {
-    uniqueRays.push(byAnchor2[key]);
-  }
-
-  // 2. Sort by anchor2 index ascending (chronological order)
-  uniqueRays.sort(function(a, b) { return a.anchor2.index - b.anchor2.index; });
-
-  // 3. Mark rays superseded if a subsequent ray expanded the same outer boundary
-  var activeRays = [];
-  for (var ai = 0; ai < uniqueRays.length; ai++) {
-    var rA = uniqueRays[ai];
-    var superseded = false;
-
-    for (var bi = ai + 1; bi < uniqueRays.length; bi++) {
-      var rB = uniqueRays[bi];
-      // If ray B is later, higher (if upper) or lower (if lower), and starts at or before ray A:
-      if (rB.anchor1.index <= rA.anchor1.index) {
-        if (isUpper && rB.anchor2.price >= rA.anchor2.price) {
-          superseded = true;
-          break;
-        }
-        if (!isUpper && rB.anchor2.price <= rA.anchor2.price) {
-          superseded = true;
-          break;
-        }
-      }
-    }
-
-    if (!superseded) {
-      activeRays.push(rA);
-    }
-  }
-
-  // Sort final active rays by span descending (widest macro boundary first)
-  activeRays.sort(function(a, b) { return b.span - a.span; });
-  return activeRays;
+function bfProject(ray, idx) {
+  return ray ? ray.anchor1.price + ray.slope * (idx - ray.anchor1.index) : null;
 }
 
-function computeActiveBroadening(candles, lookbackBars) {
-  if (!candles || candles.length < 5) return null;
-  var n = candles.length;
+// One formation per start point: its upper and lower rays always come from the same start,
+// so a formation's two lines describe the same triangle.
+//   * A boundary (anchor2) already drawn by an outer, earlier-starting formation is not drawn
+//     again by a nested one; a nested formation that shares both extremes is the same triangle
+//     and is dropped.
+//   * Superseded rays are dropped (except for a pinned formation, see below).
+//   * Formations are ordered outermost (earliest start) first, so index 0 is the major formation.
+// pinFirst: origins[0] is an explicit formation start (e.g. bar replay); its rays are always kept.
+function buildBroadeningFormations(candles, origins, n, pinFirst) {
   var lastIdx = n - 1;
-
-  var startIdx = (typeof lookbackBars === "number" && lookbackBars >= 5) ?
-    Math.max(0, n - lookbackBars) :
-    Math.max(0, n - 260);
-
-  // If a specific lookback is provided (e.g. from bar replay), evaluate from startIdx:
-  if (typeof lookbackBars === "number" && lookbackBars >= 5) {
-    var up = computeRayForOrigin(candles, startIdx, n, true);
-    var lo = computeRayForOrigin(candles, startIdx, n, false);
-    var projUp = up ? (up.anchor1.price + up.slope * (lastIdx - up.anchor1.index)) : null;
-    var projLo = lo ? (lo.anchor1.price + lo.slope * (lastIdx - lo.anchor1.index)) : null;
-
-    var minorOrigins = [];
-    for (var mi = startIdx + Math.max(5, Math.floor(lookbackBars * 0.4)); mi < n; mi++) {
-      if (stratScenario(candles[mi], candles[mi - 1]) === "3") {
-        minorOrigins.push(mi - 1);
-      }
-    }
-    var rawMinorU = [];
-    var rawMinorL = [];
-    for (var mk = minorOrigins.length - 1; mk >= 0; mk--) {
-      var origM = minorOrigins[mk];
-      var mU = computeRayForOrigin(candles, origM, n, true);
-      var mL = computeRayForOrigin(candles, origM, n, false);
-      if (mU && (!up || mU.anchor2.index !== up.anchor2.index)) rawMinorU.push(mU);
-      if (mL && (!lo || mL.anchor2.index !== lo.anchor2.index)) rawMinorL.push(mL);
-    }
-    var actMinU = filterActiveRays(rawMinorU, true);
-    var actMinL = filterActiveRays(rawMinorL, false);
-
-    var majorExplicit = (up || lo) ? {
-      originIndex: startIdx,
-      upper: up,
-      lower: lo,
-      projectedUpper: projUp,
-      projectedLower: projLo
-    } : null;
-
-    var formations = [];
-    if (majorExplicit) formations.push(majorExplicit);
-
-    var maxMin = Math.max(actMinU.length, actMinL.length);
-    for (var mfi = 0; mfi < maxMin; mfi++) {
-      var formMinU = actMinU[mfi] || null;
-      var formMinL = actMinL[mfi] || null;
-      if (formMinU || formMinL) {
-        formations.push({
-          originIndex: Math.min(formMinU ? formMinU.anchor1.index : n, formMinL ? formMinL.anchor1.index : n),
-          upper: formMinU,
-          lower: formMinL,
-          projectedUpper: formMinU ? (formMinU.anchor1.price + formMinU.slope * (lastIdx - formMinU.anchor1.index)) : null,
-          projectedLower: formMinL ? (formMinL.anchor1.price + formMinL.slope * (lastIdx - formMinL.anchor1.index)) : null
-        });
-      }
-    }
-
-    return {
-      originIndex: startIdx,
-      formations: formations,
-      major: majorExplicit,
-      minor: formations.length > 1 ? formations[1] : null,
-      upper: up,
-      lower: lo,
-      projectedUpper: projUp,
-      projectedLower: projLo
-    };
+  var cands = [];
+  var allU = [];
+  var allL = [];
+  for (var k = 0; k < origins.length; k++) {
+    var o = origins[k];
+    var u = computeRayForOrigin(candles, o, n, true);
+    var l = computeRayForOrigin(candles, o, n, false);
+    if (!u && !l) continue;
+    cands.push({ originIndex: o, upper: u, lower: l, pinned: pinFirst && k === 0 });
+    if (u) allU.push(u);
+    if (l) allL.push(l);
   }
 
-  // Event-driven mode (no lookbackBars passed):
-  // Scan all Scenario 3 bars in the cycle window (up to 260 trading days)
-  var origins = [];
+  var drawnU = {};
+  var drawnL = {};
+  var formations = [];
+  for (var ci = 0; ci < cands.length; ci++) {
+    var c = cands[ci];
+    var fu = c.upper;
+    var fl = c.lower;
+    if (!c.pinned) {
+      if (fu && (drawnU[fu.anchor2.index] || isRaySuperseded(fu, allU, true))) fu = null;
+      if (fl && (drawnL[fl.anchor2.index] || isRaySuperseded(fl, allL, false))) fl = null;
+    }
+    if (!fu && !fl) continue;
+    if (fu) drawnU[fu.anchor2.index] = true;
+    if (fl) drawnL[fl.anchor2.index] = true;
+    formations.push({
+      originIndex: c.originIndex,
+      upper: fu,
+      lower: fl,
+      projectedUpper: bfProject(fu, lastIdx),
+      projectedLower: bfProject(fl, lastIdx)
+    });
+  }
+  return formations;
+}
+
+var _bfCache = { order: [], map: {} };
+
+function bfCacheKey(candles, lookbackBars) {
+  var n = candles.length;
+  var first = candles[0];
+  var mid = candles[Math.floor(n / 2)];
+  var last = candles[n - 1];
+  return [
+    n, (typeof lookbackBars === "number") ? lookbackBars : "",
+    first.timestamp || first.time, first.high, first.low,
+    mid.high, mid.low,
+    last.timestamp || last.time, last.high, last.low
+  ].join("|");
+}
+
+// Active broadening formations for a candle series.
+// lookbackBars (optional): the formation explicitly starts lookbackBars bars from the end (bar
+// replay / tests); that formation is pinned as the major. Without it, the major is the formation
+// that starts at the beginning of the BF_DEFAULT_WINDOW cycle window. In both modes every bar
+// that a Scenario 3 outside bar took out on both sides also starts a (nested) formation.
+// Results are memoised: the chart calls this from paint, which runs far more often than the
+// candles change.
+function computeActiveBroadening(candles, lookbackBars) {
+  if (!candles || candles.length < 5) return null;
+
+  var cacheKey = bfCacheKey(candles, lookbackBars);
+  if (Object.prototype.hasOwnProperty.call(_bfCache.map, cacheKey)) return _bfCache.map[cacheKey];
+
+  var n = candles.length;
+  var explicitStart = (typeof lookbackBars === "number" && lookbackBars >= 5);
+  var startIdx = Math.max(0, n - (explicitStart ? lookbackBars : BF_DEFAULT_WINDOW));
+
+  var origins = [startIdx];
   for (var i = startIdx + 1; i < n; i++) {
-    if (stratScenario(candles[i], candles[i - 1]) === "3") {
+    if (i - 1 > startIdx && stratScenario(candles[i], candles[i - 1]) === "3") {
       origins.push(i - 1);
     }
   }
-  if (origins.indexOf(startIdx) === -1) {
-    origins.unshift(startIdx);
-  }
 
-  var rawU = [];
-  var rawL = [];
-  for (var k = 0; k < origins.length; k++) {
-    var orig = origins[k];
-    var u = computeRayForOrigin(candles, orig, n, true);
-    var l = computeRayForOrigin(candles, orig, n, false);
-    if (u) rawU.push(u);
-    if (l) rawL.push(l);
-  }
-
-  var activeU = filterActiveRays(rawU, true);
-  var activeL = filterActiveRays(rawL, false);
-
-  var formations = [];
-  var maxF = Math.max(activeU.length, activeL.length);
-
-  for (var fi = 0; fi < maxF; fi++) {
-    var formU = activeU[fi] || null;
-    var formL = activeL[fi] || null;
-    if (formU || formL) {
-      formations.push({
-        originIndex: Math.min(formU ? formU.anchor1.index : n, formL ? formL.anchor1.index : n),
-        upper: formU,
-        lower: formL,
-        projectedUpper: formU ? (formU.anchor1.price + formU.slope * (lastIdx - formU.anchor1.index)) : null,
-        projectedLower: formL ? (formL.anchor1.price + formL.slope * (lastIdx - formL.anchor1.index)) : null
-      });
-    }
-  }
-
-  var majorAuto = formations.length > 0 ? formations[0] : null;
-  var minorAuto = formations.length > 1 ? formations[1] : null;
-
-  return {
-    originIndex: majorAuto ? majorAuto.originIndex : startIdx,
+  var formations = buildBroadeningFormations(candles, origins, n, explicitStart);
+  var major = formations.length > 0 ? formations[0] : null;
+  var result = {
+    originIndex: major ? major.originIndex : startIdx,
     formations: formations,
-    major: majorAuto,
-    minor: minorAuto,
-    upper: majorAuto ? majorAuto.upper : null,
-    lower: majorAuto ? majorAuto.lower : null,
-    projectedUpper: majorAuto ? majorAuto.projectedUpper : null,
-    projectedLower: majorAuto ? majorAuto.projectedLower : null
+    major: major,
+    minor: formations.length > 1 ? formations[1] : null,
+    upper: major ? major.upper : null,
+    lower: major ? major.lower : null,
+    projectedUpper: major ? major.projectedUpper : null,
+    projectedLower: major ? major.projectedLower : null
   };
+
+  _bfCache.map[cacheKey] = result;
+  _bfCache.order.push(cacheKey);
+  while (_bfCache.order.length > BF_CACHE_LIMIT) {
+    delete _bfCache.map[_bfCache.order.shift()];
+  }
+  return result;
 }
 
 if (typeof module !== "undefined") {
