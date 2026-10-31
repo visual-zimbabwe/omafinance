@@ -5373,6 +5373,58 @@ function isRayRedundant(r1, r2) {
   return false;
 }
 
+function filterActiveRays(rawRays, isUpper) {
+  if (!rawRays || rawRays.length === 0) return [];
+
+  // 1. Group rays by anchor2 index: keep only the widest span (the true tangent anchor)
+  var byAnchor2 = {};
+  for (var i = 0; i < rawRays.length; i++) {
+    var r = rawRays[i];
+    var k = String(r.anchor2.index);
+    if (!byAnchor2[k] || r.span > byAnchor2[k].span) {
+      byAnchor2[k] = r;
+    }
+  }
+
+  var uniqueRays = [];
+  for (var key in byAnchor2) {
+    uniqueRays.push(byAnchor2[key]);
+  }
+
+  // 2. Sort by anchor2 index ascending (chronological order)
+  uniqueRays.sort(function(a, b) { return a.anchor2.index - b.anchor2.index; });
+
+  // 3. Mark rays superseded if a subsequent ray expanded the same outer boundary
+  var activeRays = [];
+  for (var ai = 0; ai < uniqueRays.length; ai++) {
+    var rA = uniqueRays[ai];
+    var superseded = false;
+
+    for (var bi = ai + 1; bi < uniqueRays.length; bi++) {
+      var rB = uniqueRays[bi];
+      // If ray B is later, higher (if upper) or lower (if lower), and starts at or before ray A:
+      if (rB.anchor1.index <= rA.anchor1.index) {
+        if (isUpper && rB.anchor2.price >= rA.anchor2.price) {
+          superseded = true;
+          break;
+        }
+        if (!isUpper && rB.anchor2.price <= rA.anchor2.price) {
+          superseded = true;
+          break;
+        }
+      }
+    }
+
+    if (!superseded) {
+      activeRays.push(rA);
+    }
+  }
+
+  // Sort final active rays by span descending (widest macro boundary first)
+  activeRays.sort(function(a, b) { return b.span - a.span; });
+  return activeRays;
+}
+
 function computeActiveBroadening(candles, lookbackBars) {
   if (!candles || candles.length < 5) return null;
   var n = candles.length;
@@ -5395,33 +5447,17 @@ function computeActiveBroadening(candles, lookbackBars) {
         minorOrigins.push(mi - 1);
       }
     }
-    var minorFormations = [];
+    var rawMinorU = [];
+    var rawMinorL = [];
     for (var mk = minorOrigins.length - 1; mk >= 0; mk--) {
       var origM = minorOrigins[mk];
       var mU = computeRayForOrigin(candles, origM, n, true);
       var mL = computeRayForOrigin(candles, origM, n, false);
-      var validU = mU && (!up || !isRayRedundant(up, mU));
-      var validL = mL && (!lo || !isRayRedundant(lo, mL));
-      if (validU || validL) {
-        var already = false;
-        for (var mfi = 0; mfi < minorFormations.length; mfi++) {
-          if ((validU && minorFormations[mfi].upper && isRayRedundant(minorFormations[mfi].upper, mU)) ||
-              (validL && minorFormations[mfi].lower && isRayRedundant(minorFormations[mfi].lower, mL))) {
-            already = true;
-            break;
-          }
-        }
-        if (!already) {
-          minorFormations.push({
-            originIndex: origM,
-            upper: validU ? mU : null,
-            lower: validL ? mL : null,
-            projectedUpper: validU ? (mU.anchor1.price + mU.slope * (lastIdx - mU.anchor1.index)) : null,
-            projectedLower: validL ? (mL.anchor1.price + mL.slope * (lastIdx - mL.anchor1.index)) : null
-          });
-        }
-      }
+      if (mU && (!up || mU.anchor2.index !== up.anchor2.index)) rawMinorU.push(mU);
+      if (mL && (!lo || mL.anchor2.index !== lo.anchor2.index)) rawMinorL.push(mL);
     }
+    var actMinU = filterActiveRays(rawMinorU, true);
+    var actMinL = filterActiveRays(rawMinorL, false);
 
     var majorExplicit = (up || lo) ? {
       originIndex: startIdx,
@@ -5431,17 +5467,29 @@ function computeActiveBroadening(candles, lookbackBars) {
       projectedLower: projLo
     } : null;
 
-    var formsExplicit = [];
-    if (majorExplicit) formsExplicit.push(majorExplicit);
-    for (var fei = 0; fei < minorFormations.length; fei++) {
-      formsExplicit.push(minorFormations[fei]);
+    var formations = [];
+    if (majorExplicit) formations.push(majorExplicit);
+
+    var maxMin = Math.max(actMinU.length, actMinL.length);
+    for (var mfi = 0; mfi < maxMin; mfi++) {
+      var formMinU = actMinU[mfi] || null;
+      var formMinL = actMinL[mfi] || null;
+      if (formMinU || formMinL) {
+        formations.push({
+          originIndex: Math.min(formMinU ? formMinU.anchor1.index : n, formMinL ? formMinL.anchor1.index : n),
+          upper: formMinU,
+          lower: formMinL,
+          projectedUpper: formMinU ? (formMinU.anchor1.price + formMinU.slope * (lastIdx - formMinU.anchor1.index)) : null,
+          projectedLower: formMinL ? (formMinL.anchor1.price + formMinL.slope * (lastIdx - formMinL.anchor1.index)) : null
+        });
+      }
     }
 
     return {
       originIndex: startIdx,
-      formations: formsExplicit,
+      formations: formations,
       major: majorExplicit,
-      minor: formsExplicit.length > 1 ? formsExplicit[1] : null,
+      minor: formations.length > 1 ? formations[1] : null,
       upper: up,
       lower: lo,
       projectedUpper: projUp,
@@ -5461,37 +5509,25 @@ function computeActiveBroadening(candles, lookbackBars) {
     origins.unshift(startIdx);
   }
 
-  var candU = [];
-  var candL = [];
+  var rawU = [];
+  var rawL = [];
   for (var k = 0; k < origins.length; k++) {
     var orig = origins[k];
     var u = computeRayForOrigin(candles, orig, n, true);
     var l = computeRayForOrigin(candles, orig, n, false);
-    if (u) {
-      var existsU = false;
-      for (var ui = 0; ui < candU.length; ui++) {
-        if (isRayRedundant(candU[ui], u)) { existsU = true; break; }
-      }
-      if (!existsU) candU.push(u);
-    }
-    if (l) {
-      var existsL = false;
-      for (var li = 0; li < candL.length; li++) {
-        if (isRayRedundant(candL[li], l)) { existsL = true; break; }
-      }
-      if (!existsL) candL.push(l);
-    }
+    if (u) rawU.push(u);
+    if (l) rawL.push(l);
   }
 
-  candU.sort(function(a, b) { return b.span - a.span; });
-  candL.sort(function(a, b) { return b.span - a.span; });
+  var activeU = filterActiveRays(rawU, true);
+  var activeL = filterActiveRays(rawL, false);
 
   var formations = [];
-  var maxF = Math.max(candU.length, candL.length);
+  var maxF = Math.max(activeU.length, activeL.length);
 
   for (var fi = 0; fi < maxF; fi++) {
-    var formU = candU[fi] || null;
-    var formL = candL[fi] || null;
+    var formU = activeU[fi] || null;
+    var formL = activeL[fi] || null;
     if (formU || formL) {
       formations.push({
         originIndex: Math.min(formU ? formU.anchor1.index : n, formL ? formL.anchor1.index : n),
