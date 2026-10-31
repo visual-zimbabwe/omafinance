@@ -5299,11 +5299,12 @@ function candleDateIso(candle) {
   return y + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day;
 }
 
-function computeRayForOrigin(candles, startIdx, endIdx, isUpper) {
+function computeRayForOrigin(candles, startIdx, endIdx, isUpper, minSpan) {
+  minSpan = (typeof minSpan === "number") ? minSpan : 2;
   var n = endIdx;
   var cand = [];
 
-  for (var a2 = startIdx + 4; a2 < n; a2++) {
+  for (var a2 = startIdx + minSpan; a2 < n; a2++) {
     var isPeak = isUpper ?
       ((candles[a2].high >= candles[a2 - 1].high) && (a2 === n - 1 || candles[a2].high >= candles[a2 + 1].high)) :
       ((candles[a2].low <= candles[a2 - 1].low) && (a2 === n - 1 || candles[a2].low <= candles[a2 + 1].low));
@@ -5314,7 +5315,7 @@ function computeRayForOrigin(candles, startIdx, endIdx, isUpper) {
     var bestA1 = -1;
     var bestSlope = isUpper ? Infinity : -Infinity;
 
-    for (var j = startIdx; j <= a2 - 4; j++) {
+    for (var j = startIdx; j <= a2 - minSpan; j++) {
       var p1 = isUpper ? candles[j].high : candles[j].low;
       var m = (p2 - p1) / (a2 - j);
       if (isUpper && m < -0.0001) continue;

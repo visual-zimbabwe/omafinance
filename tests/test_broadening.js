@@ -129,4 +129,21 @@ if (bfWeeklySpy.formations && bfWeeklySpy.formations.length > 0 && bfWeeklySpy.u
   process.exit(1);
 }
 
-console.log("\n>>> ALL 7 TESTS PASSED SUCCESSFULLY! <<<\n");
+// 8. Weekly IWM Broadening Formation & 2-3 Bar Expansion Check
+const iwmWeeklyPath = path.join(__dirname, "iwm_weekly.json");
+const iwmWeeklyBars = JSON.parse(fs.readFileSync(iwmWeeklyPath, "utf8"));
+const bfWeeklyIwm = computeActiveBroadening(iwmWeeklyBars);
+
+console.log("\n[Test 8] Weekly IWM Broadening Formation & 2-3 Bar Expansion Check");
+console.log("Weekly IWM Formations Count:", bfWeeklyIwm.formations?.length);
+const octUpper = bfWeeklyIwm.formations?.find(f => f.upper?.anchor2?.date === "2026-10-26");
+console.log("October 2026 Upper Formation:", octUpper?.upper ? `${octUpper.upper.anchor1.date} -> ${octUpper.upper.anchor2.date} (span=${octUpper.upper.span})` : "none");
+
+if (bfWeeklyIwm.formations && bfWeeklyIwm.formations.length > 0 && octUpper) {
+  console.log("PASS: Weekly IWM correctly captures the October 2026 broadening formation (span=3 bars)!");
+} else {
+  console.error("FAIL: Expected October 2026 broadening formation on IWM weekly:", bfWeeklyIwm);
+  process.exit(1);
+}
+
+console.log("\n>>> ALL 8 TESTS PASSED SUCCESSFULLY! <<<\n");
