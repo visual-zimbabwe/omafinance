@@ -15,7 +15,7 @@ function defaultGridMode() {
 }
 
 function defaultGridSync() {
-  return { symbol: true, timeframe: false, crosshair: true, time: true }
+  return { symbol: true, timeframe: false, crosshair: true, time: true, broadening: false }
 }
 
 function defaultGridSplits() {
@@ -351,10 +351,13 @@ function chartSpec(range) {
     case "15m": return { range: "1mo", interval: "15m" }
     case "30": return { range: "1mo", interval: "30m" }
     case "60": return { range: "1mo", interval: "60m" }
-    case "1W": return { range: "5y", interval: "1wk" }
+    case "1W":
+    case "W":
+    case "1w":
+    case "week": return { period1: 0, period2: 9999999999, interval: "1wk" }
     case "1M": return { range: "10y", interval: "1mo" }
     case "1Y": return { range: "max", interval: "1mo" }
-    default: return { range: "1y", interval: "1d" }
+    default: return { period1: 0, period2: 9999999999, interval: "1d" }
   }
 }
 
@@ -432,6 +435,14 @@ function yahooChartUrl(symbol, rangeKey) {
   var sym = normalizeSymbol(symbol)
   var spec = chartSpec(rangeKey)
   var prepost = "false"
+  if (spec.period1 !== undefined && spec.period2 !== undefined) {
+    return "https://query1.finance.yahoo.com/v8/finance/chart/"
+      + encodeURIComponent(sym)
+      + "?period1=" + spec.period1
+      + "&period2=" + spec.period2
+      + "&interval=" + spec.interval
+      + "&includePrePost=" + prepost
+  }
   return "https://query1.finance.yahoo.com/v8/finance/chart/"
     + encodeURIComponent(sym)
     + "?range=" + spec.range
@@ -521,7 +532,7 @@ function rangeCaption(rangeKey, quote) {
     case "30": return "30-Minute Candles (1 Month)"
     case "60": return "60-Minute Candles (1 Month)"
     case "1D": return "1-Day Candles (1 Year)"
-    case "1W": return "1-Week Candles (5 Years)"
+    case "1W": return "1-Week Candles (All Time)"
     case "1M": return "1-Month Candles (10 Years)"
     case "1Y": return "1-Year Candles (All Time)"
     default: return ""
@@ -5276,6 +5287,277 @@ function nodeCommand(scriptPath, extraArgs) {
   return cmd;
 }
 
+function candleDateIso(candle) {
+  if (!candle) return "";
+  if (candle.date) return String(candle.date);
+  var ts = candle.timestamp || candle.time;
+  if (!ts) return "";
+  var d = new Date(ts > 1e11 ? ts : ts * 1000);
+  var y = d.getUTCFullYear();
+  var m = d.getUTCMonth() + 1;
+  var day = d.getUTCDate();
+  return y + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day;
+}
+
+function computeRayForOrigin(candles, startIdx, endIdx, isUpper, minSpan) {
+  minSpan = (typeof minSpan === "number") ? minSpan : 2;
+  var n = endIdx;
+  var cand = [];
+
+  for (var a2 = startIdx + minSpan; a2 < n; a2++) {
+    var isPeak = isUpper ?
+      ((candles[a2].high >= candles[a2 - 1].high) && (a2 === n - 1 || candles[a2].high >= candles[a2 + 1].high)) :
+      ((candles[a2].low <= candles[a2 - 1].low) && (a2 === n - 1 || candles[a2].low <= candles[a2 + 1].low));
+
+    if (!isPeak) continue;
+
+    var p2 = isUpper ? candles[a2].high : candles[a2].low;
+    var bestA1 = -1;
+    var bestSlope = isUpper ? Infinity : -Infinity;
+
+    for (var j = startIdx; j <= a2 - minSpan; j++) {
+      var p1 = isUpper ? candles[j].high : candles[j].low;
+      var m = (p2 - p1) / (a2 - j);
+      if (isUpper && m < -0.0001) continue;
+      if (!isUpper && m > 0.0001) continue;
+
+      var valid = true;
+      for (var mid = j + 1; mid < a2; mid++) {
+        var midP = isUpper ? candles[mid].high : candles[mid].low;
+        var lineY = p1 + m * (mid - j);
+        if (isUpper && midP > lineY + 0.001) { valid = false; break; }
+        if (!isUpper && midP < lineY - 0.001) { valid = false; break; }
+      }
+      if (valid) {
+        if (isUpper && m < bestSlope) {
+          bestSlope = m;
+          bestA1 = j;
+        } else if (!isUpper && m > bestSlope) {
+          bestSlope = m;
+          bestA1 = j;
+        }
+      }
+    }
+
+    if (bestA1 !== -1) {
+      var breach = 0;
+      for (var post = a2 + 1; post < n; post++) {
+        var postP = isUpper ? candles[post].high : candles[post].low;
+        var lineY = (isUpper ? candles[bestA1].high : candles[bestA1].low) + bestSlope * (post - bestA1);
+        if (isUpper && postP > lineY + 0.005 * postP) breach++;
+        if (!isUpper && postP < lineY - 0.005 * postP) breach++;
+      }
+      if (breach === 0) {
+        cand.push({
+          anchor1: { index: bestA1, price: isUpper ? candles[bestA1].high : candles[bestA1].low, date: candleDateIso(candles[bestA1]), time: candles[bestA1].time || candles[bestA1].timestamp },
+          anchor2: { index: a2, price: p2, date: candleDateIso(candles[a2]), time: candles[a2].time || candles[a2].timestamp },
+          slope: bestSlope,
+          span: a2 - bestA1
+        });
+      }
+    }
+  }
+
+  if (cand.length === 0) return null;
+  cand.sort(function(a, b) {
+    if (isUpper) {
+      if (b.anchor2.price !== a.anchor2.price) return b.anchor2.price - a.anchor2.price;
+    } else {
+      if (a.anchor2.price !== b.anchor2.price) return a.anchor2.price - b.anchor2.price;
+    }
+    return b.anchor2.index - a.anchor2.index;
+  });
+  return cand[0];
+}
+
+function isRayRedundant(r1, r2) {
+  if (!r1 || !r2) return false;
+  if (r1.anchor1.index === r2.anchor1.index && r1.anchor2.index === r2.anchor2.index) return true;
+  if (Math.abs(r1.anchor2.index - r2.anchor2.index) <= 2 && Math.abs(r1.anchor1.index - r2.anchor1.index) <= 3) return true;
+  return false;
+}
+
+function filterActiveRays(rawRays, isUpper) {
+  if (!rawRays || rawRays.length === 0) return [];
+
+  // 1. Group rays by anchor2 index: keep only the widest span (the true tangent anchor)
+  var byAnchor2 = {};
+  for (var i = 0; i < rawRays.length; i++) {
+    var r = rawRays[i];
+    var k = String(r.anchor2.index);
+    if (!byAnchor2[k] || r.span > byAnchor2[k].span) {
+      byAnchor2[k] = r;
+    }
+  }
+
+  var uniqueRays = [];
+  for (var key in byAnchor2) {
+    uniqueRays.push(byAnchor2[key]);
+  }
+
+  // 2. Sort by anchor2 index ascending (chronological order)
+  uniqueRays.sort(function(a, b) { return a.anchor2.index - b.anchor2.index; });
+
+  // 3. Mark rays superseded if a subsequent ray expanded the same outer boundary
+  var activeRays = [];
+  for (var ai = 0; ai < uniqueRays.length; ai++) {
+    var rA = uniqueRays[ai];
+    var superseded = false;
+
+    for (var bi = ai + 1; bi < uniqueRays.length; bi++) {
+      var rB = uniqueRays[bi];
+      // If ray B is later, higher (if upper) or lower (if lower), and starts at or before ray A:
+      if (rB.anchor1.index <= rA.anchor1.index) {
+        if (isUpper && rB.anchor2.price >= rA.anchor2.price) {
+          superseded = true;
+          break;
+        }
+        if (!isUpper && rB.anchor2.price <= rA.anchor2.price) {
+          superseded = true;
+          break;
+        }
+      }
+    }
+
+    if (!superseded) {
+      activeRays.push(rA);
+    }
+  }
+
+  // Sort final active rays by span descending (widest macro boundary first)
+  activeRays.sort(function(a, b) { return b.span - a.span; });
+  return activeRays;
+}
+
+function computeActiveBroadening(candles, lookbackBars) {
+  if (!candles || candles.length < 5) return null;
+  var n = candles.length;
+  var lastIdx = n - 1;
+
+  var startIdx = (typeof lookbackBars === "number" && lookbackBars >= 5) ?
+    Math.max(0, n - lookbackBars) :
+    Math.max(0, n - 260);
+
+  // If a specific lookback is provided (e.g. from bar replay), evaluate from startIdx:
+  if (typeof lookbackBars === "number" && lookbackBars >= 5) {
+    var up = computeRayForOrigin(candles, startIdx, n, true);
+    var lo = computeRayForOrigin(candles, startIdx, n, false);
+    var projUp = up ? (up.anchor1.price + up.slope * (lastIdx - up.anchor1.index)) : null;
+    var projLo = lo ? (lo.anchor1.price + lo.slope * (lastIdx - lo.anchor1.index)) : null;
+
+    var minorOrigins = [];
+    for (var mi = startIdx + Math.max(5, Math.floor(lookbackBars * 0.4)); mi < n; mi++) {
+      if (stratScenario(candles[mi], candles[mi - 1]) === "3") {
+        minorOrigins.push(mi - 1);
+      }
+    }
+    var rawMinorU = [];
+    var rawMinorL = [];
+    for (var mk = minorOrigins.length - 1; mk >= 0; mk--) {
+      var origM = minorOrigins[mk];
+      var mU = computeRayForOrigin(candles, origM, n, true);
+      var mL = computeRayForOrigin(candles, origM, n, false);
+      if (mU && (!up || mU.anchor2.index !== up.anchor2.index)) rawMinorU.push(mU);
+      if (mL && (!lo || mL.anchor2.index !== lo.anchor2.index)) rawMinorL.push(mL);
+    }
+    var actMinU = filterActiveRays(rawMinorU, true);
+    var actMinL = filterActiveRays(rawMinorL, false);
+
+    var majorExplicit = (up || lo) ? {
+      originIndex: startIdx,
+      upper: up,
+      lower: lo,
+      projectedUpper: projUp,
+      projectedLower: projLo
+    } : null;
+
+    var formations = [];
+    if (majorExplicit) formations.push(majorExplicit);
+
+    var maxMin = Math.max(actMinU.length, actMinL.length);
+    for (var mfi = 0; mfi < maxMin; mfi++) {
+      var formMinU = actMinU[mfi] || null;
+      var formMinL = actMinL[mfi] || null;
+      if (formMinU || formMinL) {
+        formations.push({
+          originIndex: Math.min(formMinU ? formMinU.anchor1.index : n, formMinL ? formMinL.anchor1.index : n),
+          upper: formMinU,
+          lower: formMinL,
+          projectedUpper: formMinU ? (formMinU.anchor1.price + formMinU.slope * (lastIdx - formMinU.anchor1.index)) : null,
+          projectedLower: formMinL ? (formMinL.anchor1.price + formMinL.slope * (lastIdx - formMinL.anchor1.index)) : null
+        });
+      }
+    }
+
+    return {
+      originIndex: startIdx,
+      formations: formations,
+      major: majorExplicit,
+      minor: formations.length > 1 ? formations[1] : null,
+      upper: up,
+      lower: lo,
+      projectedUpper: projUp,
+      projectedLower: projLo
+    };
+  }
+
+  // Event-driven mode (no lookbackBars passed):
+  // Scan all Scenario 3 bars in the cycle window (up to 260 trading days)
+  var origins = [];
+  for (var i = startIdx + 1; i < n; i++) {
+    if (stratScenario(candles[i], candles[i - 1]) === "3") {
+      origins.push(i - 1);
+    }
+  }
+  if (origins.indexOf(startIdx) === -1) {
+    origins.unshift(startIdx);
+  }
+
+  var rawU = [];
+  var rawL = [];
+  for (var k = 0; k < origins.length; k++) {
+    var orig = origins[k];
+    var u = computeRayForOrigin(candles, orig, n, true);
+    var l = computeRayForOrigin(candles, orig, n, false);
+    if (u) rawU.push(u);
+    if (l) rawL.push(l);
+  }
+
+  var activeU = filterActiveRays(rawU, true);
+  var activeL = filterActiveRays(rawL, false);
+
+  var formations = [];
+  var maxF = Math.max(activeU.length, activeL.length);
+
+  for (var fi = 0; fi < maxF; fi++) {
+    var formU = activeU[fi] || null;
+    var formL = activeL[fi] || null;
+    if (formU || formL) {
+      formations.push({
+        originIndex: Math.min(formU ? formU.anchor1.index : n, formL ? formL.anchor1.index : n),
+        upper: formU,
+        lower: formL,
+        projectedUpper: formU ? (formU.anchor1.price + formU.slope * (lastIdx - formU.anchor1.index)) : null,
+        projectedLower: formL ? (formL.anchor1.price + formL.slope * (lastIdx - formL.anchor1.index)) : null
+      });
+    }
+  }
+
+  var majorAuto = formations.length > 0 ? formations[0] : null;
+  var minorAuto = formations.length > 1 ? formations[1] : null;
+
+  return {
+    originIndex: majorAuto ? majorAuto.originIndex : startIdx,
+    formations: formations,
+    major: majorAuto,
+    minor: minorAuto,
+    upper: majorAuto ? majorAuto.upper : null,
+    lower: majorAuto ? majorAuto.lower : null,
+    projectedUpper: majorAuto ? majorAuto.projectedUpper : null,
+    projectedLower: majorAuto ? majorAuto.projectedLower : null
+  };
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -5392,6 +5674,7 @@ if (typeof module !== "undefined") {
     sliceCandlesBefore: sliceCandlesBefore,
     computeReplayFocusPair: computeReplayFocusPair,
     computeFocusBasketSupport: computeFocusBasketSupport,
+    computeActiveBroadening: computeActiveBroadening,
     nodeCommand: nodeCommand
   }
 }

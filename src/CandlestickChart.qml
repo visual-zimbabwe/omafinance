@@ -28,6 +28,8 @@ Item {
     readonly property int scaleGutterWidth: showPriceScale ? Style.space(52) : 0
     property bool showTimeScale: true
     readonly property int timeScaleHeight: showTimeScale ? Style.space(18) : 0
+    property bool showBroadening: false
+    onShowBroadeningChanged: refreshGeometry()
 
     signal crosshairMoved(real timestamp, real price, var candle)
     signal crosshairCleared
@@ -386,7 +388,10 @@ Item {
             return unset;
 
         var minBars = 8;
-        var vCount = (root.viewCount > 0 && root.viewCount < total) ? Math.max(minBars, root.viewCount) : total;
+        var isDaily = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
+        var isWeekly = (root.rangeKey === "1W" || root.rangeKey === "W" || root.rangeKey === "week" || root.rangeKey === "1w");
+        var defaultCount = (isDaily || isWeekly) ? Math.min(total, 140) : total;
+        var vCount = (root.viewCount > 0 && root.viewCount < total) ? Math.max(minBars, root.viewCount) : defaultCount;
         var maxStart = Math.max(0, total - vCount);
         var vStart = root.followLatest ? maxStart : Math.max(0, Math.min(maxStart, root.viewStart));
 
@@ -847,6 +852,104 @@ Item {
                 ctx.lineTo(g.right, extLineY);
                 ctx.stroke();
                 ctx.restore();
+            }
+
+            // TheStrat Broadening Formation (BF) Lines (Daily or Weekly timeframe only; isolated per timeframe)
+            var isDailyChart = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
+            var isWeeklyChart = (root.rangeKey === "1W" || root.rangeKey === "W" || root.rangeKey === "week" || root.rangeKey === "1w");
+            var isBfTimeframe = isDailyChart || isWeeklyChart;
+            if (root.showBroadening && isBfTimeframe && g.allCandles && g.allCandles.length >= 3 && g.innerW > 0) {
+                var bf = Model.computeActiveBroadening(g.allCandles);
+                if (bf) {
+                    var rightEdgeX = g.right;
+
+                    var forms = (bf.formations && Array.isArray(bf.formations) && bf.formations.length > 0)
+                        ? bf.formations
+                        : [bf.major, bf.minor].filter(Boolean);
+
+                    var getAnchorX = function(idx) {
+                        var localIdx = idx - g.vStart;
+                        if (localIdx >= 0 && localIdx < g.xs.length) {
+                            return Math.round(g.xs[localIdx]) + 0.5;
+                        }
+                        return Math.round(g.xs[0] + localIdx * g.slotW) + 0.5;
+                    };
+
+                    var drawBFRay = function(ray, isUpper, formIdx) {
+                        if (!ray) return;
+                        var a1X = getAnchorX(ray.anchor1.index);
+                        var a1Y = Math.round(root.priceToYVal(ray.anchor1.price, g)) + 0.5;
+                        var a2X = getAnchorX(ray.anchor2.index);
+                        var a2Y = Math.round(root.priceToYVal(ray.anchor2.price, g)) + 0.5;
+
+                        var dx = a2X - a1X;
+                        if (dx <= 0) return;
+
+                        var screenSlope = (a2Y - a1Y) / dx;
+                        var projY = Math.round(a1Y + screenSlope * (rightEdgeX - a1X)) + 0.5;
+
+                        var startX = a1X;
+                        var startY = a1Y;
+                        if (startX < g.left) {
+                            startX = g.left;
+                            startY = Math.round(a1Y + screenSlope * (startX - a1X)) + 0.5;
+                        }
+
+                        var lvl = (typeof formIdx === "number") ? formIdx : 0;
+                        var strokeColor;
+                        if (isUpper) {
+                            if (lvl === 0) strokeColor = "#3879E3";       // Major Upper (Royal Blue)
+                            else if (lvl === 1) strokeColor = "#00B4D8";  // Intermediate Upper (Sky Blue)
+                            else if (lvl === 2) strokeColor = "#818CF8";  // Minor Upper (Indigo)
+                            else strokeColor = "#2DD4BF";                 // Inner Minor Upper (Teal)
+                        } else {
+                            if (lvl === 0) strokeColor = "#FE0000";       // Major Lower (Crimson)
+                            else if (lvl === 1) strokeColor = "#FB7185";  // Intermediate Lower (Coral)
+                            else if (lvl === 2) strokeColor = "#F472B6";  // Minor Lower (Rose)
+                            else strokeColor = "#FBBF24";                 // Inner Minor Lower (Amber)
+                        }
+
+                        var lineWidth = (lvl === 0) ? 0.60 : ((lvl === 1) ? 0.50 : 0.45);
+                        var dotRadius = (lvl === 0) ? 1.8 : ((lvl === 1) ? 1.5 : 1.3);
+                        var dashPattern = (lvl === 0) ? [6, 4] : ((lvl === 1) ? [4, 3] : [3, 3]);
+
+                        ctx.save();
+                        ctx.strokeStyle = strokeColor;
+                        ctx.lineWidth = lineWidth;
+                        if (ctx.setLineDash) ctx.setLineDash(dashPattern);
+
+                        ctx.beginPath();
+                        ctx.moveTo(startX, startY);
+                        if (a2X > startX && a2X < rightEdgeX) {
+                            ctx.lineTo(a2X, a2Y);
+                        }
+                        ctx.lineTo(rightEdgeX, projY);
+                        ctx.stroke();
+
+                        // Anchor Rings / Dots
+                        if (ctx.setLineDash) ctx.setLineDash([]);
+                        ctx.fillStyle = strokeColor;
+                        if (a1X >= g.left && a1X <= g.right) {
+                            ctx.beginPath();
+                            ctx.arc(a1X, a1Y, dotRadius, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        if (a2X >= g.left && a2X <= g.right) {
+                            ctx.beginPath();
+                            ctx.arc(a2X, a2Y, dotRadius, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        ctx.restore();
+                    };
+
+                    // Draw all detected active broadening formations
+                    for (var fi = 0; fi < forms.length; fi++) {
+                        var f = forms[fi];
+                        if (!f) continue;
+                        if (f.upper) drawBFRay(f.upper, true, fi);
+                        if (f.lower) drawBFRay(f.lower, false, fi);
+                    }
+                }
             }
 
             // User-Drawn Trigger / Target Price Level Lines

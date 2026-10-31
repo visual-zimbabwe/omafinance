@@ -1190,7 +1190,7 @@ Panel {
                 }
                 root.chartRetryingYahoo = false;
                 var expected = Model.chartSpec(root.detailRange).range;
-                var valid = parsed && parsed.symbol === root.detailSymbol && (!parsed.yahooRange || parsed.yahooRange === expected);
+                var valid = parsed && parsed.symbol === root.detailSymbol && (!parsed.yahooRange || !expected || parsed.yahooRange === expected);
                 if (valid) {
                     parsed.chartRange = root.detailRange;
                     if (root.quotes[root.detailSymbol] && root.quotes[root.detailSymbol].ftfc)
@@ -1901,6 +1901,7 @@ Panel {
             syncTimeframe: root.gridSync ? root.gridSync.timeframe === true : false,
             syncCrosshair: root.gridSync ? root.gridSync.crosshair !== false : true,
             syncTime: root.gridSync ? root.gridSync.time !== false : true,
+            showBroadening: root.gridSync ? root.gridSync.broadening === true : false,
             cellSymbols: [sym, sym, sym, sym, sym],
             cellTimeframes: initialTfs,
             cellZooms: initialZooms,
