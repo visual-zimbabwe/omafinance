@@ -92,6 +92,85 @@ async function run() {
 
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
+  // 2b. For Focus Baskets (XLC, SMH), fetch 30m, 60m, and 1M candles
+  const focusPairsMap = Model.focusBasketPairs();
+  const focusBasketSymbols = ["XLC", "SMH"];
+  const focusSymsSet = {};
+  for (const fb of focusBasketSymbols) {
+    focusSymsSet[fb] = true;
+    const bData = basketsMap[fb];
+    if (bData && bData.holdings) {
+      for (const h of bData.holdings) {
+        if (h && h.symbol && !h.delisted) {
+          focusSymsSet[h.symbol] = true;
+        }
+      }
+    }
+  }
+  focusSymsSet["GOOGL"] = true;
+  focusSymsSet["META"] = true;
+  focusSymsSet["NVDA"] = true;
+  focusSymsSet["TSM"] = true;
+  const focusSymsList = Object.keys(focusSymsSet);
+
+  const tf30Map = {};
+  const tf60Map = {};
+  const monthlyMap = {};
+
+  let fIdx = 0;
+  async function focusWorker() {
+    while (fIdx < focusSymsList.length) {
+      const sym = focusSymsList[fIdx++];
+
+      // Fetch 30m (5d)
+      try {
+        const u30 = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=30m&range=5d&includePrePost=false`;
+        const res30 = await fetchHttps(u30, { "User-Agent": "Mozilla/5.0" });
+        if (res30.ok && res30.data) {
+          const j30 = JSON.parse(res30.data);
+          const r30 = j30 && j30.chart && j30.chart.result && j30.chart.result[0];
+          if (r30 && r30.timestamp && r30.indicators) {
+            tf30Map[sym] = Model.parseCandles(r30.timestamp, r30.indicators);
+          }
+        }
+      } catch (e) {}
+
+      // Fetch 60m (1mo) or derive from 30m
+      try {
+        const u60 = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=60m&range=1mo&includePrePost=false`;
+        const res60 = await fetchHttps(u60, { "User-Agent": "Mozilla/5.0" });
+        if (res60.ok && res60.data) {
+          const j60 = JSON.parse(res60.data);
+          const r60 = j60 && j60.chart && j60.chart.result && j60.chart.result[0];
+          if (r60 && r60.timestamp && r60.indicators) {
+            tf60Map[sym] = Model.parseCandles(r60.timestamp, r60.indicators);
+          }
+        }
+      } catch (e) {}
+      if (!tf60Map[sym] && tf30Map[sym]) {
+        tf60Map[sym] = Model.mergePeriodCandles(tf30Map[sym], "60");
+      }
+
+      // Fetch 1M (2y) or derive from daily
+      try {
+        const u1m = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1mo&range=2y&includePrePost=false`;
+        const res1m = await fetchHttps(u1m, { "User-Agent": "Mozilla/5.0" });
+        if (res1m.ok && res1m.data) {
+          const j1m = JSON.parse(res1m.data);
+          const r1m = j1m && j1m.chart && j1m.chart.result && j1m.chart.result[0];
+          if (r1m && r1m.timestamp && r1m.indicators) {
+            monthlyMap[sym] = Model.parseCandles(r1m.timestamp, r1m.indicators);
+          }
+        }
+      } catch (e) {}
+      if (!monthlyMap[sym] && dailyMap[sym]) {
+        monthlyMap[sym] = Model.mergePeriodCandles(dailyMap[sym], "1M");
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => focusWorker()));
+
   // 3. Compute Attack Metrics per Basket for Daily and Weekly timeframes
   const evaluatedDailyBaskets = [];
   const evaluatedWeeklyBaskets = [];
@@ -156,6 +235,71 @@ async function run() {
   allWeeklyLaggards.sort((a, b) => (a.distToTriggerPct != null ? a.distToTriggerPct : 999) - (b.distToTriggerPct != null ? b.distToTriggerPct : 999));
   const topWeeklyLaggards = allWeeklyLaggards.slice(0, 15);
 
+  // Compute Focus Pairs Multi-Timeframe metrics (30m, 60m, 1D, 1W, 1M)
+  const focusTfs = ["30", "60", "1D", "1W", "1M"];
+  const tfMaps = {
+    "30": tf30Map,
+    "60": tf60Map,
+    "1D": dailyMap,
+    "1W": weeklyMap,
+    "1M": monthlyMap
+  };
+
+  const focusPairsOutput = {};
+  for (const sym of Object.keys(focusPairsMap)) {
+    const pair = focusPairsMap[sym];
+    const bData = basketsMap[pair.basket];
+    const holdings = bData ? bData.holdings : [];
+    const tfDetails = {};
+
+    for (const tf of focusTfs) {
+      const cMap = tfMaps[tf] || {};
+      const bMetrics = Model.computeBasketAttackMetrics(pair.basket, bData ? bData.name : pair.basket, "Sector", holdings, cMap, null, tf);
+
+      // Key peer scenario & price
+      const peerCandles = cMap[pair.peer];
+      let peerInfo = { symbol: pair.peer, scenario: "-", color: "-", price: null, inForce: "-" };
+      if (peerCandles && peerCandles.length >= 2) {
+        const pLast = peerCandles[peerCandles.length - 1];
+        const pPrev = peerCandles[peerCandles.length - 2];
+        const sc = Model.stratScenario(pLast, pPrev);
+        const col = Number(pLast.close) >= Number(pLast.open) ? "G" : "R";
+        let inf = "-";
+        if (sc === "2u") inf = Number(pLast.close) >= Number(pPrev.high) ? "In-Force" : "Triggered";
+        else if (sc === "2d") inf = Number(pLast.close) <= Number(pPrev.low) ? "In-Force" : "Triggered";
+        else if (sc === "1") inf = "Inside Bar";
+        peerInfo = {
+          symbol: pair.peer,
+          scenario: sc,
+          color: col,
+          price: Number(pLast.close),
+          inForce: inf
+        };
+      }
+
+      tfDetails[tf] = {
+        basket: pair.basket,
+        timeframe: tf,
+        status: bMetrics.status,
+        pct2u: bMetrics.pct2u,
+        pct2d: bMetrics.pct2d,
+        pctAttack2u: bMetrics.pctAttack2u,
+        pctAttack2d: bMetrics.pctAttack2d,
+        count2u: bMetrics.count2u,
+        count2d: bMetrics.count2d,
+        totalHoldings: bMetrics.totalHoldings,
+        peer: peerInfo
+      };
+    }
+
+    focusPairsOutput[sym] = {
+      symbol: sym,
+      basket: pair.basket,
+      peer: pair.peer,
+      timeframes: tfDetails
+    };
+  }
+
   const output = {
     timestamp: Date.now(),
     daily: {
@@ -170,12 +314,19 @@ async function run() {
       topBearishAttacks: topBearishWeekly,
       topLaggards: topWeeklyLaggards
     },
+    focusPairs: focusPairsOutput,
     // Backwards compatibility with existing root properties
     baskets: sortedDailyBaskets,
     topBullishAttacks: topBullishDaily,
     topBearishAttacks: topBearishDaily,
     topLaggards: topDailyLaggards
   };
+
+  try {
+    const cacheDir = path.join(process.env.HOME || "/home/juwimana", ".cache", "omafinance");
+    if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(path.join(cacheDir, "attack.json"), JSON.stringify(output), "utf8");
+  } catch (e) {}
 
   process.stdout.write(JSON.stringify(output));
 }

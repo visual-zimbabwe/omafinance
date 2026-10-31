@@ -18,7 +18,8 @@ Item {
     property int zoomCount: -1
     property real replayCutoffTs: 0
     readonly property var stratChecklist: Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote, root.replayCutoffTs > 0 ? new Date((root.replayCutoffTs - 1) * 1000) : null)
-    readonly property var stratBinary: Model.computeStratBinaryDetails(root.candles, root.quote)
+    property var attackScanResult: null
+    readonly property var focusSupport: Model.computeFocusBasketSupport(root.symbol, root.timeframe, root.candles, root.quote, root.dailyCandles, null, root.attackScanResult)
     property bool syncSymbolActive: true
     readonly property bool isExecutionTimeframeCell: {
         if (!root.stratChecklist || !root.stratChecklist.setupTimeframe)
@@ -423,41 +424,123 @@ Item {
                     }
                 }
 
-                // Strat Binary Framework Bits (Option 1: Per-Cell)
+                // Basket Support Badge (Focus Tickers Only: GOOGL -> XLC, NVDA -> SMH)
                 Item {
-                    id: stratBitsItem
-                    visible: root.stratBinary !== null && root.stratBinary.bits !== ""
-                    implicitWidth: stratBitsLabel.implicitWidth
-                    implicitHeight: stratBitsLabel.implicitHeight
+                    id: focusSupportBadgeItem
+                    visible: root.focusSupport !== null && root.focusSupport.hasSupport
+                    implicitWidth: badgeRow.implicitWidth
+                    implicitHeight: badgeRow.implicitHeight
                     anchors.verticalCenter: parent.verticalCenter
 
-                    Text {
-                        id: stratBitsLabel
+                    Row {
+                        id: badgeRow
                         anchors.verticalCenter: parent.verticalCenter
-                        textFormat: Text.PlainText
-                        text: root.stratBinary ? root.stratBinary.bits : ""
-                        font.family: "monospace"
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-                        color: {
-                            if (!root.stratBinary)
-                                return root.dim;
-                            if (root.stratBinary.color === "green")
-                                return root.upColor;
-                            if (root.stratBinary.color === "red")
-                                return root.downColor;
-                            if (root.stratBinary.color === "amber")
-                                return Qt.rgba(0.92, 0.65, 0.15, 1);
-                            return Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45);
-                        }
-                    }
+                        spacing: Style.space(4)
 
-                    MouseArea {
-                        id: bitsHoverArea
-                        anchors.fill: parent
-                        anchors.margins: -Style.space(4)
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
+                        // 1. Basket Attack Token (e.g. XLC ATK)
+                        Text {
+                            textFormat: Text.PlainText
+                            text: root.focusSupport ? (root.focusSupport.basket + " " + root.focusSupport.attackToken) : ""
+                            color: {
+                                if (!root.focusSupport)
+                                    return root.dim;
+                                if (root.focusSupport.attackColor === "green")
+                                    return root.upColor;
+                                if (root.focusSupport.attackColor === "red")
+                                    return root.downColor;
+                                if (root.focusSupport.attackColor === "amber")
+                                    return Qt.rgba(0.92, 0.65, 0.15, 1);
+                                return root.dim;
+                            }
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: true
+
+                            MouseArea {
+                                id: atkHoverArea
+                                anchors.fill: parent
+                                anchors.margins: -Style.space(2)
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.toggleSupportPopup()
+                            }
+                        }
+
+                        // Dot Separator
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "·"
+                            color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        // 2. Key Peer Token (e.g. META 2U)
+                        Text {
+                            textFormat: Text.PlainText
+                            text: root.focusSupport ? root.focusSupport.peerToken : ""
+                            color: {
+                                if (!root.focusSupport)
+                                    return root.dim;
+                                if (root.focusSupport.peerColor === "green")
+                                    return root.upColor;
+                                if (root.focusSupport.peerColor === "red")
+                                    return root.downColor;
+                                return root.dim;
+                            }
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: true
+
+                            MouseArea {
+                                id: peerHoverArea
+                                anchors.fill: parent
+                                anchors.margins: -Style.space(2)
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.toggleSupportPopup()
+                            }
+                        }
+
+                        // Dot Separator
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "·"
+                            color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        // 3. Support % Token (e.g. SUP 74%)
+                        Text {
+                            textFormat: Text.PlainText
+                            text: root.focusSupport ? root.focusSupport.supportToken : ""
+                            color: {
+                                if (!root.focusSupport)
+                                    return root.dim;
+                                if (root.focusSupport.supportColor === "green")
+                                    return root.upColor;
+                                if (root.focusSupport.supportColor === "red")
+                                    return root.downColor;
+                                if (root.focusSupport.supportColor === "amber")
+                                    return Qt.rgba(0.92, 0.65, 0.15, 1);
+                                return root.dim;
+                            }
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: true
+
+                            MouseArea {
+                                id: supHoverArea
+                                anchors.fill: parent
+                                anchors.margins: -Style.space(2)
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.toggleSupportPopup()
+                            }
+                        }
                     }
                 }
 
@@ -846,38 +929,60 @@ Item {
         fontFamily: root.fontFamily
     }
 
-    // Strat Binary Hover Tooltip Popup Overlay
+    function toggleSupportPopup() {
+        if (!cellSupportPopup)
+            return;
+        var pos = focusSupportBadgeItem.mapToItem(root, 0, 0);
+        cellSupportPopup.anchorX = pos.x + focusSupportBadgeItem.width / 2;
+        cellSupportPopup.anchorY = pos.y + focusSupportBadgeItem.height;
+        cellSupportPopup.open = !cellSupportPopup.open;
+    }
+
+    BasketSupportPopup {
+        id: cellSupportPopup
+        supportData: root.focusSupport
+        fontFamily: root.fontFamily
+    }
+
+    // Hover Tooltip Popup Overlay for Basket Support Tokens
     Item {
-        id: bitsTooltipOverlay
+        id: focusSupportHoverTooltip
+        readonly property bool showTooltip: (atkHoverArea.containsMouse || peerHoverArea.containsMouse || supHoverArea.containsMouse) && root.focusSupport !== null
+        readonly property string tooltipText: {
+            if (!root.focusSupport)
+                return "";
+            if (atkHoverArea.containsMouse)
+                return root.focusSupport.attackTooltip;
+            if (peerHoverArea.containsMouse)
+                return root.focusSupport.peerTooltip;
+            if (supHoverArea.containsMouse)
+                return root.focusSupport.supportTooltip;
+            return "";
+        }
+        visible: showTooltip && tooltipText !== ""
         anchors.fill: parent
-        z: 9999
-        visible: bitsHoverArea.containsMouse && root.stratBinary !== null && root.stratBinary.tooltip !== ""
+        z: 9998
 
         Rectangle {
-            id: bitsTooltipCard
-            width: bitsTooltipCol.implicitWidth + Style.space(20)
-            height: bitsTooltipCol.implicitHeight + Style.space(16)
-            radius: Style.space(6)
-            color: (Color.popups && Color.popups.background) ? Color.popups.background : Qt.rgba(0.08, 0.08, 0.10, 0.96)
-            border.color: (Color.popups && Color.popups.border) ? Color.popups.border : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.22)
+            width: supportTooltipText.implicitWidth + Style.space(16)
+            height: supportTooltipText.implicitHeight + Style.space(10)
+            radius: Style.space(4)
+            color: (Color.popups && Color.popups.background) ? Color.popups.background : Color.background
+            border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
             border.width: 1
 
-            x: Math.max(Style.space(8), Math.min(root.width - width - Style.space(8), stratBitsItem.mapToItem(root, 0, 0).x - Style.space(4)))
+            x: Math.max(Style.space(8), Math.min(root.width - width - Style.space(8), focusSupportBadgeItem.mapToItem(root, 0, 0).x - Style.space(4)))
             y: Style.space(34)
 
-            Column {
-                id: bitsTooltipCol
+            Text {
+                id: supportTooltipText
                 anchors.centerIn: parent
-                spacing: Style.space(4)
-
-                Text {
-                    text: root.stratBinary ? root.stratBinary.tooltip : ""
-                    textFormat: Text.PlainText
-                    color: (Color.popups && Color.popups.text) ? Color.popups.text : root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    lineHeight: 1.2
-                }
+                textFormat: Text.PlainText
+                text: focusSupportHoverTooltip.tooltipText
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
             }
         }
     }

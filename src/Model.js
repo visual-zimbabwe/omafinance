@@ -2130,8 +2130,6 @@ function computeStratDetails(candles, liveQuote) {
   }
   var sequence = seqParts.length > 0 ? seqParts.join("-") : "-"
 
-  var binary = computeStratBinaryDetails(candles, liveQuote)
-
   return {
     bar: bar,
     polarity: polarity,
@@ -2142,10 +2140,7 @@ function computeStratDetails(candles, liveQuote) {
     open: isFinite(curOpen) ? curOpen : null,
     high: isFinite(curHigh) ? curHigh : null,
     low: isFinite(curLow) ? curLow : null,
-    close: isFinite(curClose) ? curClose : null,
-    bits: binary.bits,
-    bitColor: binary.color,
-    bitTooltip: binary.tooltip
+    close: isFinite(curClose) ? curClose : null
   }
 }
 
@@ -3638,6 +3633,272 @@ function sortAttackBaskets(basketsList, sortKey, sortAsc) {
   })
 
   return list
+}
+
+function focusBasketPairs() {
+  return {
+    "GOOGL": { symbol: "GOOGL", basket: "XLC", peer: "META" },
+    "NVDA": { symbol: "NVDA", basket: "SMH", peer: "TSM" }
+  }
+}
+
+function focusPairForSymbol(symbol) {
+  if (!symbol) return null
+  var sym = normalizeSymbol(symbol)
+  var pairs = focusBasketPairs()
+  return pairs[sym] || null
+}
+
+function computeFocusBasketSupport(symbol, timeframe, candles, quote, dailyCandles, weeklyCandles, attackScanResult) {
+  var emptyResult = {
+    hasSupport: false,
+    visible: false,
+    symbol: symbol || "",
+    timeframe: timeframe || "1D",
+    basket: "",
+    peer: "",
+    attackToken: "-",
+    attackColor: "dim",
+    peerToken: "-",
+    peerColor: "dim",
+    supportToken: "-",
+    supportColor: "dim",
+    supportPct: 0,
+    sizingTier: "pass",
+    positionSizing: "STAND DOWN (0x)",
+    sizingColor: "red",
+    sizingReason: "No basket support data available.",
+    attackTooltip: "",
+    peerTooltip: "",
+    supportTooltip: "",
+    allTimeframes: []
+  }
+
+  var pair = focusPairForSymbol(symbol)
+  if (!pair) return emptyResult
+
+  var tf = String(timeframe || "1D").toUpperCase()
+  if (tf === "30M") tf = "30"
+  if (tf === "60M") tf = "60"
+  if (tf === "D") tf = "1D"
+  if (tf === "W") tf = "1W"
+  if (tf === "M") tf = "1M"
+
+  // 1. Resolve Focus Pair data from attackScanResult
+  var focusData = (attackScanResult && attackScanResult.focusPairs) ? attackScanResult.focusPairs[pair.symbol || normalizeSymbol(symbol)] : null
+  var tfData = focusData && focusData.timeframes ? focusData.timeframes[tf] : null
+
+  // Fallback to searching attackScanResult.timeframes or daily/weekly
+  if (!tfData && attackScanResult) {
+    var rawTf = (attackScanResult.timeframes && attackScanResult.timeframes[tf]) ? attackScanResult.timeframes[tf] : null
+    if (!rawTf && tf === "1D" && attackScanResult.daily) rawTf = attackScanResult.daily
+    if (!rawTf && tf === "1W" && attackScanResult.weekly) rawTf = attackScanResult.weekly
+    if (rawTf && rawTf.baskets) {
+      var foundBasket = null
+      for (var bi = 0; bi < rawTf.baskets.length; bi++) {
+        if (rawTf.baskets[bi].symbol === pair.basket) {
+          foundBasket = rawTf.baskets[bi]
+          break
+        }
+      }
+      if (foundBasket) {
+        tfData = {
+          basket: pair.basket,
+          timeframe: tf,
+          status: foundBasket.status,
+          pct2u: foundBasket.pct2u,
+          pct2d: foundBasket.pct2d,
+          pctAttack2u: foundBasket.pctAttack2u,
+          pctAttack2d: foundBasket.pctAttack2d,
+          peer: { symbol: pair.peer, scenario: "-", color: "-", price: null, inForce: "-" }
+        }
+      }
+    }
+  }
+
+  if (!tfData) {
+    return Object.assign({}, emptyResult, {
+      hasSupport: true,
+      visible: true,
+      symbol: normalizeSymbol(symbol),
+      timeframe: tf,
+      basket: pair.basket,
+      peer: pair.peer,
+      attackToken: "CHOP",
+      attackColor: "dim",
+      peerToken: pair.peer + " -",
+      peerColor: "dim",
+      supportToken: "SUP 0%",
+      supportColor: "dim",
+      attackTooltip: pair.basket + " " + tf + " (Awaiting scan data...)",
+      peerTooltip: pair.peer + " (Awaiting quote...)",
+      supportTooltip: "Basket support data loading...",
+      sizingReason: "Awaiting sector attack scan update."
+    })
+  }
+
+  // 2. Determine Focus Ticker Active Candle Scenario & Color
+  var curCandle = (Array.isArray(candles) && candles.length > 0) ? candles[candles.length - 1] : null
+  var prevCandle = (Array.isArray(candles) && candles.length > 1) ? candles[candles.length - 2] : null
+  var livePx = stratLivePrice(quote)
+  var cLast = curCandle ? Object.assign({}, curCandle) : null
+  if (cLast && livePx !== null && isFinite(livePx)) {
+    cLast.close = livePx
+    if (cLast.high === null || livePx > cLast.high) cLast.high = livePx
+    if (cLast.low === null || livePx < cLast.low) cLast.low = livePx
+  }
+  var sc = (cLast && prevCandle) ? stratScenario(cLast, prevCandle) : "-"
+
+  // 3. Option 3C Trade Direction Determination:
+  var direction = "bullish"
+  if (sc === "2u") {
+    direction = "bullish"
+  } else if (sc === "2d") {
+    direction = "bearish"
+  } else {
+    // Option 3C: Inside bar ('1') or '-' -> Inherit Macro FTFC Direction (Daily close vs open)
+    var dLast = (Array.isArray(dailyCandles) && dailyCandles.length > 0) ? dailyCandles[dailyCandles.length - 1] : null
+    if (dLast && isFinite(dLast.close) && isFinite(dLast.open)) {
+      direction = (Number(dLast.close) >= Number(dLast.open)) ? "bullish" : "bearish"
+    } else {
+      var wLast = (Array.isArray(weeklyCandles) && weeklyCandles.length > 0) ? weeklyCandles[weeklyCandles.length - 1] : null
+      if (wLast && isFinite(wLast.close) && isFinite(wLast.open)) {
+        direction = (Number(wLast.close) >= Number(wLast.open)) ? "bullish" : "bearish"
+      } else {
+        direction = (Number(tfData.pct2u) >= Number(tfData.pct2d)) ? "bullish" : "bearish"
+      }
+    }
+  }
+
+  var isLong = direction === "bullish"
+  var supportPct = isLong ? Number(tfData.pct2u || 0) : Number(tfData.pct2d || 0)
+  var opposePct = isLong ? Number(tfData.pct2d || 0) : Number(tfData.pct2u || 0)
+  var attackPct = isLong ? Number(tfData.pctAttack2u || 0) : Number(tfData.pctAttack2d || 0)
+  var opposeAttackPct = isLong ? Number(tfData.pctAttack2d || 0) : Number(tfData.pctAttack2u || 0)
+
+  // 4. Attack Token & Color
+  var basketStatus = String(tfData.status || "NEUTRAL").toUpperCase()
+  var attackToken = "CHOP"
+  var attackColor = "dim"
+  if (basketStatus === (isLong ? "BULLISH ATTACK" : "BEARISH ATTACK") || (supportPct >= 65 && attackPct >= 15)) {
+    attackToken = "ATK"
+    attackColor = isLong ? "green" : "red"
+  } else if (basketStatus === (isLong ? "BEARISH ATTACK" : "BULLISH ATTACK") || (opposePct >= 65 && opposeAttackPct >= 15)) {
+    attackToken = "OPP"
+    attackColor = isLong ? "red" : "green"
+  } else if (supportPct >= 55) {
+    attackToken = "DEV"
+    attackColor = "amber"
+  } else if (opposePct >= 55) {
+    attackToken = "OPP"
+    attackColor = isLong ? "red" : "green"
+  } else {
+    attackToken = "CHOP"
+    attackColor = "dim"
+  }
+
+  // 5. Peer Token & Color
+  var peerInfo = tfData.peer || {}
+  var peerSc = String(peerInfo.scenario || "-").toUpperCase()
+  var peerToken = pair.peer + " " + peerSc
+  var peerColor = "dim"
+  var peerAligned = false
+  if (peerSc === "2U" || (peerSc === "-" && peerInfo.color === "G")) {
+    peerColor = "green"
+    if (isLong) peerAligned = true
+  } else if (peerSc === "2D" || (peerSc === "-" && peerInfo.color === "R")) {
+    peerColor = "red"
+    if (!isLong) peerAligned = true
+  } else if (peerSc === "1") {
+    peerColor = "dim"
+  }
+
+  // 6. Support Token & Color
+  var supportToken = (attackToken === "OPP" ? "OPP " : "SUP ") + Math.round(supportPct) + "%"
+  var supportColor = "dim"
+  if (attackToken === "OPP" || supportPct < 45) {
+    supportColor = "red"
+  } else if (supportPct >= 65) {
+    supportColor = isLong ? "green" : "red"
+  } else if (supportPct >= 50) {
+    supportColor = "amber"
+  }
+
+  // 7. 3-Tier Position Sizing
+  var sizingTier = "half"
+  var positionSizing = "HALF (0.5x)"
+  var sizingColor = "amber"
+  var sizingReason = ""
+
+  if ((attackToken === "ATK" || supportPct >= 65) && peerAligned) {
+    sizingTier = "full"
+    positionSizing = "FULL (1.0x)"
+    sizingColor = "green"
+    sizingReason = "Strong basket support. " + pair.peer + " and " + Math.round(supportPct) + "% of " + pair.basket + " are breaking in direction."
+  } else if (attackToken === "OPP" || (opposePct > supportPct && opposePct >= 60) || (!peerAligned && peerSc !== "1" && peerSc !== "-")) {
+    sizingTier = "pass"
+    positionSizing = "STAND DOWN (0x)"
+    sizingColor = "red"
+    sizingReason = "Opposing sector pressure. " + pair.basket + " (" + Math.round(opposePct) + "% opposing) or " + pair.peer + " is moving against the trade."
+  } else {
+    sizingTier = "half"
+    positionSizing = "HALF (0.5x)"
+    sizingColor = "amber"
+    sizingReason = "Moderate basket support. " + pair.basket + " is developing (" + Math.round(supportPct) + "%) or " + pair.peer + " is consolidating inside."
+  }
+
+  // 8. Tooltips
+  var attackDesc = attackToken === "ATK" ? (isLong ? "Bullish Attack" : "Bearish Attack") : (attackToken === "DEV" ? "Developing " + (isLong ? "Buy" : "Sell") : (attackToken === "OPP" ? "Opposing Sector Pressure" : "Inside Chop"))
+  var attackTooltip = pair.basket + " " + tf + " " + attackDesc + " (" + Math.round(supportPct) + "% " + (isLong ? "2U" : "2D") + ", " + Math.round(attackPct) + "% Attack)"
+  var peerPxStr = (peerInfo.price && isFinite(peerInfo.price)) ? (" ($" + Number(peerInfo.price).toFixed(2) + ")") : ""
+  var peerTooltip = pair.peer + " " + peerSc + " on " + tf + peerPxStr + (peerInfo.inForce && peerInfo.inForce !== "-" ? (" · " + peerInfo.inForce) : "")
+  var supportTooltip = "Basket Support: " + Math.round(supportPct) + "% of " + pair.basket + " holdings are currently breaking " + (isLong ? "2U" : "2D") + " on " + tf
+
+  // 9. All 5 Timeframes for Flyout
+  var allTimeframes = []
+  var checkTfs = ["30", "60", "1D", "1W", "1M"]
+  for (var ti = 0; ti < checkTfs.length; ti++) {
+    var cTf = checkTfs[ti]
+    var cTfData = focusData && focusData.timeframes ? focusData.timeframes[cTf] : null
+    var cPct = cTfData ? (isLong ? cTfData.pct2u : cTfData.pct2d) : null
+    var cAtk = cTfData ? cTfData.status : "-"
+    var cPeerSc = cTfData && cTfData.peer ? cTfData.peer.scenario : "-"
+    var cPeerCol = cTfData && cTfData.peer ? cTfData.peer.color : "-"
+    allTimeframes.push({
+      timeframe: cTf,
+      status: cAtk,
+      supportPct: cPct !== null ? Math.round(cPct) : null,
+      peerScenario: cPeerSc,
+      peerColor: cPeerCol
+    })
+  }
+
+  return {
+    hasSupport: true,
+    visible: true,
+    symbol: normalizeSymbol(symbol),
+    timeframe: tf,
+    basket: pair.basket,
+    peer: pair.peer,
+    direction: direction,
+    attackToken: attackToken,
+    attackColor: attackColor,
+    peerToken: peerToken,
+    peerColor: peerColor,
+    peerPrice: peerInfo.price || null,
+    peerInForce: peerInfo.inForce || "-",
+    supportToken: supportToken,
+    supportColor: supportColor,
+    supportPct: supportPct,
+    sizingTier: sizingTier,
+    positionSizing: positionSizing,
+    sizingColor: sizingColor,
+    sizingReason: sizingReason,
+    attackTooltip: attackTooltip,
+    peerTooltip: peerTooltip,
+    supportTooltip: supportTooltip,
+    allTimeframes: allTimeframes
+  }
 }
 
 function stratRuleRationales() {
@@ -5445,6 +5706,9 @@ if (typeof module !== "undefined") {
     stepReplayCutoff: stepReplayCutoff,
     formatReplayBadgeTime: formatReplayBadgeTime,
     mapReplayStepInterval: mapReplayStepInterval,
+    focusBasketPairs: focusBasketPairs,
+    focusPairForSymbol: focusPairForSymbol,
+    computeFocusBasketSupport: computeFocusBasketSupport,
     nodeCommand: nodeCommand
   }
 }

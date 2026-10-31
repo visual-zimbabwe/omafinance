@@ -20,7 +20,8 @@ const qmlFiles = [
   "GridWindow.qml",
   "SectorBreadthWindow.qml",
   "StratAttackWindow.qml",
-  "WtdCandlesStrip.qml"
+  "WtdCandlesStrip.qml",
+  "BasketSupportPopup.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
