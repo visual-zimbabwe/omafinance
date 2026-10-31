@@ -560,6 +560,16 @@ test("fetch-attack runner exists and produces structured focus basket output", (
   assert.match(code, /focusHoldings/)
 })
 
+test("candlestick chart renders broadening formation lines with 2 colors and hierarchy dash/alpha styles", () => {
+  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+  assert.match(chart, /var strokeColor = isUpper \? "#3879E3" : "#FE0000"/)
+  assert.match(chart, /var dashPattern = \(lvl === 0\) \? \[\] : \(\(lvl === 1\) \? \[6, 4\] : \[2, 3\]\)/)
+  assert.match(chart, /var lineAlpha = \(lvl === 0\) \? 1\.0 : \(\(lvl === 1\) \? 0\.75 : 0\.40\)/)
+  assert.match(chart, /ctx\.globalAlpha = lineAlpha/)
+})
+
+
+
 
 
 
