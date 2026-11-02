@@ -579,43 +579,23 @@ Item {
                 }
             }
 
-            // Inspect Line (Right-aligned or overlay)
+            // Active Candle Strat Tag (Right-aligned in header, always visible)
             Item {
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.activeCandle !== null
 
-                Row {
+                Text {
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(6)
-
-                    Text {
-                        visible: root.activeCandle && root.activeCandle.strat && root.activeCandle.strat !== "-"
-                        textFormat: Text.PlainText
-                        text: (root.activeCandle && root.activeCandle.strat && root.activeCandle.strat !== "-") ? String(root.activeCandle.strat).toUpperCase() : ""
-                        color: (root.activeCandle && root.activeCandle.close >= root.activeCandle.open) ? root.upColor : root.downColor
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-                    }
-
-                    Text {
-                        visible: root.activeHoverCandle !== null
-                        textFormat: Text.PlainText
-                        text: {
-                            if (!root.activeHoverCandle)
-                                return "";
-                            var c = root.activeHoverCandle;
-                            var cur = root.quote ? root.quote.currency : "USD";
-                            var h = root.quote ? root.quote.priceHint : 2;
-                            return "O:" + Model.formatPrice(c.open, cur, h) + " H:" + Model.formatPrice(c.high, cur, h) + " L:" + Model.formatPrice(c.low, cur, h) + " C:" + Model.formatPrice(c.close, cur, h);
-                        }
-                        color: root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                    }
+                    visible: root.activeCandle && root.activeCandle.strat && root.activeCandle.strat !== "-"
+                    textFormat: Text.PlainText
+                    text: (root.activeCandle && root.activeCandle.strat && root.activeCandle.strat !== "-") ? String(root.activeCandle.strat).toUpperCase() : ""
+                    color: (root.activeCandle && root.activeCandle.close >= root.activeCandle.open) ? root.upColor : root.downColor
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: true
                 }
             }
         }
@@ -664,6 +644,51 @@ Item {
                 }
                 onZoomChangedManually: function (vc) {
                     root.zoomChangedManually(root.cellIndex, vc);
+                }
+            }
+
+            // Dedicated Inspect Strip (Overlay in top clearance, visible only on hover)
+            Item {
+                id: inspectStrip
+                anchors.top: parent.top
+                anchors.topMargin: Style.space(2)
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(8)
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(8)
+                height: Style.space(16)
+                visible: root.activeHoverCandle !== null
+                z: 10
+
+                Row {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(6)
+
+                    Text {
+                        visible: root.activeHoverCandle && root.activeHoverCandle.strat && root.activeHoverCandle.strat !== "-"
+                        textFormat: Text.PlainText
+                        text: (root.activeHoverCandle && root.activeHoverCandle.strat && root.activeHoverCandle.strat !== "-") ? String(root.activeHoverCandle.strat).toUpperCase() : ""
+                        color: (root.activeHoverCandle && root.activeHoverCandle.close >= root.activeHoverCandle.open) ? root.upColor : root.downColor
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+                    }
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: {
+                            if (!root.activeHoverCandle)
+                                return "";
+                            var c = root.activeHoverCandle;
+                            var cur = root.quote ? root.quote.currency : "USD";
+                            var h = root.quote ? root.quote.priceHint : 2;
+                            return "O:" + Model.formatPrice(c.open, cur, h) + " H:" + Model.formatPrice(c.high, cur, h) + " L:" + Model.formatPrice(c.low, cur, h) + " C:" + Model.formatPrice(c.close, cur, h);
+                        }
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                    }
                 }
             }
         }

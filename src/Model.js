@@ -351,14 +351,14 @@ function chartSpec(range) {
     case "15m": return { range: "1mo", interval: "15m" }
     case "30": return { range: "1mo", interval: "30m" }
     case "60":
-    case "60m": return { range: "3mo", interval: "60m" }
+    case "60m": return { range: "1mo", interval: "60m" }
     case "1W":
     case "W":
     case "1w":
-    case "week": return { period1: 0, period2: 9999999999, interval: "1wk" }
+    case "week": return { range: "5y", interval: "1wk" }
     case "1M": return { range: "10y", interval: "1mo" }
     case "1Y": return { range: "max", interval: "1mo" }
-    default: return { period1: 0, period2: 9999999999, interval: "1d" }
+    default: return { range: "1y", interval: "1d" }
   }
 }
 
@@ -467,7 +467,7 @@ function chartCommand(symbol, rangeKey) {
   if (isHyperliquidCryptoSymbol(sym) && (rk === "30" || rk === "60" || rk === "1D" || rk === "1W")) {
     var coin = cryptoBaseSymbol(sym)
     var interval = (rk === "30") ? "30m" : ((rk === "60" || rk === "60m") ? "1h" : "1d")
-    var lookbackDays = (rk === "30") ? 30 : ((rk === "60" || rk === "60m") ? 90 : 400)
+    var lookbackDays = (rk === "30" || rk === "60" || rk === "60m") ? 30 : 400
     var startTime = Date.now() - (lookbackDays * 86400000)
     var payload = JSON.stringify({
       type: "candleSnapshot",
@@ -532,9 +532,9 @@ function rangeCaption(rangeKey, quote) {
   switch (String(rangeKey || "1D")) {
     case "30": return "30-Minute Candles (1 Month)"
     case "60":
-    case "60m": return "60-Minute Candles (3 Months)"
+    case "60m": return "60-Minute Candles (1 Month)"
     case "1D": return "1-Day Candles (1 Year)"
-    case "1W": return "1-Week Candles (All Time)"
+    case "1W": return "1-Week Candles (5 Years)"
     case "1M": return "1-Month Candles (10 Years)"
     case "1Y": return "1-Year Candles (All Time)"
     default: return ""
@@ -1542,6 +1542,7 @@ function formatCandleTime(timestamp, rangeKey) {
   if (!isFinite(t) || t <= 0) return ""
   var d = new Date(t * 1000)
   var range = String(rangeKey || "1D")
+  var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
   var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
   var hours = d.getHours()
   var minutes = d.getMinutes()
@@ -1551,13 +1552,18 @@ function formatCandleTime(timestamp, rangeKey) {
   var timeStr = h12 + ":" + mStr + " " + ampm
 
   if (range === "60" || range === "30" || range === "15" || range === "5" || range === "1") {
+    var dayName = days[d.getDay()]
     var mon60 = months[d.getMonth()]
     var day60 = d.getDate()
     var year60 = d.getFullYear()
-    return mon60 + " " + day60 + ", " + year60 + " " + timeStr
+    return dayName + ", " + mon60 + " " + day60 + ", " + year60 + " " + timeStr
   }
   if (range === "1Y") return String(d.getUTCFullYear())
   if (range === "1M" || range === "All") return months[d.getUTCMonth()] + " " + d.getUTCFullYear()
+  if (range === "1D" || range === "D" || range === "day" || range === "1d") {
+    var dayNameUtc = days[d.getUTCDay()]
+    return dayNameUtc + ", " + months[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + d.getUTCFullYear()
+  }
   return months[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + d.getUTCFullYear()
 }
 

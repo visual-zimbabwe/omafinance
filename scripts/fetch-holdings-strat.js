@@ -60,7 +60,7 @@ async function run() {
     }
   }
 
-  // 2. Fetch full OHLC daily (2y) and hourly 60m (3mo) candles per symbol
+  // 2. Fetch full OHLC daily (2y) and hourly 60m (1mo) candles per symbol
   const dailyMap = {};
   const hourlyMap = {};
   const concurrency = 8;
@@ -70,7 +70,7 @@ async function run() {
     while (symIdx < allSyms.length) {
       const sym = allSyms[symIdx++];
       const dailyUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=2y`;
-      const hourlyUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=60m&range=3mo`;
+      const hourlyUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=60m&range=1mo`;
 
       const [dRes, hRes] = await Promise.all([
         fetchHttps(dailyUrl, { "User-Agent": "Mozilla/5.0" }),

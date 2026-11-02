@@ -221,10 +221,14 @@ test("parseCandles extracts and sanitizes OHLCV candle structures and forward-fi
 })
 
 test("formatCandleTime formats timestamps per timeframe range", () => {
-  const ts = 1725548400 // specific unix timestamp (Fri Sep 5 2024 / 2026)
+  const ts = 1725548400 // specific unix timestamp
   const dt = new Date(ts * 1000)
   assert.ok(Model.formatCandleTime(ts, "60").includes(String(dt.getFullYear())))
   assert.ok(Model.formatCandleTime(ts, "60").includes("M")) // AM or PM
+  assert.match(Model.formatCandleTime(ts, "60"), /^[A-Z][a-z]{2},\s/)
+  assert.match(Model.formatCandleTime(ts, "30"), /^[A-Z][a-z]{2},\s/)
+  assert.match(Model.formatCandleTime(ts, "1D"), /^[A-Z][a-z]{2},\s/)
+  assert.doesNotMatch(Model.formatCandleTime(ts, "1W"), /^[A-Z][a-z]{2},\s/)
   assert.ok(Model.formatCandleTime(ts, "1D").length > 0)
   assert.ok(Model.formatCandleTime(ts, "1W").length > 0)
   assert.ok(Model.formatCandleTime(ts, "1M").length > 0)
@@ -724,7 +728,7 @@ test("formatCandleTime and formatTimeAxisLabel are resilient to UTC timezone bou
   const tsJan1 = Math.floor(Date.UTC(2025, 0, 1, 0, 0, 0) / 1000)
   assert.equal(Model.formatCandleTime(tsJan1, "1Y"), "2025")
   assert.equal(Model.formatCandleTime(tsJan1, "1M"), "Jan 2025")
-  assert.equal(Model.formatCandleTime(tsJan1, "1D"), "Jan 1, 2025")
+  assert.equal(Model.formatCandleTime(tsJan1, "1D"), "Wed, Jan 1, 2025")
 
   assert.equal(Model.formatTimeAxisLabel(tsJan1, "1Y"), "2025")
   assert.equal(Model.formatTimeAxisLabel(tsJan1, "1M"), "Jan '25")
@@ -1656,12 +1660,12 @@ test("30m timeframe is supported across chartSpec, parseInterval, mergePeriodCan
   assert.ok(formatted.includes(":30"))
 })
 
-test("60m timeframe supports 3-month range and weekly Broadening Formations anchoring", () => {
+test("60m timeframe supports 1-month range and weekly Broadening Formations anchoring", () => {
   assert.ok(Model.chartRanges().includes("60"))
-  assert.deepEqual(Model.chartSpec("60"), { range: "3mo", interval: "60m" })
-  assert.deepEqual(Model.chartSpec("60m"), { range: "3mo", interval: "60m" })
-  assert.equal(Model.rangeCaption("60"), "60-Minute Candles (3 Months)")
-  assert.equal(Model.rangeCaption("60m"), "60-Minute Candles (3 Months)")
+  assert.deepEqual(Model.chartSpec("60"), { range: "1mo", interval: "60m" })
+  assert.deepEqual(Model.chartSpec("60m"), { range: "1mo", interval: "60m" })
+  assert.equal(Model.rangeCaption("60"), "60-Minute Candles (1 Month)")
+  assert.equal(Model.rangeCaption("60m"), "60-Minute Candles (1 Month)")
 
   // Weekly anchoring key on Monday
   const monBar = { timestamp: 1793021400 } // Monday 2026-10-26 13:30 UTC
