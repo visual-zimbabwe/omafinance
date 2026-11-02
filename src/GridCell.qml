@@ -660,35 +660,21 @@ Item {
                 visible: root.activeHoverCandle !== null
                 z: 10
 
-                Row {
+                Text {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(6)
-
-                    Text {
-                        visible: root.activeHoverCandle && root.activeHoverCandle.strat && root.activeHoverCandle.strat !== "-"
-                        textFormat: Text.PlainText
-                        text: (root.activeHoverCandle && root.activeHoverCandle.strat && root.activeHoverCandle.strat !== "-") ? String(root.activeHoverCandle.strat).toUpperCase() : ""
-                        color: (root.activeHoverCandle && root.activeHoverCandle.close >= root.activeHoverCandle.open) ? root.upColor : root.downColor
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
+                    textFormat: Text.PlainText
+                    text: {
+                        if (!root.activeHoverCandle)
+                            return "";
+                        var c = root.activeHoverCandle;
+                        var cur = root.quote ? root.quote.currency : "USD";
+                        var h = root.quote ? root.quote.priceHint : 2;
+                        return "O:" + Model.formatPrice(c.open, cur, h) + " H:" + Model.formatPrice(c.high, cur, h) + " L:" + Model.formatPrice(c.low, cur, h) + " C:" + Model.formatPrice(c.close, cur, h);
                     }
-
-                    Text {
-                        textFormat: Text.PlainText
-                        text: {
-                            if (!root.activeHoverCandle)
-                                return "";
-                            var c = root.activeHoverCandle;
-                            var cur = root.quote ? root.quote.currency : "USD";
-                            var h = root.quote ? root.quote.priceHint : 2;
-                            return "O:" + Model.formatPrice(c.open, cur, h) + " H:" + Model.formatPrice(c.high, cur, h) + " L:" + Model.formatPrice(c.low, cur, h) + " C:" + Model.formatPrice(c.close, cur, h);
-                        }
-                        color: root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                    }
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
                 }
             }
         }
