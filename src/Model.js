@@ -1542,6 +1542,7 @@ function formatCandleTime(timestamp, rangeKey) {
   if (!isFinite(t) || t <= 0) return ""
   var d = new Date(t * 1000)
   var range = String(rangeKey || "1D")
+  var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
   var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
   var hours = d.getHours()
   var minutes = d.getMinutes()
@@ -1551,13 +1552,18 @@ function formatCandleTime(timestamp, rangeKey) {
   var timeStr = h12 + ":" + mStr + " " + ampm
 
   if (range === "60" || range === "30" || range === "15" || range === "5" || range === "1") {
+    var dayName = days[d.getDay()]
     var mon60 = months[d.getMonth()]
     var day60 = d.getDate()
     var year60 = d.getFullYear()
-    return mon60 + " " + day60 + ", " + year60 + " " + timeStr
+    return dayName + ", " + mon60 + " " + day60 + ", " + year60 + " " + timeStr
   }
   if (range === "1Y") return String(d.getUTCFullYear())
   if (range === "1M" || range === "All") return months[d.getUTCMonth()] + " " + d.getUTCFullYear()
+  if (range === "1D" || range === "D" || range === "day" || range === "1d") {
+    var dayNameUtc = days[d.getUTCDay()]
+    return dayNameUtc + ", " + months[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + d.getUTCFullYear()
+  }
   return months[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + d.getUTCFullYear()
 }
 
