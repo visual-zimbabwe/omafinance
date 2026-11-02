@@ -3321,6 +3321,7 @@ function computeReplayFocusPair(pair, focusCandles, focusHoldings, cutoffTs) {
       if (sc === "2u") inf = Number(pLast.close) >= Number(pPrev.high) ? "In-Force" : "Triggered"
       else if (sc === "2d") inf = Number(pLast.close) <= Number(pPrev.low) ? "In-Force" : "Triggered"
       else if (sc === "1") inf = "Inside Bar"
+      else if (sc === "3") inf = "Outside Bar"
       peerInfo = {
         symbol: pair.peer,
         scenario: sc,

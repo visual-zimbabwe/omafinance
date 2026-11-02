@@ -2564,5 +2564,27 @@ test("computeFocusBasketSupport dynamically evaluates point-in-time replay at re
   assert.equal(resAt350.positionSizing, "FULL (1.0x)")
 })
 
+test("mergePeriodCandles collapses Yahoo intraday live ticks preventing false inside bars on 30m and 60m", () => {
+  // Scenario: 60m candle starts at 14:30 UTC. Active bar has H: 621.69, L: 610.
+  // Yahoo appends live tick at 15:19 UTC with O=H=L=C=619.40.
+  // Without mergePeriodCandles, tick inside active bar falsely evaluates to "1".
+  const prevBar60 = { timestamp: 1793388600, open: 612.67, high: 616.36, low: 612.31, close: 614.98, volume: 2680785 }
+  const activeBar60 = { timestamp: 1793629800, open: 614.44, high: 621.69, low: 610.00, close: 618.98, volume: 4360146 }
+  const liveTick60 = { timestamp: 1793632753, open: 619.40, high: 619.40, low: 619.40, close: 619.40, volume: 0 }
+
+  const rawCandles = [prevBar60, activeBar60, liveTick60]
+  // Unmerged: falsely produces scenario "1"
+  assert.equal(Model.stratScenario(rawCandles[2], rawCandles[1]), "1")
+
+  // Merged: correctly produces scenario "3" (Outside bar) against prevBar60
+  const merged = Model.mergePeriodCandles(rawCandles, "60")
+  assert.equal(merged.length, 2)
+  assert.equal(merged[1].timestamp, 1793629800)
+  assert.equal(merged[1].high, 621.69)
+  assert.equal(merged[1].low, 610.00)
+  assert.equal(merged[1].close, 619.40)
+  assert.equal(Model.stratScenario(merged[1], merged[0]), "3")
+})
+
 
 
