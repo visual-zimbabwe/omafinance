@@ -1,6 +1,15 @@
 const fs = require("fs");
 const path = require("path");
-const { computeActiveBroadening, candleWeekKey, bfWeekStarts } = require("../src/Model.js");
+const {
+  computeActiveBroadening,
+  candleWeekKey,
+  bfWeekStarts,
+  candleQuarterKey,
+  bfQuarterStarts,
+  candleYearKey,
+  bfYearStarts,
+  mergePeriodCandles
+} = require("../src/Model.js");
 
 console.log("==================================================");
 console.log("   TheStrat Broadening Formation Test Suite       ");
@@ -180,4 +189,76 @@ if (bf60Explicit.formations && bf60Explicit.formations.length > 0 &&
   process.exit(1);
 }
 
-console.log("\n>>> ALL 10 TESTS PASSED SUCCESSFULLY! <<<\n");
+// 11. PHM Daily Full-Formation Hull & Swing-Point Anchor Verification
+const phmPath = path.join(__dirname, "phm_daily.json");
+const phmBars = JSON.parse(fs.readFileSync(phmPath, "utf8"));
+const bfPhm = computeActiveBroadening(phmBars);
+
+console.log("\n[Test 11] PHM Daily Full-Formation Hull & Swing-Point Anchor Check");
+console.log("PHM Formations Count:", bfPhm.formations?.length);
+for (const f of (bfPhm.formations || [])) {
+  if (f.upper) console.log(`  Origin #${f.originIndex} Upper: ${f.upper.anchor1.date} -> ${f.upper.anchor2.date}`);
+  if (f.lower) console.log(`  Origin #${f.originIndex} Lower: ${f.lower.anchor1.date} -> ${f.lower.anchor2.date}`);
+}
+
+let phmHullValid = (bfPhm.formations && bfPhm.formations.length === 3 &&
+  bfPhm.formations[0].upper?.anchor1.date === "2025-12-04" && bfPhm.formations[0].upper?.anchor2.date === "2026-02-17" &&
+  bfPhm.formations[0].lower?.anchor1.date === "2026-05-19" && bfPhm.formations[0].lower?.anchor2.date === "2026-10-14" &&
+  bfPhm.formations[1].upper?.anchor1.date === "2026-03-02" && bfPhm.formations[1].upper?.anchor2.date === "2026-06-25" &&
+  bfPhm.formations[2].upper?.anchor1.date === "2026-09-03" && bfPhm.formations[2].upper?.anchor2.date === "2026-11-02");
+
+for (const f of (bfPhm.formations || [])) {
+  if (f.upper) {
+    const a1 = f.upper.anchor1.index;
+    const a2 = f.upper.anchor2.index;
+    if (phmBars[a1].high < phmBars[a1 + 1].high - 1e-5 * phmBars[a1].high) phmHullValid = false;
+    for (let i = f.originIndex; i <= a2; i++) {
+      const lineP = f.upper.anchor1.price + f.upper.slope * (i - a1);
+      if (phmBars[i].high > lineP + 1e-5 * phmBars[a2].high) phmHullValid = false;
+    }
+  }
+  if (f.lower) {
+    const a1 = f.lower.anchor1.index;
+    const a2 = f.lower.anchor2.index;
+    if (phmBars[a1].low > phmBars[a1 + 1].low + 1e-5 * phmBars[a1].low) phmHullValid = false;
+    for (let i = f.originIndex; i <= a2; i++) {
+      const lineP = f.lower.anchor1.price + f.lower.slope * (i - a1);
+      if (phmBars[i].low < lineP - 1e-5 * phmBars[a2].low) phmHullValid = false;
+    }
+  }
+}
+
+if (phmHullValid) {
+  console.log("PASS: PHM Daily keeps every bar of each formation inside its ray and anchors only on true swing points!");
+} else {
+  console.error("FAIL: PHM Daily formation hull or swing-point check failed:", bfPhm);
+  process.exit(1);
+}
+
+// 12. 1W Quarterly ('quarter') and 1M Yearly ('year') Broadening Formation Anchoring
+const spyWeeklyPath = path.join(__dirname, "spy_weekly.json");
+const spyWeeklyBars = JSON.parse(fs.readFileSync(spyWeeklyPath, "utf8"));
+const bfSpyWExplicit = computeActiveBroadening(spyWeeklyBars, null, "quarter");
+const bfSpyWAuto = computeActiveBroadening(spyWeeklyBars);
+
+const spyMonthlyBars = mergePeriodCandles(spyWeeklyBars, "1M");
+const bfSpyMExplicit = computeActiveBroadening(spyMonthlyBars, null, "year");
+const bfSpyMAuto = computeActiveBroadening(spyMonthlyBars);
+
+console.log("\n[Test 12] 1W Quarterly ('quarter') and 1M Yearly ('year') Anchoring Check");
+console.log("1W Formations (Explicit 'quarter'):", bfSpyWExplicit.formations?.length, "(Auto):", bfSpyWAuto.formations?.length);
+console.log("1M Formations (Explicit 'year'):", bfSpyMExplicit.formations?.length, "(Auto):", bfSpyMAuto.formations?.length);
+
+if (bfSpyWExplicit.formations && bfSpyWExplicit.formations.length > 0 &&
+    bfSpyWAuto.formations && bfSpyWAuto.formations.length === bfSpyWExplicit.formations.length &&
+    bfSpyMExplicit.formations && bfSpyMExplicit.formations.length > 0 &&
+    bfSpyMAuto.formations && bfSpyMAuto.formations.length === bfSpyMExplicit.formations.length &&
+    candleQuarterKey({ date: "2026-05-19" }) === "2026-Q2" &&
+    candleYearKey({ date: "2026-05-19" }) === "2026") {
+  console.log("PASS: 1W (quarterly anchored) and 1M (yearly anchored) broadening formations verified!");
+} else {
+  console.error("FAIL: 1W quarterly or 1M yearly broadening formation check failed!");
+  process.exit(1);
+}
+
+console.log("\n>>> ALL 12 TESTS PASSED SUCCESSFULLY! <<<\n");
