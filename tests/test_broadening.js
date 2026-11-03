@@ -3,6 +3,7 @@ const path = require("path");
 const {
   computeActiveBroadening,
   candleWeekKey,
+  bfDayStarts,
   bfWeekStarts,
   candleQuarterKey,
   bfQuarterStarts,
@@ -261,4 +262,31 @@ if (bfSpyWExplicit.formations && bfSpyWExplicit.formations.length > 0 &&
   process.exit(1);
 }
 
-console.log("\n>>> ALL 12 TESTS PASSED SUCCESSFULLY! <<<\n");
+// 13. 30m Daily ('day', 10-Trading-Day Window) Broadening Formation Anchoring
+const meta30Bars = [];
+for (let i = 0; i < meta60Bars.length; i++) {
+  const b = meta60Bars[i];
+  const mid = (b.open + b.close) / 2;
+  meta30Bars.push({ timestamp: b.timestamp, open: b.open, high: b.high, low: Math.min(b.open, mid), close: mid });
+  meta30Bars.push({ timestamp: b.timestamp + 1800, open: mid, high: Math.max(mid, b.close), low: b.low, close: b.close });
+}
+const all30DayStarts = bfDayStarts(meta30Bars, 0, meta30Bars.length);
+const bf30Explicit = computeActiveBroadening(meta30Bars, null, "day");
+const bf30Auto = computeActiveBroadening(meta30Bars);
+const tenthFromEndDayIdx = all30DayStarts[all30DayStarts.length - 10];
+
+console.log("\n[Test 13] 30m Daily ('day', 10-Trading-Day Cap) Anchoring Check");
+console.log("Total 30m Trading Days:", all30DayStarts.length, "10th-from-end Day Origin Index:", tenthFromEndDayIdx);
+console.log("30m Formations (Explicit 'day'):", bf30Explicit.formations?.length, "(Auto):", bf30Auto.formations?.length);
+
+if (all30DayStarts.length > 10 &&
+    bf30Explicit.formations && bf30Explicit.formations.length > 0 &&
+    bf30Auto.formations && bf30Auto.formations.length === bf30Explicit.formations.length &&
+    bf30Explicit.formations.every(f => f.originIndex >= tenthFromEndDayIdx)) {
+  console.log("PASS: 30m broadening formations anchored strictly to daily opens within the last 10 trading days!");
+} else {
+  console.error("FAIL: 30m 10-trading-day daily anchoring check failed:", bf30Explicit);
+  process.exit(1);
+}
+
+console.log("\n>>> ALL 13 TESTS PASSED SUCCESSFULLY! <<<\n");
