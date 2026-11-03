@@ -110,7 +110,8 @@ async function run() {
           const j30 = JSON.parse(res30.data);
           const r30 = j30 && j30.chart && j30.chart.result && j30.chart.result[0];
           if (r30 && r30.timestamp && r30.indicators) {
-            tf30Map[sym] = Model.parseCandles(r30.timestamp, r30.indicators);
+            const raw30 = Model.parseCandles(r30.timestamp, r30.indicators);
+            tf30Map[sym] = Model.mergePeriodCandles(raw30, "30");
           }
         }
       } catch (e) {}
@@ -123,7 +124,8 @@ async function run() {
           const j60 = JSON.parse(res60.data);
           const r60 = j60 && j60.chart && j60.chart.result && j60.chart.result[0];
           if (r60 && r60.timestamp && r60.indicators) {
-            tf60Map[sym] = Model.parseCandles(r60.timestamp, r60.indicators);
+            const raw60 = Model.parseCandles(r60.timestamp, r60.indicators);
+            tf60Map[sym] = Model.mergePeriodCandles(raw60, "60");
           }
         }
       } catch (e) {}
@@ -171,6 +173,7 @@ async function run() {
         if (sc === "2u") inf = Number(pLast.close) >= Number(pPrev.high) ? "In-Force" : "Triggered";
         else if (sc === "2d") inf = Number(pLast.close) <= Number(pPrev.low) ? "In-Force" : "Triggered";
         else if (sc === "1") inf = "Inside Bar";
+        else if (sc === "3") inf = "Outside Bar";
         peerInfo = {
           symbol: pair.peer,
           scenario: sc,

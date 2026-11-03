@@ -18,7 +18,8 @@ const qmlFiles = [
   "GridSplitter.qml",
   "GridCell.qml",
   "GridWindow.qml",
-  "BasketSupportPopup.qml"
+  "BasketSupportPopup.qml",
+  "FinanceAlertsView.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
@@ -569,6 +570,25 @@ test("candlestick chart renders broadening formation lines with white #FFFFFF an
   assert.match(chart, /var isHourlyChart = \(root\.rangeKey === "60"/)
   assert.match(chart, /var anchorMode = isHourlyChart \? "week" : "month"/)
 })
+
+test("alert engine integrates RTH session gating, edge-crossing state sync, price level alerts, and FinanceAlertsView", () => {
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const win = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+  const alertsView = fs.readFileSync(source("FinanceAlertsView.qml"), "utf8")
+
+  assert.match(cell, /new Date\(root\.liveClockMs\)/)
+  assert.match(win, /Model\.evaluateStratAlertTransition/)
+  assert.match(win, /Model\.evaluatePriceLevelAlerts/)
+  assert.match(chart, /function toggleEditingLevelAlert\(\)/)
+  assert.match(chart, /function cycleEditingLevelCondition\(\)/)
+  assert.match(panel, /FinanceAlertsView\s*\{/)
+  assert.match(panel, /function evaluateWatchlistPriceAlerts\(incomingQuotes\)/)
+  assert.match(panel, /function triggerWatchlistStratScan\(\)/)
+  assert.match(alertsView, /Alert Book & Study Radar/)
+})
+
 
 
 

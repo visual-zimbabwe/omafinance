@@ -40,6 +40,7 @@ FloatingWindow {
     property var quotes: ({})
     property var chartCache: ({})
     property var symbolLevels: ({})
+    property var symbolPriceMemory: ({})
     property real replayCutoffTs: 0
     property string replayStepInterval: "Auto"
     property bool replayIntervalExpanded: false
@@ -51,6 +52,9 @@ FloatingWindow {
     readonly property int chartRefreshMs: Model.backoffDelay(15000, chartFailureCount, 120000)
     property bool quoteRefreshPending: false
     signal stateSaveRequested(string mode, var sync, var symbols, var splits)
+    signal symbolLevelsChangedExternally(string sym, var nextLevels)
+    signal signalStatesUpdated(var nextStates)
+    signal alertEventTriggered(var logEntry)
 
     function setReplayCutoff(ts) {
         root.replayCutoffTs = (isFinite(ts) && ts > 0) ? ts : 0;
@@ -93,6 +97,7 @@ FloatingWindow {
         var nextMap = Object.assign({}, root.symbolLevels);
         nextMap[sym] = nextLevels || [];
         root.symbolLevels = nextMap;
+        root.symbolLevelsChangedExternally(sym, nextLevels || []);
     }
 
     title: root.mainSymbol ? "Omafinance Grid - " + root.mainSymbol : "Omafinance Grid"
@@ -248,6 +253,7 @@ FloatingWindow {
             if (Object.keys(parsed).length > 0) {
                 root.quotes = Model.mergeQuotes(root.quotes, parsed);
                 root.quoteFailureCount = 0;
+                root.evaluateActivePriceLevelAlerts(parsed);
             } else {
                 root.quoteFailureCount = Math.min(10, root.quoteFailureCount + 1);
             }
@@ -282,6 +288,9 @@ FloatingWindow {
                     var nextQuotes = Object.assign({}, root.quotes);
                     nextQuotes[root.currentFetchSymbol] = parsed;
                     root.quotes = nextQuotes;
+                    var singleQuoteMap = ({});
+                    singleQuoteMap[root.currentFetchSymbol] = parsed;
+                    root.evaluateActivePriceLevelAlerts(singleQuoteMap);
                 }
                 root.chartFailureCount = 0;
             } else {
@@ -310,68 +319,80 @@ FloatingWindow {
 
     property var signalStates: ({})
 
+    function evaluateActivePriceLevelAlerts(incomingQuotes) {
+        if (root.replayCutoffTs > 0 || !incomingQuotes)
+            return;
+        var nextMem = Object.assign({}, root.symbolPriceMemory);
+        var nextLevelsMap = Object.assign({}, root.symbolLevels);
+        var memChanged = false;
+        var keys = Object.keys(incomingQuotes);
+        for (var i = 0; i < keys.length; i++) {
+            var sym = keys[i];
+            var q = incomingQuotes[sym] || root.quotes[sym];
+            if (!q || typeof q.price !== "number" || !isFinite(q.price))
+                continue;
+            var prevP = nextMem["PRICE:" + sym];
+            nextMem["PRICE:" + sym] = q.price;
+            memChanged = true;
+            var symLvls = nextLevelsMap[sym];
+            if (!Array.isArray(symLvls) || symLvls.length === 0)
+                continue;
+            var res = Model.evaluatePriceLevelAlerts(sym, symLvls, prevP, q.price, q, new Date());
+            if (res.triggered && res.triggered.length > 0) {
+                nextLevelsMap[sym] = res.nextLevels;
+                root.symbolLevels = nextLevelsMap;
+                root.symbolLevelsChangedExternally(sym, res.nextLevels);
+                for (var t = 0; t < res.triggered.length; t++) {
+                    var ev = res.triggered[t];
+                    stratNotifyProc.command = ["notify-send", "-a", "Omafinance", "-u", "normal", ev.title, ev.body];
+                    stratNotifyProc.running = true;
+                    stratSoundProc.command = ["pw-play", "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"];
+                    stratSoundProc.running = true;
+                    var webhook = root.discordWebhook;
+                    if (webhook && webhook.indexOf("https://discord.com/api/webhooks/") === 0) {
+                        var payload = Model.discordPriceAlertPayload(sym, ev.level, ev.currentPrice, ev.direction);
+                        if (payload) {
+                            stratDiscordProc.command = ["curl", "-fsS", "-H", "Content-Type: application/json", "-X", "POST", "-d", payload, webhook];
+                            stratDiscordProc.running = true;
+                        }
+                    }
+                    if (ev.logEntry)
+                        root.alertEventTriggered(ev.logEntry);
+                }
+            }
+        }
+        if (memChanged)
+            root.symbolPriceMemory = nextMem;
+    }
+
     function notifyStratTradeable(chk) {
         if (root.replayCutoffTs > 0)
             return;
         if (!chk || !chk.symbol || !chk.direction || !chk.setupTimeframe)
             return;
 
-        var candleId = (chk.signalCandleTimestamp != null) ? String(chk.signalCandleTimestamp) : "active";
-        var baseKey = chk.symbol + ":" + chk.setupTimeframe + ":" + candleId + ":" + chk.direction;
-        var currentState = root.signalStates[baseKey] || "NONE";
+        var q = root.getQuote(chk.symbol);
+        var transition = Model.evaluateStratAlertTransition(chk, q, root.signalStates, root.symbolPriceMemory, {
+            replayActive: root.replayCutoffTs > 0,
+            nowDate: new Date(),
+            enableArmedAlerts: true
+        });
 
-        var eventType = "";
-        var title = "";
-        var body = "";
-
-        // 1. Entry Trigger: 9/9 rules passed, not yet triggered for this signal candle
-        if (chk.isTradeable && currentState === "NONE") {
-            eventType = "TRIGGERED";
-            title = "The Strat Alert: " + chk.symbol + " [" + chk.direction + "]";
-            var triggerStr = chk.triggerPrice != null ? ("Trigger: $" + Number(chk.triggerPrice).toFixed(2)) : "";
-            var stopStr = chk.stopPrice != null ? ("Stop: $" + Number(chk.stopPrice).toFixed(2)) : "";
-            var targetStr = (chk.targetPrice != null && chk.targetName) ? (chk.targetName + " $" + Number(chk.targetPrice).toFixed(2)) : "";
-            var parts = [];
-            if (triggerStr)
-                parts.push(triggerStr);
-            if (stopStr)
-                parts.push(stopStr);
-            if (targetStr) {
-                if (chk.domino && chk.domino.hasDomino) {
-                    parts.push("T1 (Domino): " + targetStr + " -> " + chk.domino.triggeredSignal);
-                } else {
-                    parts.push("Target: " + targetStr);
-                }
-            }
-
-            body = "9/9 rules verified on " + chk.setupTimeframe + " setup.\n" + parts.join(" | ");
-        } else
-        // 2. Target Hit: was in-force / triggered, and now reached target
-        if (chk.isTargetHit && currentState === "TRIGGERED") {
-            eventType = "TARGET_HIT";
-            title = "The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]";
-            var tName = chk.targetName || "Target 1";
-            var tPriceStr = chk.targetPrice != null ? (" $" + Number(chk.targetPrice).toFixed(2)) : "";
-            if (chk.domino && chk.domino.hasDomino) {
-                body = tName + tPriceStr + " reached!\nDomino Triggered: " + chk.domino.triggeredSignal + "\nMove stop to B/E & trail for " + (chk.domino.nextTargetName || "T2") + ".";
-            } else {
-                body = tName + tPriceStr + " reached on " + chk.setupTimeframe + " setup.\nExhaustion risk — take profit / trail stops.";
-            }
-        } else
-        // 3. Stop Breached: was in-force / triggered, and now stopped out
-        if (chk.isStoppedOut && currentState === "TRIGGERED") {
-            eventType = "STOPPED";
-            title = "The Strat Setup Invalidated: " + chk.symbol + " [" + chk.direction + "]";
-            var sPriceStr = chk.stopPrice != null ? (" $" + Number(chk.stopPrice).toFixed(2)) : "";
-            body = "Stop-loss" + sPriceStr + " breached on " + chk.setupTimeframe + " setup.";
+        root.symbolPriceMemory = transition.nextPriceMemory;
+        if (transition.stateUpdated) {
+            root.signalStates = transition.nextStates;
+            root.signalStatesUpdated(transition.nextStates);
         }
 
-        if (!eventType)
+        if (!transition.shouldNotify || !transition.eventType)
             return;
 
-        var nextStates = Object.assign({}, root.signalStates);
-        nextStates[baseKey] = eventType;
-        root.signalStates = nextStates;
+        var eventType = transition.eventType;
+        var title = transition.title;
+        var body = transition.body;
+
+        if (transition.logEntry)
+            root.alertEventTriggered(transition.logEntry);
 
         stratNotifyProc.command = ["notify-send", "-a", "Omafinance", "-u", "normal", title, body];
         stratNotifyProc.running = true;
