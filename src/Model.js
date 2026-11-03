@@ -6064,6 +6064,20 @@ function bfProject(ray, idx) {
   return ray ? ray.anchor1.price + ray.slope * (idx - ray.anchor1.index) : null;
 }
 
+// Collect first bar index of each trading day within [minIdx, maxIdx)
+function bfDayStarts(candles, minIdx, maxIdx) {
+  var starts = [];
+  var lastD = "";
+  for (var i = minIdx; i < maxIdx; i++) {
+    var d = candleDateIso(candles[i]);
+    if (d && d !== lastD) {
+      starts.push(i);
+      lastD = d;
+    }
+  }
+  return starts;
+}
+
 // Collect first bar index of each calendar month within [minIdx, maxIdx)
 function bfMonthStarts(candles, minIdx, maxIdx) {
   var starts = [];
@@ -6159,6 +6173,7 @@ function bfYearStarts(candles, minIdx, maxIdx) {
 }
 
 function bfPeriodKey(candle, anchorMode) {
+  if (anchorMode === "day") return candleDateIso(candle);
   if (anchorMode === "week") return candleWeekKey(candle);
   if (anchorMode === "quarter") return candleQuarterKey(candle);
   if (anchorMode === "year") return candleYearKey(candle);
@@ -6280,6 +6295,7 @@ function bfCacheKey(candles, lookbackBars, anchorMode) {
 }
 
 // Active broadening formations for a candle series.
+//   * 30m timeframe: uses daily (1D) anchors across the last 10 trading days ("day")
 //   * 60m timeframe: uses weekly (1W) anchors ("week")
 //   * 1D timeframe: uses monthly (1M) anchors ("month")
 //   * 1W timeframe: uses quarterly (1Q) anchors ("quarter")
@@ -6287,13 +6303,14 @@ function bfCacheKey(candles, lookbackBars, anchorMode) {
 // Formations stay alive across subsequent periods until price hits the projected opposite boundary
 // (target reached) or establishes a completely new higher-timeframe trend.
 // lookbackBars (optional): explicitly pins origin lookbackBars from the end (bar replay / tests).
-// anchorMode (optional): "week", "month", "quarter", or "year".
+// anchorMode (optional): "day", "week", "month", "quarter", or "year".
 function computeActiveBroadening(candles, lookbackBars, anchorMode) {
   if (!candles || candles.length < 5) return null;
 
   var resolvedAnchorMode = anchorMode;
-  if (resolvedAnchorMode !== "week" && resolvedAnchorMode !== "month" &&
-      resolvedAnchorMode !== "quarter" && resolvedAnchorMode !== "year") {
+  if (resolvedAnchorMode !== "day" && resolvedAnchorMode !== "week" &&
+      resolvedAnchorMode !== "month" && resolvedAnchorMode !== "quarter" &&
+      resolvedAnchorMode !== "year") {
     resolvedAnchorMode = "month";
     if (candles.length >= 2) {
       var t0 = candles[0].timestamp || candles[0].time;
@@ -6302,7 +6319,9 @@ function computeActiveBroadening(candles, lookbackBars, anchorMode) {
       if (t0 && t1) {
         var deltaSec = Math.abs(t1 - t0);
         if (t2) deltaSec = Math.max(deltaSec, Math.abs(t2 - t1));
-        if (deltaSec > 0 && deltaSec < 14400) {
+        if (deltaSec > 0 && deltaSec <= 1800) {
+          resolvedAnchorMode = "day";
+        } else if (deltaSec > 1800 && deltaSec < 14400) {
           resolvedAnchorMode = "week";
         } else if (deltaSec >= 400000 && deltaSec < 1500000) {
           resolvedAnchorMode = "quarter";
@@ -6318,12 +6337,22 @@ function computeActiveBroadening(candles, lookbackBars, anchorMode) {
 
   var n = candles.length;
   var explicitStart = (typeof lookbackBars === "number" && lookbackBars >= 5);
-  var defaultWindow = (resolvedAnchorMode === "week") ? 500 : BF_DEFAULT_WINDOW;
+  var defaultWindow = (resolvedAnchorMode === "day" || resolvedAnchorMode === "week") ? 500 : BF_DEFAULT_WINDOW;
   var startIdx = Math.max(0, n - (explicitStart ? lookbackBars : defaultWindow));
 
   var origins;
   if (explicitStart) {
     origins = [startIdx];
+  } else if (resolvedAnchorMode === "day") {
+    var allDayStarts = bfDayStarts(candles, startIdx, n);
+    if (allDayStarts.length > 10) {
+      origins = allDayStarts.slice(allDayStarts.length - 10);
+    } else {
+      origins = allDayStarts;
+      if (origins.length === 0 || origins[0] !== startIdx) {
+        origins.unshift(startIdx);
+      }
+    }
   } else if (resolvedAnchorMode === "week") {
     origins = bfWeekStarts(candles, startIdx, n);
     if (origins.length === 0 || origins[0] !== startIdx) {
@@ -6484,6 +6513,7 @@ if (typeof module !== "undefined") {
     computeReplayFocusPair: computeReplayFocusPair,
     computeFocusBasketSupport: computeFocusBasketSupport,
     candleWeekKey: candleWeekKey,
+    bfDayStarts: bfDayStarts,
     bfWeekStarts: bfWeekStarts,
     candleQuarterKey: candleQuarterKey,
     bfQuarterStarts: bfQuarterStarts,

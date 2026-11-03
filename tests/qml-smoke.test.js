@@ -567,10 +567,11 @@ test("candlestick chart renders broadening formation lines with white #FFFFFF an
   assert.match(chart, /var dashPattern = \(lvl === 0\) \? \[\] : \(\(lvl === 1\) \? \[6, 4\] : \[2, 3\]\)/)
   assert.match(chart, /var lineAlpha = \(lvl === 0\) \? 1\.0 : \(\(lvl === 1\) \? 0\.75 : 0\.40\)/)
   assert.match(chart, /ctx\.globalAlpha = lineAlpha/)
+  assert.match(chart, /var isThirtyMinChart = \(root\.rangeKey === "30"/)
   assert.match(chart, /var isHourlyChart = \(root\.rangeKey === "60"/)
   assert.match(chart, /var isWeeklyChart = \(root\.rangeKey === "1W"/)
   assert.match(chart, /var isMonthlyChart = \(root\.rangeKey === "1M"/)
-  assert.match(chart, /var anchorMode = isHourlyChart \? "week" : \(isWeeklyChart \? "quarter" : \(isMonthlyChart \? "year" : "month"\)\)/)
+  assert.match(chart, /var anchorMode = isThirtyMinChart \? "day" : \(isHourlyChart \? "week" : \(isWeeklyChart \? "quarter" : \(isMonthlyChart \? "year" : "month"\)\)\)/)
 })
 
 test("alert engine integrates RTH session gating, edge-crossing state sync, price level alerts, and FinanceAlertsView", () => {

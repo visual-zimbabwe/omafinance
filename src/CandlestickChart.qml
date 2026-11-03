@@ -886,13 +886,14 @@ Item {
                 ctx.restore();
             }
 
-            // TheStrat Broadening Formation (BF) Lines (60m: weekly; 1D: monthly; 1W: quarterly; 1M: yearly)
+            // TheStrat Broadening Formation (BF) Lines (30m: daily/10d; 60m: weekly; 1D: monthly; 1W: quarterly; 1M: yearly)
+            var isThirtyMinChart = (root.rangeKey === "30" || root.rangeKey === "30m");
             var isDailyChart = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
             var isHourlyChart = (root.rangeKey === "60" || root.rangeKey === "60m" || root.rangeKey === "1h");
             var isWeeklyChart = (root.rangeKey === "1W" || root.rangeKey === "W" || root.rangeKey === "1w" || root.rangeKey === "week");
             var isMonthlyChart = (root.rangeKey === "1M" || root.rangeKey === "M" || root.rangeKey === "month");
-            if (root.showBroadening && (isDailyChart || isHourlyChart || isWeeklyChart || isMonthlyChart) && g.allCandles && g.allCandles.length >= 3 && g.innerW > 0) {
-                var anchorMode = isHourlyChart ? "week" : (isWeeklyChart ? "quarter" : (isMonthlyChart ? "year" : "month"));
+            if (root.showBroadening && (isThirtyMinChart || isDailyChart || isHourlyChart || isWeeklyChart || isMonthlyChart) && g.allCandles && g.allCandles.length >= 3 && g.innerW > 0) {
+                var anchorMode = isThirtyMinChart ? "day" : (isHourlyChart ? "week" : (isWeeklyChart ? "quarter" : (isMonthlyChart ? "year" : "month")));
                 var bf = Model.computeActiveBroadening(g.allCandles, null, anchorMode);
                 if (bf) {
                     var rightEdgeX = g.right;
