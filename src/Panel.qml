@@ -2071,7 +2071,7 @@ Panel {
                         workspace: parsed[j].workspace,
                         timeframes: (matchedWin && matchedWin.cellTimeframes) ? matchedWin.cellTimeframes.slice() : (root.gridTimeframes ? root.gridTimeframes.slice() : ["60", "1D", "1W", "1M", "1Y"]),
                         zooms: (matchedWin && matchedWin.cellZooms) ? matchedWin.cellZooms.slice() : (root.gridZooms ? root.gridZooms.slice() : [-1, -1, -1, -1, -1]),
-                        gridMode: (matchedWin && matchedWin.gridMode) ? matchedWin.gridMode : root.gridMode
+                        gridMode: (matchedWin && matchedWin.gridMode) ? (matchedWin.gridMode === "1x1" ? (matchedWin.previousGridMode || "2+3") : matchedWin.gridMode) : root.gridMode
                     });
                 }
             } else if (root.activeGridWindows && root.activeGridWindows.length > 0) {
@@ -2083,7 +2083,7 @@ Panel {
                             workspace: targetWs,
                             timeframes: w.cellTimeframes ? w.cellTimeframes.slice() : (root.gridTimeframes ? root.gridTimeframes.slice() : ["60", "1D", "1W", "1M", "1Y"]),
                             zooms: w.cellZooms ? w.cellZooms.slice() : (root.gridZooms ? root.gridZooms.slice() : [-1, -1, -1, -1, -1]),
-                            gridMode: w.gridMode || root.gridMode
+                            gridMode: w.gridMode === "1x1" ? (w.previousGridMode || "2+3") : (w.gridMode || root.gridMode)
                         });
                     }
                 }
@@ -2177,8 +2177,11 @@ Panel {
         for (var i = 0; i < root.activeGridWindows.length; i++) {
             var existing = root.activeGridWindows[i];
             if (existing && existing.visible && existing.mainSymbol === sym) {
-                if (cfg && cfg.gridMode)
+                if (cfg && cfg.gridMode) {
                     existing.gridMode = cfg.gridMode;
+                    if (cfg.gridMode !== "1x1")
+                        existing.previousGridMode = cfg.gridMode;
+                }
                 if (cfg && cfg.timeframes && cfg.timeframes.length > 0)
                     existing.cellTimeframes = cfg.timeframes.slice();
                 if (cfg && cfg.zooms && cfg.zooms.length > 0)
@@ -2199,7 +2202,8 @@ Panel {
 
         var currentSplits = root.gridSplits || ({});
         var currentMode = (cfg && cfg.gridMode) ? cfg.gridMode : (root.gridMode || "2x2");
-        var initialTfs = (cfg && cfg.timeframes && cfg.timeframes.length > 0) ? cfg.timeframes.slice() : ((root.gridTimeframes && root.gridTimeframes.length > 0) ? root.gridTimeframes.slice() : Model.gridTimeframes(currentMode));
+        var baseMode = (currentMode === "2+3" || currentMode === "2x2") ? currentMode : ((root.gridMode === "2+3" || root.gridMode === "2x2") ? root.gridMode : "2+3");
+        var initialTfs = (cfg && cfg.timeframes && cfg.timeframes.length > 0) ? cfg.timeframes.slice() : ((root.gridTimeframes && root.gridTimeframes.length > 0) ? root.gridTimeframes.slice() : Model.gridTimeframes(baseMode));
         var initialZooms = (cfg && cfg.zooms && cfg.zooms.length > 0) ? cfg.zooms.slice() : ((root.gridZooms && root.gridZooms.length > 0) ? root.gridZooms.slice() : [-1, -1, -1, -1, -1]);
         var botRatios = (currentSplits["2+3"] && Array.isArray(currentSplits["2+3"].colBotRatios)) ? currentSplits["2+3"].colBotRatios : [0.333, 0.333, 0.334];
         var win = gridWindowComponent.createObject(root, {
@@ -2207,6 +2211,7 @@ Panel {
             watchlist: root.watchlist,
             pinned: root.pinned,
             gridMode: currentMode,
+            previousGridMode: baseMode,
             syncSymbol: root.gridSync ? root.gridSync.symbol !== false : true,
             syncTimeframe: root.gridSync ? root.gridSync.timeframe === true : false,
             syncCrosshair: root.gridSync ? root.gridSync.crosshair !== false : true,
