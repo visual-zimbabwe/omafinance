@@ -5967,13 +5967,13 @@ function bfAnchor(candles, idx, isUpper) {
 }
 
 // Boundary ray of a formation that starts at startIdx, drawn TheStrat-style: from the most
-// extreme swing high (or low) since the start, right to left, back to the earlier high (low)
-// that keeps every high (low) between them on or under (over) the line.
+// extreme swing high (or low) since the start, right to left, back to the earlier swing high
+// (low) that keeps every high (low) of the formation on or under (over) the line.
 //
 // Runs in "q-space" (q = +high for the upper ray, -low for the lower ray) so one upper-hull
-// routine serves both sides. For a fixed anchor2, anchor1 = j is valid iff every bar strictly
-// between j and anchor2 stays under the line, which reduces to
-//   slope(j) <= min over mid in (j, a2) of (q[a2] - q[mid] + eps) / (a2 - mid)
+// routine serves both sides. For a fixed anchor2, anchor1 = j is valid iff j is a swing point
+// and every bar in the formation [startIdx, a2) stays on or under the line, which reduces to
+//   slope(j) <= min over k in [startIdx, a2) of (q[a2] - q[k] + eps) / (a2 - k)
 // and is tracked as a running minimum while walking j right to left: O(n) per anchor2,
 // O(n^2) per call (was O(n^3)).
 function computeRayForOrigin(candles, startIdx, endIdx, isUpper, minSpan) {
@@ -6006,18 +6006,20 @@ function computeRayForOrigin(candles, startIdx, endIdx, isUpper, minSpan) {
     }
 
     // Flattest valid line; earliest anchor1 on ties. Broadening: anchor2 must be at least as
-    // extreme as anchor1 (within eps), i.e. the boundary never tilts back inward.
+    // extreme as anchor1 (within eps), i.e. the boundary never tilts back inward, and anchor1
+    // must be a swing point (at least as extreme as its right neighbour j + 1).
     var a1 = -1;
     var slopeQ = Infinity;
     for (var j = a2 - minSpan; j >= startIdx; j--) {
       var m = (p2 - q[j]) / (a2 - j);
-      if (p2 - q[j] >= -eps && m <= ceiling && m <= slopeQ) {
+      if (q[j] >= q[j + 1] - eps && p2 - q[j] >= -eps && m <= ceiling && m <= slopeQ) {
         slopeQ = m;
         a1 = j;
       }
       ceiling = Math.min(ceiling, (p2 - q[j] + eps) / (a2 - j));
     }
-    if (a1 === -1) continue;
+    // Every bar of the formation before anchor1 [startIdx, a1) must also stay on or under the line
+    if (a1 === -1 || slopeQ > ceiling) continue;
 
     // No later bar may have traded through the finished ray
     var breached = false;
@@ -6113,6 +6115,57 @@ function bfWeekStarts(candles, minIdx, maxIdx) {
   return starts;
 }
 
+function candleQuarterKey(candle) {
+  var d = candleDateIso(candle);
+  if (!d || d.length < 7) return "";
+  var y = d.slice(0, 4);
+  var m = Number(d.slice(5, 7));
+  if (!isFinite(m) || m < 1 || m > 12) return "";
+  var q = Math.floor((m - 1) / 3) + 1;
+  return y + "-Q" + q;
+}
+
+// Collect first bar index of each calendar quarter within [minIdx, maxIdx)
+function bfQuarterStarts(candles, minIdx, maxIdx) {
+  var starts = [];
+  var lastQ = "";
+  for (var i = minIdx; i < maxIdx; i++) {
+    var q = candleQuarterKey(candles[i]);
+    if (q && q !== lastQ) {
+      starts.push(i);
+      lastQ = q;
+    }
+  }
+  return starts;
+}
+
+function candleYearKey(candle) {
+  var d = candleDateIso(candle);
+  return (d && d.length >= 4) ? d.slice(0, 4) : "";
+}
+
+// Collect first bar index of each calendar year within [minIdx, maxIdx)
+function bfYearStarts(candles, minIdx, maxIdx) {
+  var starts = [];
+  var lastY = "";
+  for (var i = minIdx; i < maxIdx; i++) {
+    var y = candleYearKey(candles[i]);
+    if (y && y !== lastY) {
+      starts.push(i);
+      lastY = y;
+    }
+  }
+  return starts;
+}
+
+function bfPeriodKey(candle, anchorMode) {
+  if (anchorMode === "week") return candleWeekKey(candle);
+  if (anchorMode === "quarter") return candleQuarterKey(candle);
+  if (anchorMode === "year") return candleYearKey(candle);
+  var d = candleDateIso(candle);
+  return d ? d.slice(0, 7) : "";
+}
+
 // A formation stays alive across subsequent periods until price hits the projected opposite
 // boundary (target reached) or establishes a completely new higher-timeframe trend.
 function isFormationAlive(fu, fl, candles, n, currentPeriodStartIdx) {
@@ -6154,18 +6207,17 @@ function isFormationAlive(fu, fl, candles, n, currentPeriodStartIdx) {
 //   * Superseded rays are dropped (except for a pinned formation, see below).
 //   * Formations are ordered outermost (earliest start) first, so index 0 is the major formation.
 // pinFirst: origins[0] is an explicit formation start (e.g. bar replay); its rays are always kept.
-// anchorMode: "month" (default for daily) or "week" (for 60m/hourly).
+// anchorMode: "week" (60m), "month" (1D), "quarter" (1W), or "year" (1M).
 function buildBroadeningFormations(candles, origins, n, pinFirst, anchorMode) {
   var lastIdx = n - 1;
   var cands = [];
   var allU = [];
   var allL = [];
-  var isWeekly = (anchorMode === "week");
 
-  var curPeriod = isWeekly ? candleWeekKey(candles[lastIdx]) : (candleDateIso(candles[lastIdx]) || "").slice(0, 7);
+  var curPeriod = bfPeriodKey(candles[lastIdx], anchorMode);
   var curPeriodStartIdx = lastIdx;
   for (var pi = lastIdx; pi >= 0; pi--) {
-    var pKey = isWeekly ? candleWeekKey(candles[pi]) : (candleDateIso(candles[pi]) || "").slice(0, 7);
+    var pKey = bfPeriodKey(candles[pi], anchorMode);
     if (pKey && pKey !== curPeriod) {
       curPeriodStartIdx = pi + 1;
       break;
@@ -6228,41 +6280,62 @@ function bfCacheKey(candles, lookbackBars, anchorMode) {
 }
 
 // Active broadening formations for a candle series.
-// For daily timeframe: uses monthly anchors only (Scenario 3 anchors are removed).
-// For 60m/hourly timeframe: uses weekly anchors (Scenario 3 anchors are removed).
+//   * 60m timeframe: uses weekly (1W) anchors ("week")
+//   * 1D timeframe: uses monthly (1M) anchors ("month")
+//   * 1W timeframe: uses quarterly (1Q) anchors ("quarter")
+//   * 1M timeframe: uses yearly (1Y) anchors ("year")
 // Formations stay alive across subsequent periods until price hits the projected opposite boundary
 // (target reached) or establishes a completely new higher-timeframe trend.
 // lookbackBars (optional): explicitly pins origin lookbackBars from the end (bar replay / tests).
-// anchorMode (optional): "month" (default for daily) or "week" (default for intraday/hourly).
+// anchorMode (optional): "week", "month", "quarter", or "year".
 function computeActiveBroadening(candles, lookbackBars, anchorMode) {
   if (!candles || candles.length < 5) return null;
 
-  var isWeekly = (anchorMode === "week");
-  if (!anchorMode && candles.length >= 2) {
-    var t0 = candles[0].timestamp || candles[0].time;
-    var t1 = candles[1].timestamp || candles[1].time;
-    if (t0 && t1) {
-      var deltaSec = Math.abs(t1 - t0);
-      if (deltaSec > 0 && deltaSec < 14400) {
-        isWeekly = true;
+  var resolvedAnchorMode = anchorMode;
+  if (resolvedAnchorMode !== "week" && resolvedAnchorMode !== "month" &&
+      resolvedAnchorMode !== "quarter" && resolvedAnchorMode !== "year") {
+    resolvedAnchorMode = "month";
+    if (candles.length >= 2) {
+      var t0 = candles[0].timestamp || candles[0].time;
+      var t1 = candles[1].timestamp || candles[1].time;
+      var t2 = candles.length >= 3 ? (candles[2].timestamp || candles[2].time) : 0;
+      if (t0 && t1) {
+        var deltaSec = Math.abs(t1 - t0);
+        if (t2) deltaSec = Math.max(deltaSec, Math.abs(t2 - t1));
+        if (deltaSec > 0 && deltaSec < 14400) {
+          resolvedAnchorMode = "week";
+        } else if (deltaSec >= 400000 && deltaSec < 1500000) {
+          resolvedAnchorMode = "quarter";
+        } else if (deltaSec >= 1500000) {
+          resolvedAnchorMode = "year";
+        }
       }
     }
   }
-  var resolvedAnchorMode = isWeekly ? "week" : "month";
 
   var cacheKey = bfCacheKey(candles, lookbackBars, resolvedAnchorMode);
   if (Object.prototype.hasOwnProperty.call(_bfCache.map, cacheKey)) return _bfCache.map[cacheKey];
 
   var n = candles.length;
   var explicitStart = (typeof lookbackBars === "number" && lookbackBars >= 5);
-  var defaultWindow = isWeekly ? 500 : BF_DEFAULT_WINDOW;
+  var defaultWindow = (resolvedAnchorMode === "week") ? 500 : BF_DEFAULT_WINDOW;
   var startIdx = Math.max(0, n - (explicitStart ? lookbackBars : defaultWindow));
 
   var origins;
   if (explicitStart) {
     origins = [startIdx];
-  } else if (isWeekly) {
+  } else if (resolvedAnchorMode === "week") {
     origins = bfWeekStarts(candles, startIdx, n);
+    if (origins.length === 0 || origins[0] !== startIdx) {
+      origins.unshift(startIdx);
+    }
+  } else if (resolvedAnchorMode === "quarter") {
+    origins = bfQuarterStarts(candles, startIdx, n);
+    if (origins.length === 0 || origins[0] !== startIdx) {
+      origins.unshift(startIdx);
+    }
+  } else if (resolvedAnchorMode === "year") {
+    origins = bfYearStarts(candles, startIdx, n);
     if (origins.length === 0 || origins[0] !== startIdx) {
       origins.unshift(startIdx);
     }
@@ -6412,6 +6485,10 @@ if (typeof module !== "undefined") {
     computeFocusBasketSupport: computeFocusBasketSupport,
     candleWeekKey: candleWeekKey,
     bfWeekStarts: bfWeekStarts,
+    candleQuarterKey: candleQuarterKey,
+    bfQuarterStarts: bfQuarterStarts,
+    candleYearKey: candleYearKey,
+    bfYearStarts: bfYearStarts,
     computeActiveBroadening: computeActiveBroadening,
     nodeCommand: nodeCommand,
     normalizeSymbolLevels: normalizeSymbolLevels,
