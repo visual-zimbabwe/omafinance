@@ -17,7 +17,11 @@ Item {
     property var priceLevels: []
     property int zoomCount: -1
     property real replayCutoffTs: 0
-    readonly property var stratChecklist: Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote, root.replayCutoffTs > 0 ? new Date((root.replayCutoffTs - 1) * 1000) : null)
+    property double liveClockMs: Date.now()
+    onQuoteChanged: root.liveClockMs = Date.now()
+    onHourlyCandlesChanged: root.liveClockMs = Date.now()
+    onDailyCandlesChanged: root.liveClockMs = Date.now()
+    readonly property var stratChecklist: Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote, root.replayCutoffTs > 0 ? new Date((root.replayCutoffTs - 1) * 1000) : new Date(root.liveClockMs))
     property var attackScanResult: null
     readonly property var focusSupport: Model.computeFocusBasketSupport(root.symbol, root.timeframe, root.candles, root.quote, root.dailyCandles, null, root.attackScanResult, root.replayCutoffTs)
     property bool syncSymbolActive: true

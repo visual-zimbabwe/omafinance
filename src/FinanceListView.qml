@@ -62,6 +62,17 @@ Column {
             spacing: Style.space(4)
 
             PanelActionButton {
+                id: alertsBtn
+                iconText: "\uf0f3"
+                tooltipText: "Alerts & Study Radar"
+                foreground: controller.dim
+                fontFamily: controller.contentFontFamily
+                hasCursor: controller.listChrome === "alerts"
+                bordered: controller.listChrome === "alerts"
+                onClicked: controller.openAlerts()
+            }
+
+            PanelActionButton {
                 id: layoutBtn
                 iconText: "\uf009"
                 tooltipText: "Chart Layouts"

@@ -69,6 +69,7 @@ Item {
     property real levelDragStartX: 0
     property real levelDragStartIdx1: 0
     property real levelDragStartIdx2: 0
+    property real levelDragStartY: 0
     property bool levelDragMoved: false
     property int editingLevelIndex: -1
     readonly property bool editingLevel: editingLevelIndex >= 0
@@ -246,6 +247,35 @@ Item {
         var item = Object.assign({}, next[root.editingLevelIndex]);
         var cur = item.tone || "fg";
         item.tone = (cur === "fg") ? "up" : (cur === "up" ? "down" : "fg");
+        next[root.editingLevelIndex] = item;
+        root.setPriceLevels(next);
+    }
+
+    function toggleEditingLevelAlert() {
+        if (root.editingLevelIndex < 0 || root.editingLevelIndex >= root.priceLevels.length)
+            return;
+        var next = root.priceLevels.slice();
+        var item = Object.assign({}, next[root.editingLevelIndex]);
+        item.alertEnabled = !item.alertEnabled;
+        item.alertTriggered = false;
+        if (!item.alertCondition) {
+            var all = root.validCandles();
+            var lastClose = (all && all.length > 0) ? all[all.length - 1].close : 0;
+            item.alertCondition = (lastClose > 0 && item.price < lastClose) ? "CROSSES_BELOW" : "CROSSES_ABOVE";
+        }
+        next[root.editingLevelIndex] = item;
+        root.setPriceLevels(next);
+    }
+
+    function cycleEditingLevelCondition() {
+        if (root.editingLevelIndex < 0 || root.editingLevelIndex >= root.priceLevels.length)
+            return;
+        var next = root.priceLevels.slice();
+        var item = Object.assign({}, next[root.editingLevelIndex]);
+        var cur = item.alertCondition || "CROSSES_ABOVE";
+        item.alertCondition = (cur === "CROSSES_ABOVE") ? "CROSSES_BELOW" : (cur === "CROSSES_BELOW" ? "CROSSES" : "CROSSES_ABOVE");
+        item.alertEnabled = true;
+        item.alertTriggered = false;
         next[root.editingLevelIndex] = item;
         root.setPriceLevels(next);
     }
@@ -958,16 +988,23 @@ Item {
                     var lx1 = ep.drawX1;
                     var lx2 = ep.drawX2;
                     var isLvlActive = (li === root.hoveredLevelIndex || li === root.draggingLevelIndex || li === root.editingLevelIndex);
-                    var lvlColor = root.levelToneColor(lvl.tone);
+                    var isArmedAlert = Boolean(lvl.alertEnabled) && !lvl.alertTriggered;
+                    var lvlColor = (lvl.tone === "up" || lvl.tone === "down") ? root.levelToneColor(lvl.tone) : (isArmedAlert ? Color.accent.primary : root.levelToneColor(lvl.tone));
 
                     ctx.save();
                     ctx.strokeStyle = lvlColor;
                     ctx.lineWidth = isLvlActive ? 1.5 : 1;
-                    ctx.globalAlpha = isLvlActive ? 1.0 : 0.9;
+                    ctx.globalAlpha = isLvlActive ? 1.0 : (lvl.alertTriggered ? 0.55 : 0.9);
+                    if (lvl.alertEnabled && typeof ctx.setLineDash === "function") {
+                        ctx.setLineDash(lvl.alertTriggered ? [2, 3] : [5, 3]);
+                    }
                     ctx.beginPath();
                     ctx.moveTo(Math.round(lx1), ly);
                     ctx.lineTo(Math.round(lx2), ly);
                     ctx.stroke();
+                    if (typeof ctx.setLineDash === "function") {
+                        ctx.setLineDash([]);
+                    }
 
                     // Endpoint Drag Handles when hovered, dragging, or editing
                     if (isLvlActive) {
@@ -986,6 +1023,10 @@ Item {
                         var priceStr = Model.formatPrice(lvl.price, root.currency, root.priceHint);
                         var customTxt = (lvl.text !== undefined && lvl.text !== null) ? String(lvl.text).trim() : "";
                         var fullLabel = customTxt.length > 0 ? (customTxt + " · " + priceStr) : priceStr;
+                        if (lvl.alertEnabled) {
+                            var condBadge = lvl.alertTriggered ? "HIT" : (lvl.alertCondition === "CROSSES_BELOW" ? "ALRT <=" : (lvl.alertCondition === "CROSSES" ? "ALRT <>" : "ALRT >="));
+                            fullLabel = condBadge + " · " + fullLabel;
+                        }
 
                         ctx.font = "bold " + Style.font.bodySmall + "px " + root.fontFamily;
                         var textW = ctx.measureText(fullLabel).width;
@@ -1120,6 +1161,9 @@ Item {
                         root.commitLevelEdit();
                     var anchorTs = (!root.hoveringScale && root.hoverCandle) ? root.hoverCandle.timestamp : (g.candles.length > 0 ? g.candles[0].timestamp : 0);
                     var ohlcField = root.hoveringScale ? "scale" : root.hoverOhlcField;
+                    var armByDefault = Boolean(mouse.modifiers & Qt.AltModifier);
+                    var lastC = (g.candles && g.candles.length > 0) ? g.candles[g.candles.length - 1].close : 0;
+                    var defaultCond = (lastC > 0 && root.hoverPrice < lastC) ? "CROSSES_BELOW" : "CROSSES_ABOVE";
                     var nextLevels = root.priceLevels ? root.priceLevels.slice() : [];
                     nextLevels.push({
                         price: root.hoverPrice,
@@ -1128,7 +1172,10 @@ Item {
                         ohlcField: ohlcField,
                         text: "",
                         tone: "fg",
-                        offsets: ({})
+                        offsets: ({}),
+                        alertEnabled: armByDefault,
+                        alertCondition: defaultCond,
+                        alertTriggered: false
                     });
                     root.setPriceLevels(nextLevels);
                     root.startLevelEdit(nextLevels.length - 1);
@@ -1156,6 +1203,7 @@ Item {
                         root.draggingLevelIndex = leftHit.index;
                         root.levelDragMode = leftHit.part;
                         root.levelDragStartX = mouse.x;
+                        root.levelDragStartY = mouse.y;
                         root.levelDragAnchorIdx = ep.anchorIdx;
                         var startIdx1 = ep.idx1;
                         var startIdx2 = ep.idx2;
@@ -1190,7 +1238,8 @@ Item {
             if (root.draggingLevelIndex >= 0 && g && g.innerW > 0) {
                 var clampedX = Math.max(g.left, Math.min(g.right, mouse.x));
                 var dx = clampedX - root.levelDragStartX;
-                if (Math.abs(mouse.x - root.levelDragStartX) >= 2)
+                var dy = mouse.y - root.levelDragStartY;
+                if (Math.abs(mouse.x - root.levelDragStartX) >= 2 || Math.abs(dy) >= 2)
                     root.levelDragMoved = true;
                 var dBars = dx / Math.max(1, g.slotW);
                 var nextLevels = root.priceLevels.slice();
@@ -1211,6 +1260,13 @@ Item {
                 } else {
                     nextIdx1 = root.levelDragStartIdx1 + dBars;
                     nextIdx2 = root.levelDragStartIdx2 + dBars;
+                    if (Math.abs(dy) >= 2) {
+                        var draggedPrice = root.yToPrice(mouse.y);
+                        if (draggedPrice > 0) {
+                            item.price = draggedPrice;
+                            item.alertTriggered = false;
+                        }
+                    }
                 }
 
                 nextOffsets[root.rangeKey] = {
@@ -1460,8 +1516,71 @@ Item {
                         } else if (event.key === Qt.Key_Tab) {
                             root.cycleEditingLevelTone();
                             event.accepted = true;
+                        } else if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_A) {
+                            root.toggleEditingLevelAlert();
+                            event.accepted = true;
                         }
                     }
+                }
+            }
+
+            Rectangle {
+                id: alertToggleBadge
+                anchors.verticalCenter: parent.verticalCenter
+                height: Style.space(16)
+                width: alertToggleLabel.implicitWidth + Style.space(8)
+                radius: Style.space(2)
+                color: (levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled) ? Qt.rgba(Color.accent.primary.r, Color.accent.primary.g, Color.accent.primary.b, 0.22) : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.08)
+                border.width: 1
+                border.color: (levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled) ? Color.accent.primary : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.25)
+
+                Text {
+                    id: alertToggleLabel
+                    anchors.centerIn: parent
+                    text: (levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled) ? "ALRT ON" : "ALRT OFF"
+                    color: (levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled) ? Color.accent.primary : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.65)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall - 1
+                    font.bold: true
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.toggleEditingLevelAlert()
+                }
+            }
+
+            Rectangle {
+                id: alertCondBadge
+                visible: Boolean(levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled)
+                anchors.verticalCenter: parent.verticalCenter
+                height: Style.space(16)
+                width: alertCondLabel.implicitWidth + Style.space(8)
+                radius: Style.space(2)
+                color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.1)
+
+                Text {
+                    id: alertCondLabel
+                    anchors.centerIn: parent
+                    text: {
+                        var cond = levelEditOverlay.activeLvl ? levelEditOverlay.activeLvl.alertCondition : "CROSSES_ABOVE";
+                        if (cond === "CROSSES_BELOW")
+                            return "<=";
+                        if (cond === "CROSSES")
+                            return "<>";
+                        return ">=";
+                    }
+                    color: Color.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall - 1
+                    font.bold: true
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.cycleEditingLevelCondition()
                 }
             }
 

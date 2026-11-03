@@ -155,6 +155,124 @@ function deleteLayout(layouts, name) {
   return current
 }
 
+function normalizeSymbolLevels(rawLevels) {
+  var out = {}
+  if (!rawLevels || typeof rawLevels !== "object") return out
+  for (var rawSym in rawLevels) {
+    if (!Object.prototype.hasOwnProperty.call(rawLevels, rawSym)) continue
+    var sym = normalizeSymbol(rawSym)
+    if (!sym || !Array.isArray(rawLevels[rawSym])) continue
+    var arr = rawLevels[rawSym]
+    var cleaned = []
+    for (var i = 0; i < arr.length && cleaned.length < 60; i++) {
+      var lvl = arr[i]
+      if (!lvl || typeof lvl !== "object") continue
+      var p = finiteOrNull(lvl.price)
+      if (p === null || p <= 0) continue
+      var cond = String(lvl.alertCondition || "CROSSES").toUpperCase()
+      if (cond !== "CROSSES_ABOVE" && cond !== "CROSSES_BELOW" && cond !== "CROSSES") {
+        cond = "CROSSES"
+      }
+      var tone = String(lvl.tone || "fg")
+      if (tone !== "up" && tone !== "down" && tone !== "fg") tone = "fg"
+      var item = {
+        id: lvl.id ? String(lvl.id) : ("lvl_" + sym + "_" + Math.round(p * 10000) + "_" + i),
+        price: p,
+        sourceTf: lvl.sourceTf ? String(lvl.sourceTf) : "1D",
+        anchorTs: isFinite(lvl.anchorTs) ? Number(lvl.anchorTs) : 0,
+        ohlcField: lvl.ohlcField ? String(lvl.ohlcField) : "scale",
+        text: (lvl.text !== undefined && lvl.text !== null) ? String(lvl.text) : "",
+        tone: tone,
+        offsets: (lvl.offsets && typeof lvl.offsets === "object") ? lvl.offsets : ({}),
+        alertEnabled: Boolean(lvl.alertEnabled),
+        alertCondition: cond,
+        alertTriggered: Boolean(lvl.alertTriggered),
+        alertTriggeredAt: isFinite(lvl.alertTriggeredAt) ? Number(lvl.alertTriggeredAt) : 0,
+        allowExtended: Boolean(lvl.allowExtended)
+      }
+      cleaned.push(item)
+    }
+    if (cleaned.length > 0) out[sym] = cleaned
+  }
+  return out
+}
+
+function pruneSignalStates(rawStates, nowMs) {
+  var out = {}
+  if (!rawStates || typeof rawStates !== "object") return out
+  var nowSec = Math.floor(((isFinite(nowMs) && nowMs > 0) ? Number(nowMs) : Date.now()) / 1000)
+  var maxAgeSec = 14 * 86400
+  var validStates = {
+    "NONE": true,
+    "ARMED_SEEN": true,
+    "ARMED_NOTIFIED": true,
+    "TRIGGERED": true,
+    "TARGET_HIT": true,
+    "STOPPED": true
+  }
+  var keys = Object.keys(rawStates)
+  for (var i = 0; i < keys.length && Object.keys(out).length < 500; i++) {
+    var k = keys[i]
+    var val = rawStates[k]
+    var st = typeof val === "string" ? val : (val && typeof val.state === "string" ? val.state : "")
+    if (!validStates[st] || st === "NONE") continue
+    var parts = String(k).split(":")
+    if (parts.length >= 3) {
+      var tsNum = Number(parts[2])
+      if (isFinite(tsNum) && tsNum > 100000000 && nowSec > 100000000 && (nowSec - tsNum) > maxAgeSec) {
+        continue
+      }
+    }
+    out[k] = st
+  }
+  return out
+}
+
+function normalizeAlertLog(rawLog) {
+  if (!Array.isArray(rawLog)) return []
+  var out = []
+  for (var i = 0; i < rawLog.length && out.length < 50; i++) {
+    var item = rawLog[i]
+    if (!item || typeof item !== "object" || !item.symbol) continue
+    var sym = normalizeSymbol(item.symbol)
+    if (!sym) continue
+    var ts = isFinite(item.timestamp) ? Number(item.timestamp) : (isFinite(item.timestampMs) ? Number(item.timestampMs) : Date.now())
+    var sumTxt = String(item.summary || item.body || "")
+    out.push({
+      id: item.id ? String(item.id) : ("alrt_" + sym + "_" + (ts || i)),
+      timestamp: ts,
+      timestampMs: ts,
+      symbol: sym,
+      kind: item.kind === "PRICE" ? "PRICE" : "STRAT",
+      eventType: String(item.eventType || "TRIGGERED"),
+      direction: String(item.direction || ""),
+      timeframe: String(item.timeframe || "60"),
+      price: finiteOrNull(item.price),
+      triggerPrice: finiteOrNull(item.triggerPrice),
+      title: String(item.title || ""),
+      summary: sumTxt,
+      body: sumTxt
+    })
+  }
+  return out
+}
+
+function appendAlertLog(logList, entry, maxEntries) {
+  var limit = (isFinite(maxEntries) && maxEntries > 0) ? Math.floor(maxEntries) : 50
+  var current = normalizeAlertLog(logList)
+  if (!entry || typeof entry !== "object" || !entry.symbol) return current
+  var normalized = normalizeAlertLog([entry])
+  if (normalized.length === 0) return current
+  var head = normalized[0]
+  var filtered = [head]
+  for (var i = 0; i < current.length && filtered.length < limit; i++) {
+    if (current[i].id !== head.id) {
+      filtered.push(current[i])
+    }
+  }
+  return filtered
+}
+
 function parseState(raw) {
   var fallback = defaultState()
   try {
@@ -183,6 +301,9 @@ function parseState(raw) {
         crosshair: data.gridSync.crosshair !== false,
         time: data.gridSync.time !== false
       }
+      if (data.gridSync.broadening !== undefined) {
+        res.gridSync.broadening = data.gridSync.broadening === true
+      }
     }
     if (Array.isArray(data.gridSymbols)) {
       var gSymbols = []
@@ -198,13 +319,22 @@ function parseState(raw) {
     if (data.gridSplits !== undefined && typeof data.gridSplits === "object") res.gridSplits = data.gridSplits
     if (data.layouts !== undefined && typeof data.layouts === "object") res.layouts = parseLayouts(data.layouts)
     if (data.discordWebhook !== undefined) res.discordWebhook = String(data.discordWebhook || "").trim()
+    if (data.symbolLevels !== undefined && typeof data.symbolLevels === "object") {
+      res.symbolLevels = normalizeSymbolLevels(data.symbolLevels)
+    }
+    if (data.signalStates !== undefined && typeof data.signalStates === "object") {
+      res.signalStates = pruneSignalStates(data.signalStates)
+    }
+    if (data.alertLog !== undefined && Array.isArray(data.alertLog)) {
+      res.alertLog = normalizeAlertLog(data.alertLog)
+    }
     return res
   } catch (e) {
     return fallback
   }
 }
 
-function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, arg9, arg10, arg11, arg12, arg13, arg14) {
+function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, arg9, arg10, arg11, arg12, arg13, arg14, arg15) {
   var list = Array.isArray(watchlist) ? watchlist.slice() : []
   var obj = {
     watchlist: list,
@@ -220,15 +350,18 @@ function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, grid
   var discordWebhook = ""
   var gridTimeframes = null
   var gridZooms = null
+  var extra = null
 
   if (typeof arg9 === "string" && (arg9.startsWith("http") || arg9 === "") && (Array.isArray(arg10) || Array.isArray(arg11))) {
     discordWebhook = arg9
     gridTimeframes = arg10
     gridZooms = arg11
+    if (arg12 && typeof arg12 === "object" && !Array.isArray(arg12)) extra = arg12
   } else if (arguments.length >= 12) {
     discordWebhook = arg12
     gridTimeframes = arg13
     gridZooms = arg14
+    if (arg15 && typeof arg15 === "object" && !Array.isArray(arg15)) extra = arg15
   } else if (typeof arg9 === "string" && arg9.startsWith("http")) {
     discordWebhook = arg9
   }
@@ -238,6 +371,21 @@ function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, grid
   var normZooms = normalizeZoomList(gridZooms)
   if (normZooms) obj.gridZooms = normZooms
   if (discordWebhook) obj.discordWebhook = discordWebhook
+
+  if (extra) {
+    if (extra.symbolLevels && typeof extra.symbolLevels === "object") {
+      var normLevels = normalizeSymbolLevels(extra.symbolLevels)
+      if (Object.keys(normLevels).length > 0) obj.symbolLevels = normLevels
+    }
+    if (extra.signalStates && typeof extra.signalStates === "object") {
+      var prunedStates = pruneSignalStates(extra.signalStates)
+      if (Object.keys(prunedStates).length > 0) obj.signalStates = prunedStates
+    }
+    if (Array.isArray(extra.alertLog) && extra.alertLog.length > 0) {
+      var normLog = normalizeAlertLog(extra.alertLog)
+      if (normLog.length > 0) obj.alertLog = normLog
+    }
+  }
 
   return JSON.stringify(obj, null, 2) + "\n"
 }
@@ -4502,12 +4650,18 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     badgeText = "ARMED"
   }
 
+  var activeCandleTs = (setupTf === "60" && c60 && isFinite(c60.timestamp))
+    ? Number(c60.timestamp)
+    : ((c1D && isFinite(c1D.timestamp)) ? Number(c1D.timestamp) : null)
+
   return {
     symbol: sym,
     direction: direction,
     setupTimeframe: setupTf,
     signalName: signalName,
     signalCandleTimestamp: signalCandleTimestamp,
+    activeCandleTimestamp: activeCandleTs,
+    currentPrice: isFinite(currentPrice) ? currentPrice : null,
     passedCount: passedCount,
     totalRules: rules.length,
     isTradeable: isTradeable,
@@ -4562,6 +4716,7 @@ function discordAlertPayload(chk, eventType) {
   var color = isBull ? 3066993 : 15158332
   if (type === "TARGET_HIT") color = 3066993
   else if (type === "STOPPED") color = 15158332
+  else if (type === "ARMED") color = 15844367
 
   var triggerStr = (chk.triggerPrice != null && isFinite(chk.triggerPrice)) ? ("$" + Number(chk.triggerPrice).toFixed(2)) : "N/A"
   var stopStr = (chk.stopPrice != null && isFinite(chk.stopPrice)) ? ("$" + Number(chk.stopPrice).toFixed(2)) : "N/A"
@@ -4587,8 +4742,31 @@ function discordAlertPayload(chk, eventType) {
     }
   }
 
+  // 0. ARMED / STALKING ALERT
+  if (type === "ARMED") {
+    content = "**The Strat Armed Setup: " + chk.symbol + " [" + chk.direction + "]**"
+    title = "The Strat Armed Setup: " + chk.symbol + " [" + chk.direction + "]"
+    desc = "**Stalking Trigger** on `" + tf + "` setup (" + sigName + ").\n*\"Wait for price to cross the trigger by $0.01 on a live candle before executing.\"*"
+
+    fields.push({ name: "Entry Trigger", value: "`" + triggerStr + "`", inline: true })
+    fields.push({ name: "Structural Stop", value: "`" + stopStr + "`", inline: true })
+    if (rrStr !== "N/A") {
+      fields.push({ name: "Risk : Reward", value: "`" + rrStr + "`", inline: true })
+    }
+    fields.push({ name: "Target", value: "`" + targetStr + "`", inline: false })
+
+    if (chk.ftfcSummary) {
+      var fa = chk.ftfcSummary
+      var cMapA = { "G": "Green", "R": "Red", "-": "Flat" }
+      fields.push({
+        name: "Timeframe Continuity (FTFC)",
+        value: "1M: `" + (cMapA[fa.m] || fa.m) + "` | 1W: `" + (cMapA[fa.w] || fa.w) + "` | 1D: `" + (cMapA[fa.d] || fa.d) + "` | 60m: `" + (cMapA[fa.h60] || fa.h60) + "`",
+        inline: false
+      })
+    }
+  }
   // 1. TRIGGERED / IN-FORCE ALERT
-  if (type === "TRIGGERED") {
+  else if (type === "TRIGGERED") {
     content = "@everyone **The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]**"
     title = "The Strat Tradeable Alert: " + chk.symbol + " [" + chk.direction + "]"
     desc = "**9/9 Rules Verified** on `" + tf + "` setup (" + sigName + ").\n*\"Throw the first punch at the trigger — price action is mechanical.\"*"
@@ -4715,6 +4893,457 @@ function discordAlertPayload(chk, eventType) {
       }
     ]
   })
+}
+
+function isUsDstUtc(utcMs) {
+  var d = new Date(utcMs)
+  var yr = d.getUTCFullYear()
+  // 2nd Sunday in March at 07:00 UTC (2:00 AM EST)
+  var mar1Day = new Date(Date.UTC(yr, 2, 1)).getUTCDay()
+  var secondSunMar = 8 + ((7 - mar1Day) % 7)
+  var dstStartUtc = Date.UTC(yr, 2, secondSunMar, 7, 0, 0)
+  // 1st Sunday in November at 06:00 UTC (2:00 AM EDT)
+  var nov1Day = new Date(Date.UTC(yr, 10, 1)).getUTCDay()
+  var firstSunNov = 1 + ((7 - nov1Day) % 7)
+  var dstEndUtc = Date.UTC(yr, 10, firstSunNov, 6, 0, 0)
+  return utcMs >= dstStartUtc && utcMs < dstEndUtc
+}
+
+function isUsMarketOpen(nowDate, allowExtended) {
+  var d = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate : new Date()
+  var utcMs = d.getTime()
+  var offsetHours = isUsDstUtc(utcMs) ? -4 : -5
+  var etDate = new Date(utcMs + offsetHours * 3600000)
+  var day = etDate.getUTCDay()
+  if (day === 0 || day === 6) return false
+  var mins = etDate.getUTCHours() * 60 + etDate.getUTCMinutes()
+  if (allowExtended === true) {
+    // 04:00 ET (240) to 20:00 ET (1200)
+    return mins >= 240 && mins < 1200
+  }
+  // Regular Trading Hours: 09:30 ET (570) to 16:00 ET (960)
+  return mins >= 570 && mins < 960
+}
+
+function isAlertSessionOpen(symbol, quote, allowExtended, nowDate) {
+  var sym = normalizeSymbol(symbol)
+  if (isCryptoSymbol(sym)) return true
+  if (quote && (quote.session === "live" || quote.instrumentType === "CRYPTOCURRENCY")) return true
+
+  var hasValidNow = (nowDate instanceof Date && isFinite(nowDate.getTime()))
+  var ext = Boolean(allowExtended)
+
+  if (quote && typeof quote.session === "string" && quote.session.length > 0) {
+    var s = quote.session
+    if (s === "regular") {
+      return hasValidNow ? isUsMarketOpen(nowDate, false) : true
+    }
+    if (ext && (s === "pre" || s === "post")) {
+      return hasValidNow ? isUsMarketOpen(nowDate, true) : true
+    }
+    return false
+  }
+
+  if (hasValidNow) {
+    return isUsMarketOpen(nowDate, ext)
+  }
+  return true
+}
+
+function evaluateStratAlertTransition(chk, quote, signalStates, priceMemory, options) {
+  var opts = (options && typeof options === "object") ? options : ({})
+  var nextStates = Object.assign({}, signalStates || ({}))
+  var nextMemory = Object.assign({}, priceMemory || ({}))
+  var emptyRes = {
+    shouldNotify: false,
+    eventType: "",
+    baseKey: "",
+    nextState: "NONE",
+    nextStates: nextStates,
+    nextSignalStates: nextStates,
+    stateUpdated: false,
+    nextPriceMemory: nextMemory,
+    title: "",
+    body: "",
+    logEntry: null,
+    reason: "INVALID"
+  }
+
+  if (opts.replayActive) {
+    emptyRes.reason = "REPLAY_ACTIVE"
+    return emptyRes
+  }
+  if (!chk || !chk.symbol || !chk.direction || !chk.setupTimeframe) {
+    return emptyRes
+  }
+
+  var sym = normalizeSymbol(chk.symbol)
+  var candleId = (chk.signalCandleTimestamp != null) ? String(chk.signalCandleTimestamp) : "active"
+  var baseKey = sym + ":" + chk.setupTimeframe + ":" + candleId + ":" + chk.direction
+  var rawCurState = nextStates[baseKey]
+  var currentState = typeof rawCurState === "string" ? rawCurState : (rawCurState && typeof rawCurState.state === "string" ? rawCurState.state : "NONE")
+
+  var nowDate = (opts.nowDate instanceof Date && isFinite(opts.nowDate.getTime())) ? opts.nowDate : null
+  var nowMs = nowDate ? nowDate.getTime() : Date.now()
+  var nowSec = nowDate ? Math.floor(nowMs / 1000) : null
+
+  var curPrice = stratLivePrice(quote)
+  if (curPrice === null && isFinite(chk.currentPrice)) curPrice = Number(chk.currentPrice)
+  if (curPrice === null && chk.bar60 && isFinite(chk.bar60.price)) curPrice = Number(chk.bar60.price)
+  if (curPrice === null && chk.bar1D && isFinite(chk.bar1D.price)) curPrice = Number(chk.bar1D.price)
+
+  var prevEntry = (nextMemory[sym] && typeof nextMemory[sym] === "object") ? nextMemory[sym] : null
+  var prevPrice = (prevEntry && isFinite(prevEntry.price)) ? Number(prevEntry.price) : null
+  if (curPrice !== null && isFinite(curPrice)) {
+    nextMemory[sym] = { price: curPrice, timestamp: nowMs }
+  }
+
+  // 1. Market Session & Active Bar Freshness Gate
+  var sessionOpen = isAlertSessionOpen(sym, quote, false, nowDate)
+  if (sessionOpen && !isCryptoSymbol(sym) && chk.setupTimeframe === "60" && isFinite(chk.activeCandleTimestamp) && nowSec !== null) {
+    if ((nowSec - Number(chk.activeCandleTimestamp)) >= 3600) {
+      sessionOpen = false
+    }
+  }
+
+  if (!sessionOpen) {
+    // Market is closed or active 60m bar is from a prior session:
+    // Silently seed already-completed states so they never fire when chart is opened or session transitions
+    if (currentState === "NONE") {
+      if (chk.isTargetHit) {
+        nextStates[baseKey] = "TARGET_HIT"
+      } else if (chk.isStoppedOut) {
+        nextStates[baseKey] = "STOPPED"
+      } else if (chk.isTradeable) {
+        nextStates[baseKey] = "TRIGGERED"
+      }
+    }
+    var closedState = nextStates[baseKey] || currentState
+    return {
+      shouldNotify: false,
+      eventType: "",
+      baseKey: baseKey,
+      nextState: closedState,
+      nextStates: nextStates,
+      nextSignalStates: nextStates,
+      stateUpdated: closedState !== currentState,
+      nextPriceMemory: nextMemory,
+      title: "",
+      body: "",
+      logEntry: null,
+      reason: "MARKET_CLOSED"
+    }
+  }
+
+  // 2. Initial Snapshot Seeding (Prevents firing alerts when opening a chart on an already-in-force trade)
+  var isFirstObservation = (currentState === "NONE" && prevPrice === null && opts.allowInitialTrigger !== true)
+  if (isFirstObservation && (chk.isTargetHit || chk.isStoppedOut || chk.isTradeable)) {
+    var seedState = "TRIGGERED"
+    if (chk.isTargetHit) {
+      seedState = "TARGET_HIT"
+    } else if (chk.isStoppedOut) {
+      seedState = "STOPPED"
+    }
+    nextStates[baseKey] = seedState
+    return {
+      shouldNotify: false,
+      eventType: "",
+      baseKey: baseKey,
+      nextState: seedState,
+      nextStates: nextStates,
+      nextSignalStates: nextStates,
+      stateUpdated: true,
+      nextPriceMemory: nextMemory,
+      title: "",
+      body: "",
+      logEntry: null,
+      reason: "INITIAL_STATE_SEEDED"
+    }
+  }
+
+  var isLong = (chk.direction === "LONG" || chk.direction === "BULLISH")
+  var trigPx = finiteOrNull(chk.triggerPrice)
+  var eventType = ""
+  var title = ""
+  var body = ""
+
+  // 3. Stage 1: Entry Trigger Crossed (9/9 rules verified on a tracked/armed setup or live tick cross)
+  if (chk.isTradeable && (currentState === "NONE" || currentState === "ARMED_SEEN" || currentState === "ARMED_NOTIFIED")) {
+    var crossedOnTick = false
+    if (currentState === "ARMED_SEEN" || currentState === "ARMED_NOTIFIED" || opts.allowInitialTrigger === true) {
+      crossedOnTick = true
+    } else if (prevPrice !== null && trigPx !== null && curPrice !== null) {
+      crossedOnTick = isLong ? (prevPrice < trigPx && curPrice >= trigPx) : (prevPrice > trigPx && curPrice <= trigPx)
+    }
+
+    if (crossedOnTick) {
+      eventType = "TRIGGERED"
+      title = "The Strat Alert: " + sym + " [" + chk.direction + "]"
+      var triggerStr = trigPx !== null ? ("Trigger: $" + trigPx.toFixed(2)) : ""
+      var stopStr = chk.stopPrice != null ? ("Stop: $" + Number(chk.stopPrice).toFixed(2)) : ""
+      var targetStr = (chk.targetPrice != null && chk.targetName) ? (chk.targetName + " $" + Number(chk.targetPrice).toFixed(2)) : ""
+      var parts = []
+      if (triggerStr) parts.push(triggerStr)
+      if (stopStr) parts.push(stopStr)
+      if (targetStr) {
+        if (chk.domino && chk.domino.hasDomino) {
+          parts.push("T1 (Domino): " + targetStr + " -> " + chk.domino.triggeredSignal)
+        } else {
+          parts.push("Target: " + targetStr)
+        }
+      }
+      body = "9/9 rules verified on " + chk.setupTimeframe + " setup.\n" + parts.join(" | ")
+    } else {
+      // Already past trigger without prior un-triggered observation: seed silently
+      nextStates[baseKey] = "TRIGGERED"
+      return {
+        shouldNotify: false,
+        eventType: "",
+        baseKey: baseKey,
+        nextState: "TRIGGERED",
+        nextStates: nextStates,
+        nextSignalStates: nextStates,
+        stateUpdated: true,
+        nextPriceMemory: nextMemory,
+        title: "",
+        body: "",
+        logEntry: null,
+        reason: "ALREADY_IN_FORCE_SEED"
+      }
+    }
+  }
+  // 4. Stage 2A: Target Hit (was triggered, now reached T1)
+  else if (chk.isTargetHit && currentState === "TRIGGERED") {
+    eventType = "TARGET_HIT"
+    title = "The Strat Target Hit: " + sym + " [" + chk.direction + "]"
+    var tName = chk.targetName || "Target 1"
+    var tPriceStr = chk.targetPrice != null ? (" $" + Number(chk.targetPrice).toFixed(2)) : ""
+    if (chk.domino && chk.domino.hasDomino) {
+      body = tName + tPriceStr + " reached!\nDomino Triggered: " + chk.domino.triggeredSignal + "\nMove stop to B/E & trail for " + (chk.domino.nextTargetName || "T2") + "."
+    } else {
+      body = tName + tPriceStr + " reached on " + chk.setupTimeframe + " setup.\nExhaustion risk — take profit / trail stops."
+    }
+  }
+  // 5. Stage 2B: Stop Breached (was triggered, now stopped out)
+  else if (chk.isStoppedOut && currentState === "TRIGGERED") {
+    eventType = "STOPPED"
+    title = "The Strat Setup Invalidated: " + sym + " [" + chk.direction + "]"
+    var sPriceStr = chk.stopPrice != null ? (" $" + Number(chk.stopPrice).toFixed(2)) : ""
+    body = "Stop-loss" + sPriceStr + " breached on " + chk.setupTimeframe + " setup."
+  }
+  // 6. Stage 0: Armed Proximity Stalking Alert (approaching trigger before break)
+  else if (!chk.isTradeable && !chk.isTargetHit && !chk.isStoppedOut && chk.isArmed && (currentState === "NONE" || currentState === "ARMED_SEEN")) {
+    var proxMax = isFinite(opts.armedProximityPct) ? Number(opts.armedProximityPct) : 0.0035
+    var rulesOk = (chk.passedCount === undefined) ? true : (chk.passedCount >= 7)
+    var canArmNotify = (opts.enableArmedAlerts !== false) && rulesOk && trigPx !== null && curPrice !== null && trigPx > 0
+    var approaching = false
+    if (canArmNotify) {
+      var dist = isLong ? (trigPx - curPrice) : (curPrice - trigPx)
+      var distPct = dist / trigPx
+      if (dist > 0 && distPct <= proxMax) {
+        approaching = true
+      }
+    }
+    if (approaching) {
+      eventType = "ARMED"
+      title = "The Strat Armed: " + sym + " [" + chk.direction + "]"
+      var pCount = chk.passedCount !== undefined ? chk.passedCount : 8
+      body = "Approaching " + chk.setupTimeframe + " Trigger $" + trigPx.toFixed(2) + " (Cur: $" + curPrice.toFixed(2) + ") | " + pCount + "/9 rules ready."
+    } else if (currentState === "NONE") {
+      nextStates[baseKey] = "ARMED_SEEN"
+    }
+  } else if (!chk.isTradeable && !chk.isTargetHit && !chk.isStoppedOut && currentState === "NONE") {
+    nextStates[baseKey] = "ARMED_SEEN"
+  }
+
+  if (!eventType) {
+    var noTransState = nextStates[baseKey] || currentState
+    return {
+      shouldNotify: false,
+      eventType: "",
+      baseKey: baseKey,
+      nextState: noTransState,
+      nextStates: nextStates,
+      nextSignalStates: nextStates,
+      stateUpdated: noTransState !== currentState,
+      nextPriceMemory: nextMemory,
+      title: "",
+      body: "",
+      logEntry: null,
+      reason: "NO_TRANSITION"
+    }
+  }
+
+  var recordedState = (eventType === "ARMED") ? "ARMED_NOTIFIED" : eventType
+  nextStates[baseKey] = recordedState
+
+  var sumStr = body.replace(/\n+/g, " · ")
+  var logEntry = {
+    id: baseKey + ":" + eventType,
+    timestamp: nowMs,
+    timestampMs: nowMs,
+    symbol: sym,
+    kind: "STRAT",
+    eventType: eventType,
+    direction: chk.direction,
+    timeframe: chk.setupTimeframe,
+    price: curPrice,
+    triggerPrice: trigPx,
+    title: title,
+    summary: sumStr,
+    body: sumStr
+  }
+
+  return {
+    shouldNotify: true,
+    eventType: eventType,
+    baseKey: baseKey,
+    nextState: recordedState,
+    nextStates: nextStates,
+    nextSignalStates: nextStates,
+    stateUpdated: true,
+    nextPriceMemory: nextMemory,
+    title: title,
+    body: body,
+    logEntry: logEntry,
+    reason: eventType
+  }
+}
+
+function discordPriceAlertPayload(symbol, level, currentPrice, crossDir) {
+  var sym = normalizeSymbol(symbol)
+  if (!sym || !level || !isFinite(level.price)) return null
+  var dir = String(crossDir || "CROSS").toUpperCase()
+  var isAbove = (dir === "ABOVE" || level.alertCondition === "CROSSES_ABOVE")
+  var color = isAbove ? 3066993 : 15158332
+  var lvlPx = "$" + Number(level.price).toFixed(2)
+  var curPx = (currentPrice != null && isFinite(currentPrice)) ? ("$" + Number(currentPrice).toFixed(2)) : lvlPx
+  var condLabel = dir === "ABOVE" ? "Crossed Above" : (dir === "BELOW" ? "Crossed Below" : "Crossed Level")
+  var customNote = (level.text !== undefined && level.text !== null && String(level.text).trim().length > 0)
+    ? String(level.text).trim()
+    : "Chart Price Alert"
+
+  var fields = [
+    { name: "Alert Price", value: "`" + lvlPx + "`", inline: true },
+    { name: "Last Price", value: "`" + curPx + "`", inline: true },
+    { name: "Condition", value: "`" + condLabel + "`", inline: true }
+  ]
+  if (customNote) {
+    fields.push({ name: "Level Note", value: customNote, inline: false })
+  }
+
+  return JSON.stringify({
+    content: "@everyone **Price Alert Triggered: " + sym + " (" + condLabel + " " + lvlPx + ")**",
+    embeds: [
+      {
+        title: "Price Alert Triggered: " + sym + " [" + lvlPx + "]",
+        description: "**" + sym + "** " + condLabel.toLowerCase() + " **" + lvlPx + "** (Last: `" + curPx + "`).",
+        color: color,
+        fields: fields,
+        footer: { text: "Omafinance Price Level Alert Engine" },
+        timestamp: new Date().toISOString()
+      }
+    ]
+  })
+}
+
+function evaluatePriceLevelAlerts(symbol, levels, prevPrice, currentPrice, quote, nowDate) {
+  var sym = normalizeSymbol(symbol)
+  var srcLevels = Array.isArray(levels) ? levels : []
+  if (!sym || srcLevels.length === 0) {
+    return { triggered: [], nextLevels: srcLevels, modified: false }
+  }
+
+  var prev = finiteOrNull(prevPrice)
+  var curr = finiteOrNull(currentPrice)
+  if (prev === null || curr === null || prev <= 0 || curr <= 0 || prev === curr) {
+    return { triggered: [], nextLevels: srcLevels, modified: false }
+  }
+
+  var nowMs = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate.getTime() : Date.now()
+  var nextLevels = []
+  var triggered = []
+  var modified = false
+
+  for (var i = 0; i < srcLevels.length; i++) {
+    var lvl = srcLevels[i]
+    if (!lvl || !lvl.alertEnabled || lvl.alertTriggered || !isFinite(lvl.price)) {
+      nextLevels.push(lvl)
+      continue
+    }
+
+    var sessionOk = isAlertSessionOpen(sym, quote, Boolean(lvl.allowExtended), nowDate)
+    if (!sessionOk) {
+      nextLevels.push(lvl)
+      continue
+    }
+
+    var target = Number(lvl.price)
+    var cond = String(lvl.alertCondition || "CROSSES").toUpperCase()
+    var crossedAbove = (prev < target && curr >= target)
+    var crossedBelow = (prev > target && curr <= target)
+    var hit = false
+    var crossDir = ""
+
+    if (cond === "CROSSES_ABOVE" && crossedAbove) {
+      hit = true
+      crossDir = "ABOVE"
+    } else if (cond === "CROSSES_BELOW" && crossedBelow) {
+      hit = true
+      crossDir = "BELOW"
+    } else if (cond === "CROSSES" && (crossedAbove || crossedBelow)) {
+      hit = true
+      crossDir = crossedAbove ? "ABOVE" : "BELOW"
+    }
+
+    if (hit) {
+      var updated = Object.assign({}, lvl, {
+        alertTriggered: true,
+        alertTriggeredAt: nowMs
+      })
+      nextLevels.push(updated)
+      modified = true
+
+      var dirWord = crossDir === "ABOVE" ? "Crossed Above" : "Crossed Below"
+      var noteTxt = (lvl.text && String(lvl.text).trim().length > 0) ? (" (" + String(lvl.text).trim() + ")") : ""
+      var title = "Price Alert: " + sym + " " + (crossDir === "ABOVE" ? ">=" : "<=") + " $" + target.toFixed(2)
+      var body = sym + " " + dirWord + " $" + target.toFixed(2) + noteTxt + " | Last: $" + curr.toFixed(2)
+
+      triggered.push({
+        symbol: sym,
+        level: updated,
+        crossDir: crossDir,
+        direction: crossDir,
+        currentPrice: curr,
+        title: title,
+        body: body,
+        discordPayload: discordPriceAlertPayload(sym, updated, curr, crossDir),
+        logEntry: {
+          id: "price_" + sym + "_" + (updated.id || Math.round(target * 100)) + "_" + nowMs,
+          timestamp: nowMs,
+          timestampMs: nowMs,
+          symbol: sym,
+          kind: "PRICE",
+          eventType: "PRICE_CROSS",
+          direction: crossDir,
+          timeframe: updated.sourceTf || "1D",
+          price: curr,
+          triggerPrice: target,
+          title: title,
+          summary: body,
+          body: body
+        }
+      })
+    } else {
+      nextLevels.push(lvl)
+    }
+  }
+
+  return {
+    triggered: triggered,
+    nextLevels: nextLevels,
+    modified: modified
+  }
 }
 
 function timeframeRank(tf) {
@@ -5784,7 +6413,17 @@ if (typeof module !== "undefined") {
     candleWeekKey: candleWeekKey,
     bfWeekStarts: bfWeekStarts,
     computeActiveBroadening: computeActiveBroadening,
-    nodeCommand: nodeCommand
+    nodeCommand: nodeCommand,
+    normalizeSymbolLevels: normalizeSymbolLevels,
+    pruneSignalStates: pruneSignalStates,
+    normalizeAlertLog: normalizeAlertLog,
+    appendAlertLog: appendAlertLog,
+    isUsDstUtc: isUsDstUtc,
+    isUsMarketOpen: isUsMarketOpen,
+    isAlertSessionOpen: isAlertSessionOpen,
+    evaluateStratAlertTransition: evaluateStratAlertTransition,
+    discordPriceAlertPayload: discordPriceAlertPayload,
+    evaluatePriceLevelAlerts: evaluatePriceLevelAlerts
   }
 }
 

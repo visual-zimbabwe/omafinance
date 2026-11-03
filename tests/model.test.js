@@ -2586,5 +2586,160 @@ test("mergePeriodCandles collapses Yahoo intraday live ticks preventing false in
   assert.equal(Model.stratScenario(merged[1], merged[0]), "3")
 })
 
+test("isUsMarketOpen and isAlertSessionOpen enforce RTH market session gating for equities and 24/7 for crypto", () => {
+  // Wednesday 15:00 UTC in summer (11:00 AM EDT) -> Open
+  const openRthDate = new Date("2026-07-15T15:00:00Z")
+  assert.equal(Model.isUsMarketOpen(openRthDate, false), true)
+  assert.equal(Model.isAlertSessionOpen("AAPL", null, false, openRthDate), true)
+
+  // Wednesday 21:00 UTC in summer (5:00 PM EDT) -> Closed for RTH
+  const afterHoursDate = new Date("2026-07-15T21:00:00Z")
+  assert.equal(Model.isUsMarketOpen(afterHoursDate, false), false)
+  assert.equal(Model.isUsMarketOpen(afterHoursDate, true), true)
+  assert.equal(Model.isAlertSessionOpen("AAPL", null, false, afterHoursDate), false)
+
+  // Saturday -> Closed
+  const weekendDate = new Date("2026-07-18T15:00:00Z")
+  assert.equal(Model.isUsMarketOpen(weekendDate, false), false)
+  assert.equal(Model.isAlertSessionOpen("AAPL", { session: "closed" }, false, openRthDate), false)
+
+  // Crypto is always open 24/7
+  assert.equal(Model.isAlertSessionOpen("BTC-USD", { session: "closed" }, false, weekendDate), true)
+})
+
+test("evaluateStratAlertTransition blocks closed-market alerts, silently seeds initial chart-open state, and fires on live edge crossing", () => {
+  const openRthDate = new Date("2026-07-15T15:00:00Z")
+  const closedDate = new Date("2026-07-15T22:00:00Z")
+  const openSec = Math.floor(openRthDate.getTime() / 1000)
+  const baseChk = {
+    symbol: "NVDA",
+    direction: "BULLISH",
+    setupTimeframe: "60",
+    signalCandleTimestamp: openSec - 4500,
+    activeCandleTimestamp: openSec - 900,
+    triggerPrice: 130.00,
+    stopPrice: 128.50,
+    targetPrice: 132.50,
+    targetName: "Prior 60m High",
+    currentPrice: 130.40,
+    isTradeable: true,
+    isArmed: false,
+    isTargetHit: false,
+    isStoppedOut: false,
+    status: "TRADEABLE"
+  }
+
+  // 1. Market closed -> never fires
+  const closedRes = Model.evaluateStratAlertTransition(
+    baseChk,
+    { session: "closed", price: 130.40 },
+    {},
+    {},
+    { nowDate: closedDate }
+  )
+  assert.equal(closedRes.shouldNotify, false)
+  assert.equal(closedRes.reason, "MARKET_CLOSED")
+
+  // 2. Opening chart when setup is ALREADY triggered (prevPrice is null) -> silently seeds TRIGGERED without firing!
+  const openChartAlreadyTriggered = Model.evaluateStratAlertTransition(
+    baseChk,
+    { session: "regular", price: 130.40 },
+    {},
+    {},
+    { nowDate: openRthDate }
+  )
+  assert.equal(openChartAlreadyTriggered.shouldNotify, false)
+  assert.equal(openChartAlreadyTriggered.reason, "INITIAL_STATE_SEEDED")
+  assert.equal(openChartAlreadyTriggered.stateUpdated, true)
+
+  // Subsequent evaluation with seeded state also does not fire
+  const secondEval = Model.evaluateStratAlertTransition(
+    baseChk,
+    { session: "regular", price: 130.55 },
+    openChartAlreadyTriggered.nextStates,
+    openChartAlreadyTriggered.nextPriceMemory,
+    { nowDate: openRthDate }
+  )
+  assert.equal(secondEval.shouldNotify, false)
+
+  // 3. Opening chart BEFORE trigger (price = 129.80 < 130.00), then live tick crosses to 130.10 -> FIRES!
+  const preTriggerChk = Object.assign({}, baseChk, {
+    currentPrice: 129.80,
+    isTradeable: false,
+    isArmed: true,
+    status: "ARMED"
+  })
+  const firstTick = Model.evaluateStratAlertTransition(
+    preTriggerChk,
+    { session: "regular", price: 129.80 },
+    {},
+    {},
+    { nowDate: openRthDate, enableArmedAlerts: true }
+  )
+  // 129.80 is within 0.35% of 130.00 -> fires ARMED proximity alert once
+  assert.equal(firstTick.shouldNotify, true)
+  assert.equal(firstTick.eventType, "ARMED")
+
+  // Next tick crosses above 130.00 -> fires TRIGGERED entry alert!
+  const crossTick = Model.evaluateStratAlertTransition(
+    Object.assign({}, baseChk, { currentPrice: 130.10, isTradeable: true, status: "TRADEABLE" }),
+    { session: "regular", price: 130.10 },
+    firstTick.nextStates,
+    firstTick.nextPriceMemory,
+    { nowDate: openRthDate }
+  )
+  assert.equal(crossTick.shouldNotify, true)
+  assert.equal(crossTick.eventType, "TRIGGERED")
+  assert.ok(crossTick.logEntry)
+})
+
+test("evaluatePriceLevelAlerts triggers only on live crossover during open session and persists state", () => {
+  const openRthDate = new Date("2026-07-15T15:00:00Z")
+  const levels = [
+    { price: 200.0, sourceTf: "60", anchorTs: 1752500000, text: "Breakout", tone: "up", alertEnabled: true, alertCondition: "CROSSES_ABOVE", alertTriggered: false }
+  ]
+
+  // Initial quote snapshot (prevPrice = null) does not fire
+  const initRes = Model.evaluatePriceLevelAlerts("AAPL", levels, null, 200.5, { session: "regular" }, openRthDate)
+  assert.equal(initRes.triggered.length, 0)
+
+  // Live crossover from 199.80 to 200.10 fires alert and marks level alertTriggered = true
+  const crossRes = Model.evaluatePriceLevelAlerts("AAPL", levels, 199.80, 200.10, { session: "regular" }, openRthDate)
+  assert.equal(crossRes.triggered.length, 1)
+  assert.equal(crossRes.triggered[0].direction, "ABOVE")
+  assert.equal(crossRes.nextLevels[0].alertTriggered, true)
+
+  // Subsequent tick above 200 does not re-fire once alertTriggered is true
+  const repeatRes = Model.evaluatePriceLevelAlerts("AAPL", crossRes.nextLevels, 200.10, 200.40, { session: "regular" }, openRthDate)
+  assert.equal(repeatRes.triggered.length, 0)
+
+  // State serialization & parsing preserves symbolLevels, signalStates, and alertLog
+  const serialized = Model.serializeState(
+    ["AAPL"],
+    ["AAPL"],
+    "1D",
+    "2x2",
+    { symbol: true, timeframe: false, crosshair: true, time: true },
+    ["AAPL"],
+    {},
+    {},
+    "",
+    ["60", "1D", "1W", "1M"],
+    [-1, -1, -1, -1, -1],
+    {
+      symbolLevels: { AAPL: crossRes.nextLevels },
+      signalStates: { "AAPL:60:123:BULLISH": { state: "TRIGGERED", updatedAt: Date.now() } },
+      alertLog: [crossRes.triggered[0].logEntry]
+    }
+  )
+  const parsedState = Model.parseState(serialized)
+  assert.ok(parsedState.symbolLevels && Array.isArray(parsedState.symbolLevels.AAPL))
+  assert.equal(parsedState.symbolLevels.AAPL[0].alertEnabled, true)
+  assert.equal(parsedState.symbolLevels.AAPL[0].alertTriggered, true)
+  assert.equal(parsedState.signalStates["AAPL:60:123:BULLISH"], "TRIGGERED")
+  assert.equal(parsedState.alertLog.length, 1)
+})
+
+
 
 

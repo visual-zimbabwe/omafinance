@@ -42,6 +42,15 @@ Panel {
     property string activeLayoutName: ""
     property string layoutActionStatus: ""
     property string discordWebhook: ""
+    property var symbolLevels: ({})
+    property var signalStates: ({})
+    property var symbolPriceMemory: ({})
+    property var alertLog: []
+    property var armedWatchlistSetups: []
+    property var bgCandleCache: ({})
+    property var bgScanQueue: []
+    property string bgFetchSymbol: ""
+    property string bgFetchRange: ""
     property bool gridOpened: false
     property string chartFetchSymbol: ""
     property string chartFetchRange: ""
@@ -365,7 +374,11 @@ Panel {
     }
 
     function persist() {
-        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, discordWebhook, gridTimeframes, gridZooms));
+        stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, discordWebhook, gridTimeframes, gridZooms, {
+            symbolLevels: root.symbolLevels,
+            signalStates: root.signalStates,
+            alertLog: root.alertLog
+        }));
     }
 
     function persistSettings(values) {
@@ -458,6 +471,239 @@ Panel {
         root.view = "layouts";
     }
 
+    function openAlerts() {
+        root.clearSearch();
+        root.view = "alerts";
+        root.triggerWatchlistStratScan();
+    }
+
+    function quoteFor(sym) {
+        return root.quotes[sym] || null;
+    }
+
+    function recordAlertEvent(entry) {
+        if (!entry)
+            return;
+        root.alertLog = Model.appendAlertLog(root.alertLog, entry, 50);
+        root.persist();
+    }
+
+    function clearAlertLog() {
+        root.alertLog = [];
+        root.persist();
+    }
+
+    function syncActiveGridsAlertState() {
+        if (!root.activeGridWindows)
+            return;
+        for (var i = 0; i < root.activeGridWindows.length; i++) {
+            var w = root.activeGridWindows[i];
+            if (w && w.visible) {
+                w.symbolLevels = root.symbolLevels;
+                w.signalStates = root.signalStates;
+            }
+        }
+    }
+
+    function createPriceAlert(sym, priceVal, condition, note) {
+        var normSym = Model.normalizeSymbol(sym);
+        if (!normSym || !isFinite(Number(priceVal)) || Number(priceVal) <= 0)
+            return;
+        var nextMap = Object.assign({}, root.symbolLevels || ({}));
+        var curList = Array.isArray(nextMap[normSym]) ? nextMap[normSym].slice() : [];
+        curList.push({
+            price: Number(priceVal),
+            sourceTf: "60",
+            anchorTs: Math.floor(Date.now() / 1000) - 86400 * 5,
+            ohlcField: "scale",
+            text: String(note || "").trim(),
+            tone: "fg",
+            offsets: ({}),
+            alertEnabled: true,
+            alertCondition: condition || "CROSSES_ABOVE",
+            alertTriggered: false
+        });
+        nextMap[normSym] = curList;
+        root.symbolLevels = nextMap;
+        root.syncActiveGridsAlertState();
+        root.persist();
+    }
+
+    function rearmPriceAlert(sym, levelIndex) {
+        if (!sym || !root.symbolLevels || !Array.isArray(root.symbolLevels[sym]))
+            return;
+        var list = root.symbolLevels[sym].slice();
+        if (levelIndex < 0 || levelIndex >= list.length)
+            return;
+        var item = Object.assign({}, list[levelIndex]);
+        item.alertEnabled = true;
+        item.alertTriggered = false;
+        list[levelIndex] = item;
+        var nextMap = Object.assign({}, root.symbolLevels);
+        nextMap[sym] = list;
+        root.symbolLevels = nextMap;
+        root.syncActiveGridsAlertState();
+        root.persist();
+    }
+
+    function removePriceAlert(sym, levelIndex) {
+        if (!sym || !root.symbolLevels || !Array.isArray(root.symbolLevels[sym]))
+            return;
+        var list = root.symbolLevels[sym].slice();
+        if (levelIndex < 0 || levelIndex >= list.length)
+            return;
+        list.splice(levelIndex, 1);
+        var nextMap = Object.assign({}, root.symbolLevels);
+        nextMap[sym] = list;
+        root.symbolLevels = nextMap;
+        root.syncActiveGridsAlertState();
+        root.persist();
+    }
+
+    function evaluateWatchlistPriceAlerts(incomingQuotes) {
+        if (!incomingQuotes)
+            return;
+        var nextMem = Object.assign({}, root.symbolPriceMemory || ({}));
+        var nextLevelsMap = Object.assign({}, root.symbolLevels || ({}));
+        var memChanged = false;
+        var levelsChanged = false;
+        var keys = Object.keys(incomingQuotes);
+        for (var i = 0; i < keys.length; i++) {
+            var sym = keys[i];
+            var q = incomingQuotes[sym] || root.quotes[sym];
+            if (!q || typeof q.price !== "number" || !isFinite(q.price))
+                continue;
+            var prevP = nextMem["PRICE:" + sym];
+            nextMem["PRICE:" + sym] = q.price;
+            memChanged = true;
+            var symLvls = nextLevelsMap[sym];
+            if (!Array.isArray(symLvls) || symLvls.length === 0)
+                continue;
+            var res = Model.evaluatePriceLevelAlerts(sym, symLvls, prevP, q.price, q, new Date());
+            if (res.triggered && res.triggered.length > 0) {
+                nextLevelsMap[sym] = res.nextLevels;
+                levelsChanged = true;
+                for (var t = 0; t < res.triggered.length; t++) {
+                    var ev = res.triggered[t];
+                    bgNotifyProc.command = ["notify-send", "-a", "Omafinance", "-u", "normal", ev.title, ev.body];
+                    bgNotifyProc.running = true;
+                    bgSoundProc.command = ["pw-play", "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"];
+                    bgSoundProc.running = true;
+                    var webhook = root.discordWebhook;
+                    if (webhook && webhook.indexOf("https://discord.com/api/webhooks/") === 0) {
+                        var payload = Model.discordPriceAlertPayload(sym, ev.level, ev.currentPrice, ev.direction);
+                        if (payload) {
+                            bgDiscordProc.command = ["curl", "-fsS", "-H", "Content-Type: application/json", "-X", "POST", "-d", payload, webhook];
+                            bgDiscordProc.running = true;
+                        }
+                    }
+                    if (ev.logEntry)
+                        root.alertLog = Model.appendAlertLog(root.alertLog, ev.logEntry, 50);
+                }
+            }
+        }
+        if (memChanged)
+            root.symbolPriceMemory = nextMem;
+        if (levelsChanged) {
+            root.symbolLevels = nextLevelsMap;
+            root.syncActiveGridsAlertState();
+            root.persist();
+        }
+    }
+
+    function triggerWatchlistStratScan() {
+        var list = root.watchlist || [];
+        if (list.length === 0)
+            return;
+        var queue = [];
+        for (var i = 0; i < list.length; i++) {
+            var sym = list[i];
+            if (!sym)
+                continue;
+            queue.push({
+                symbol: sym,
+                rangeKey: "60"
+            });
+            queue.push({
+                symbol: sym,
+                rangeKey: "1D"
+            });
+        }
+        root.bgScanQueue = queue;
+        if (!bgChartProc.running)
+            root.processNextBgStratFetch();
+    }
+
+    function processNextBgStratFetch() {
+        if (!root.bgScanQueue || root.bgScanQueue.length === 0)
+            return;
+        var next = root.bgScanQueue.shift();
+        root.bgFetchSymbol = next.symbol;
+        root.bgFetchRange = next.rangeKey;
+        bgChartProc.command = Model.chartCommand(next.symbol, next.rangeKey);
+        bgChartProc.running = true;
+    }
+
+    function evaluateBgSymbolStrat(sym) {
+        if (!sym)
+            return;
+        var hCandles = root.bgCandleCache[sym + "_60"] || [];
+        var dCandles = root.bgCandleCache[sym + "_1D"] || [];
+        if (hCandles.length < 3 || dCandles.length < 3)
+            return;
+        var q = root.quotes[sym] || null;
+        var chk = Model.evaluateStratChecklist(sym, hCandles, dCandles, q, new Date());
+        if (!chk)
+            return;
+
+        // Update Watchlist Strat Radar list
+        var currentRadar = (root.armedWatchlistSetups || []).filter(function (item) {
+            return item && item.symbol !== sym;
+        });
+        if (chk.status === "TRADEABLE" || chk.status === "ARMED") {
+            currentRadar.unshift({
+                symbol: chk.symbol,
+                direction: chk.direction,
+                setupTimeframe: chk.setupTimeframe,
+                status: chk.status,
+                passedCount: chk.passedCount,
+                totalCount: chk.totalCount,
+                triggerPrice: chk.triggerPrice,
+                stopPrice: chk.stopPrice,
+                targetPrice: chk.targetPrice
+            });
+        }
+        root.armedWatchlistSetups = currentRadar;
+
+        var transition = Model.evaluateStratAlertTransition(chk, q, root.signalStates, root.symbolPriceMemory, {
+            replayActive: false,
+            nowDate: new Date(),
+            enableArmedAlerts: true
+        });
+        root.symbolPriceMemory = transition.nextPriceMemory;
+        if (transition.stateUpdated) {
+            root.signalStates = transition.nextStates;
+            root.syncActiveGridsAlertState();
+            root.persist();
+        }
+        if (transition.shouldNotify && transition.eventType) {
+            if (transition.logEntry)
+                root.recordAlertEvent(transition.logEntry);
+            bgNotifyProc.command = ["notify-send", "-a", "Omafinance", "-u", "normal", transition.title, transition.body];
+            bgNotifyProc.running = true;
+            bgSoundProc.command = ["pw-play", "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"];
+            bgSoundProc.running = true;
+            var webhook = root.discordWebhook;
+            if (webhook && webhook.indexOf("https://discord.com/api/webhooks/") === 0) {
+                var payload = Model.discordAlertPayload(chk, transition.eventType);
+                if (payload) {
+                    bgDiscordProc.command = ["curl", "-fsS", "-H", "Content-Type: application/json", "-X", "POST", "-d", payload, webhook];
+                    bgDiscordProc.running = true;
+                }
+            }
+        }
+    }
+
     function applyState(raw) {
         var state = Model.parseState(raw);
         var before = (watchlist || []).join("\n");
@@ -484,6 +730,13 @@ Panel {
             layouts = ({});
         if (state.discordWebhook !== undefined)
             discordWebhook = state.discordWebhook;
+        if (state.symbolLevels)
+            symbolLevels = state.symbolLevels;
+        if (state.signalStates)
+            signalStates = state.signalStates;
+        if (state.alertLog)
+            alertLog = state.alertLog;
+        root.syncActiveGridsAlertState();
         clampSelected();
         if (before !== after && (opened || showBarQuote))
             Qt.callLater(refresh);
@@ -1127,6 +1380,41 @@ Panel {
     }
 
     Process {
+        id: bgNotifyProc
+    }
+
+    Process {
+        id: bgSoundProc
+    }
+
+    Process {
+        id: bgDiscordProc
+    }
+
+    Process {
+        id: bgChartProc
+        onExited: function (exitCode) {
+            var raw = String(bgChartStdout.text || "");
+            var sym = root.bgFetchSymbol;
+            var rk = root.bgFetchRange;
+            var parsed = (exitCode === 0 && raw && sym && rk) ? Model.parseChart(raw, rk, sym) : null;
+            if (parsed && parsed.candles) {
+                var nextCache = Object.assign({}, root.bgCandleCache || ({}));
+                nextCache[sym + "_" + rk] = parsed.candles;
+                root.bgCandleCache = nextCache;
+                if (rk === "1D")
+                    root.evaluateBgSymbolStrat(sym);
+            }
+            if (root.bgScanQueue && root.bgScanQueue.length > 0)
+                Qt.callLater(root.processNextBgStratFetch);
+        }
+        stdout: StdioCollector {
+            id: bgChartStdout
+            waitForEnd: true
+        }
+    }
+
+    Process {
         id: quoteProc
         onExited: function (exitCode) {
             var raw = String(quoteStdout.text || "").trim();
@@ -1136,6 +1424,7 @@ Panel {
                 root.quoteFailureCount = 0;
                 root.quoteError = "";
                 root.quotesUpdatedAt = Date.now();
+                root.evaluateWatchlistPriceAlerts(parsed);
             } else {
                 root.quoteFailureCount = Math.min(10, root.quoteFailureCount + 1);
                 root.quoteError = "Quotes unavailable";
@@ -1413,6 +1702,17 @@ Panel {
         onTriggered: root.pinIndex = root.pinIndex + 1
     }
 
+    Timer {
+        id: bgStratScanTimer
+        interval: 60000
+        running: root.showBarQuote && (root.watchlist || []).length > 0
+        repeat: true
+        onTriggered: {
+            if (Model.isUsMarketOpen(new Date(), false))
+                root.triggerWatchlistStratScan();
+        }
+    }
+
     IpcHandler {
         target: root.ipcTarget
 
@@ -1421,6 +1721,10 @@ Panel {
         }
         function openBreadth(): void {
             root.openSectorBreadth();
+        }
+        function openAlerts(): void {
+            root.open();
+            root.openAlerts();
         }
         function openLayout(name: string): void {
             root.loadLayout(name);
@@ -1464,7 +1768,7 @@ Panel {
             onCloseRequested: {
                 if (root.view === "detail")
                     root.closeDetail();
-                else if (root.view === "settings")
+                else if (root.view === "settings" || root.view === "alerts" || root.view === "layouts")
                     root.view = "list";
                 else if (root.listChrome === "gear")
                     root.focusSearchChrome();
@@ -1569,6 +1873,12 @@ Panel {
                         width: parent.width
                         controller: root
                         visible: root.view === "layouts"
+                    }
+
+                    FinanceAlertsView {
+                        width: parent.width
+                        controller: root
+                        visible: root.view === "alerts"
                     }
 
                     FinanceDetailView {
@@ -1905,6 +2215,9 @@ Panel {
             cellSymbols: [sym, sym, sym, sym, sym],
             cellTimeframes: initialTfs,
             cellZooms: initialZooms,
+            symbolLevels: root.symbolLevels || ({}),
+            signalStates: root.signalStates || ({}),
+            symbolPriceMemory: root.symbolPriceMemory || ({}),
             rowSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].rowRatio ? currentSplits[currentMode].rowRatio : 0.5,
             topColSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].colTopRatio ? currentSplits[currentMode].colTopRatio : 0.5,
             botColSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].colBotRatio ? currentSplits[currentMode].colBotRatio : 0.5,
@@ -1924,6 +2237,26 @@ Panel {
             id: gridWin
             visible: true
             discordWebhook: root.discordWebhook
+
+            onSymbolLevelsChangedExternally: function (sym, nextLevels) {
+                if (!sym)
+                    return;
+                var nextMap = Object.assign({}, root.symbolLevels || ({}));
+                nextMap[sym] = nextLevels || [];
+                root.symbolLevels = nextMap;
+                root.syncActiveGridsAlertState();
+                root.persist();
+            }
+
+            onSignalStatesUpdated: function (nextStates) {
+                root.signalStates = Object.assign({}, root.signalStates || ({}), nextStates || ({}));
+                root.syncActiveGridsAlertState();
+                root.persist();
+            }
+
+            onAlertEventTriggered: function (logEntry) {
+                root.recordAlertEvent(logEntry);
+            }
 
             onStateSaveRequested: function (mode, sync, symbols, splits) {
                 root.gridMode = mode;
