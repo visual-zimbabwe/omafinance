@@ -589,15 +589,21 @@ test("alert engine integrates RTH session gating, edge-crossing state sync, pric
   assert.match(alertsView, /Alert Book & Study Radar/)
 })
 
+test("grid window supports F fullscreen toggle, Tab/Backtab timeframe cycling in 1x1, chart double-click, and transient 1x1 persistence protection", () => {
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const win = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
 
-
-
-
-
-
-
-
-
-
+  assert.match(win, /event\.key === Qt\.Key_F/)
+  assert.match(win, /root\.toggleMaximize\(root\.resolveTargetCellIndex\(\)\)/)
+  assert.match(win, /event\.key === Qt\.Key_Tab \|\| event\.key === Qt\.Key_Backtab/)
+  assert.match(win, /var persistedMode = \(root\.gridMode === "1x1"\)/)
+  assert.match(chart, /signal chartDoubleClicked/)
+  assert.match(chart, /signal chartPressed/)
+  assert.match(cell, /onChartDoubleClicked:/)
+  assert.match(cell, /onChartPressed:/)
+  assert.match(panel, /previousGridMode:\s*baseMode/)
+})
 
 

@@ -25,6 +25,7 @@ FloatingWindow {
     property string discordWebhook: ""
 
     property int activeCellIndex: 0
+    property bool focusMovedByKeyboard: false
     property var cellSymbols: ["AAPL", "AAPL", "AAPL", "AAPL", "AAPL"]
     property var cellTimeframes: ["60", "1D", "1W", "1M", "1Y"]
     property var cellZooms: [-1, -1, -1, -1, -1]
@@ -514,6 +515,7 @@ FloatingWindow {
     }
 
     function handleCrosshairMoved(sourceIndex, timestamp, price, candle) {
+        root.focusMovedByKeyboard = false;
         if (!root.syncCrosshair && !root.syncTime)
             return;
         if (root.gridMode === "1x1")
@@ -610,12 +612,36 @@ FloatingWindow {
         saveGridState();
     }
 
+    function resolveTargetCellIndex() {
+        if (root.gridMode === "1x1" || root.focusMovedByKeyboard)
+            return root.activeCellIndex;
+        if (cell0.cellHovered)
+            return 0;
+        if (cell1.cellHovered)
+            return 1;
+        if (root.gridMode === "2x2") {
+            if (cell2.cellHovered)
+                return 2;
+            if (cell3.cellHovered)
+                return 3;
+        } else if (root.gridMode === "2+3") {
+            if (cell2_3.cellHovered)
+                return 2;
+            if (cell3_3.cellHovered)
+                return 3;
+            if (cell4.cellHovered)
+                return 4;
+        }
+        return root.activeCellIndex;
+    }
+
     function toggleMaximize(index) {
         if (root.gridMode === "1x1") {
-            root.gridMode = root.previousGridMode;
+            root.gridMode = (root.previousGridMode === "2+3" || root.previousGridMode === "2x2") ? root.previousGridMode : "2+3";
         } else {
             root.previousGridMode = root.gridMode;
-            root.activeCellIndex = index;
+            if (index !== undefined && index >= 0)
+                root.activeCellIndex = index;
             root.gridMode = "1x1";
         }
     }
@@ -640,7 +666,8 @@ FloatingWindow {
             time: root.syncTime,
             broadening: root.showBroadening
         };
-        root.stateSaveRequested(root.gridMode, sync, root.cellSymbols, splits);
+        var persistedMode = (root.gridMode === "1x1") ? ((root.previousGridMode === "2+3" || root.previousGridMode === "2x2") ? root.previousGridMode : "2+3") : root.gridMode;
+        root.stateSaveRequested(persistedMode, sync, root.cellSymbols, splits);
     }
 
     function getActiveCellItem() {
@@ -684,6 +711,10 @@ FloatingWindow {
     }
 
     onActiveCellIndexChanged: {
+        if (root.gridMode === "1x1") {
+            refreshQuotes();
+            refreshAllCharts(false);
+        }
         Qt.callLater(function () {
             var item = root.getActiveCellItem();
             if (item)
@@ -746,12 +777,15 @@ FloatingWindow {
                     return;
                 }
                 if (root.gridMode === "1x1") {
-                    root.gridMode = root.previousGridMode;
+                    root.gridMode = (root.previousGridMode === "2+3" || root.previousGridMode === "2x2") ? root.previousGridMode : "2+3";
                     event.accepted = true;
                 } else {
                     root.visible = false;
                     event.accepted = true;
                 }
+            } else if (event.key === Qt.Key_F && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+                root.toggleMaximize(root.resolveTargetCellIndex());
+                event.accepted = true;
             } else if (event.key === Qt.Key_Left && root.replayCutoffTs > 0) {
                 root.stepReplay(-1);
                 event.accepted = true;
@@ -767,9 +801,12 @@ FloatingWindow {
                     root.stepReplay(-1);
                 }
                 event.accepted = true;
-            } else if (event.key === Qt.Key_Tab) {
-                var maxIdx = root.gridMode === "2+3" ? 4 : (root.gridMode === "2x2" ? 3 : 0);
-                root.activeCellIndex = (root.activeCellIndex + 1) % (maxIdx + 1);
+            } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                var baseMode = (root.gridMode === "1x1") ? ((root.previousGridMode === "2+3" || root.previousGridMode === "2x2") ? root.previousGridMode : "2+3") : root.gridMode;
+                var totalCells = baseMode === "2+3" ? 5 : 4;
+                var step = (event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier)) ? -1 : 1;
+                root.focusMovedByKeyboard = true;
+                root.activeCellIndex = (root.activeCellIndex + step + totalCells) % totalCells;
                 var activeItem = root.getActiveCellItem();
                 if (activeItem)
                     activeItem.forceActiveFocus();
@@ -871,6 +908,11 @@ FloatingWindow {
                                         cursorShape: Qt.PointingHandCursor
                                         hoverEnabled: true
                                         onClicked: {
+                                            if (modelData === "1x1" && root.gridMode !== "1x1") {
+                                                root.previousGridMode = root.gridMode;
+                                            } else if (modelData !== "1x1") {
+                                                root.previousGridMode = modelData;
+                                            }
                                             root.gridMode = modelData;
                                             if (!root.syncTimeframe) {
                                                 var defaults = Model.gridTimeframes(modelData);
@@ -1232,6 +1274,7 @@ FloatingWindow {
                         showBroadening: root.showBroadening
 
                         onFocusRequested: function (idx) {
+                            root.focusMovedByKeyboard = false;
                             root.activeCellIndex = idx;
                         }
                         onMaximizeRequested: function (idx) {
@@ -1296,6 +1339,7 @@ FloatingWindow {
                             showBroadening: root.showBroadening
 
                             onFocusRequested: function (idx) {
+                                root.focusMovedByKeyboard = false;
                                 root.activeCellIndex = idx;
                             }
                             onMaximizeRequested: function (idx) {
@@ -1361,6 +1405,7 @@ FloatingWindow {
                             showBroadening: root.showBroadening
 
                             onFocusRequested: function (idx) {
+                                root.focusMovedByKeyboard = false;
                                 root.activeCellIndex = idx;
                             }
                             onMaximizeRequested: function (idx) {
@@ -1444,6 +1489,7 @@ FloatingWindow {
                                 showBroadening: root.showBroadening
 
                                 onFocusRequested: function (idx) {
+                                    root.focusMovedByKeyboard = false;
                                     root.activeCellIndex = idx;
                                 }
                                 onMaximizeRequested: function (idx) {
@@ -1509,6 +1555,7 @@ FloatingWindow {
                                 showBroadening: root.showBroadening
 
                                 onFocusRequested: function (idx) {
+                                    root.focusMovedByKeyboard = false;
                                     root.activeCellIndex = idx;
                                 }
                                 onMaximizeRequested: function (idx) {
@@ -1572,6 +1619,7 @@ FloatingWindow {
                                 showBroadening: root.showBroadening
 
                                 onFocusRequested: function (idx) {
+                                    root.focusMovedByKeyboard = false;
                                     root.activeCellIndex = idx;
                                 }
                                 onMaximizeRequested: function (idx) {
@@ -1637,6 +1685,7 @@ FloatingWindow {
                                 showBroadening: root.showBroadening
 
                                 onFocusRequested: function (idx) {
+                                    root.focusMovedByKeyboard = false;
                                     root.activeCellIndex = idx;
                                 }
                                 onMaximizeRequested: function (idx) {
@@ -1702,6 +1751,7 @@ FloatingWindow {
                                 showBroadening: root.showBroadening
 
                                 onFocusRequested: function (idx) {
+                                    root.focusMovedByKeyboard = false;
                                     root.activeCellIndex = idx;
                                 }
                                 onMaximizeRequested: function (idx) {

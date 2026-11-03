@@ -258,6 +258,8 @@ Item {
         dismissIntervalInput();
     }
 
+    readonly property bool cellHovered: cellHoverHandler.hovered
+
     HoverHandler {
         id: cellHoverHandler
         onHoveredChanged: {
@@ -315,19 +317,6 @@ Item {
         }
     }
 
-    MouseArea {
-        anchors.fill: parent
-        acceptedButtons: Qt.LeftButton
-        onPressed: function (mouse) {
-            root.forceActiveFocus();
-            root.focusRequested(root.cellIndex);
-            mouse.accepted = false;
-        }
-        onDoubleClicked: {
-            root.maximizeRequested(root.cellIndex);
-        }
-    }
-
     Column {
         anchors.fill: parent
         spacing: 0
@@ -336,6 +325,18 @@ Item {
         Item {
             width: parent.width
             height: Style.space(32)
+
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.LeftButton
+                onPressed: {
+                    root.forceActiveFocus();
+                    root.focusRequested(root.cellIndex);
+                }
+                onDoubleClicked: {
+                    root.maximizeRequested(root.cellIndex);
+                }
+            }
 
             Row {
                 anchors.left: parent.left
@@ -648,6 +649,13 @@ Item {
                 }
                 onZoomChangedManually: function (vc) {
                     root.zoomChangedManually(root.cellIndex, vc);
+                }
+                onChartPressed: {
+                    root.forceActiveFocus();
+                    root.focusRequested(root.cellIndex);
+                }
+                onChartDoubleClicked: {
+                    root.maximizeRequested(root.cellIndex);
                 }
             }
 

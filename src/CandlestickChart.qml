@@ -36,6 +36,8 @@ Item {
     signal priceLevelsModified(var nextLevels)
     signal replayRequested(real timestamp)
     signal zoomChangedManually(int nextViewCount)
+    signal chartPressed
+    signal chartDoubleClicked
 
     property int configuredZoom: -1
     property int viewStart: 0
@@ -1148,6 +1150,7 @@ Item {
         }
 
         onPressed: function (mouse) {
+            root.chartPressed();
             var g = root.cachedGeometry;
             if (mouse.button === Qt.RightButton) {
                 var rightHit = root.hitTestLevel(mouse.x, mouse.y);
@@ -1346,6 +1349,19 @@ Item {
             root.levelDragMoved = false;
             root.dragging = false;
             root.isShiftDrag = false;
+        }
+
+        onDoubleClicked: function (mouse) {
+            if (mouse.button !== Qt.LeftButton)
+                return;
+            if (mouse.modifiers & Qt.AltModifier)
+                return;
+            var hit = root.hitTestLevel(mouse.x, mouse.y);
+            if (hit || root.editingLevel)
+                return;
+            root.dragging = false;
+            root.isShiftDrag = false;
+            root.chartDoubleClicked();
         }
 
         onWheel: function (wheel) {
