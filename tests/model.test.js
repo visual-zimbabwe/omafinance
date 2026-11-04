@@ -2740,6 +2740,280 @@ test("evaluatePriceLevelAlerts triggers only on live crossover during open sessi
   assert.equal(parsedState.alertLog.length, 1)
 })
 
+test("Update 1: evaluateStratChecklist allows 1D + 60m active in-force override over opposing 1M/1W", () => {
+  const t1 = Math.floor(new Date("2026-09-01T14:30:00Z").getTime() / 1000)
+  const t2 = Math.floor(new Date("2026-09-07T14:30:00Z").getTime() / 1000)
+  const t3 = Math.floor(new Date("2026-09-08T14:30:00Z").getTime() / 1000)
+  // Month Open = 210, Week Open = 200 (both Red at 192), but Day (t3) broke prior day high 190 -> 2u Green at 192
+  const daily = [
+    { timestamp: t1, open: 210, high: 212, low: 195, close: 198 },
+    { timestamp: t2, open: 200, high: 190, low: 180, close: 182 }, // Prior day high = 190
+    { timestamp: t3, open: 185, high: 193, low: 184, close: 192 }  // 1D 2u Green (broke 190, target 1M High 212)
+  ]
+  const hourly = [
+    { timestamp: t3 - 7200, open: 185, high: 190.5, low: 184, close: 190 },
+    { timestamp: t3 - 3600, open: 190, high: 191, low: 189, close: 190.5 }, // 60m signal high 191 (above 190)
+    { timestamp: t3, open: 190.5, high: 193, low: 190, close: 192 }         // 60m 2u Green in-force toward 1W High 212
+  ]
+  const res = Model.evaluateStratChecklist("NVDA", hourly, daily, { regularMarketPrice: 192 })
+  assert.equal(res.direction, "LONG")
+  assert.equal(res.ftfcSummary.isFTFC, false)
+  assert.equal(res.ftfcSummary.isOverride, true)
+  const r1 = res.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, true)
+  assert.match(r1.detail, /1D\+60m Override/)
+  assert.equal(res.isTradeable, true)
+})
+
+test("Update 2: detectMotherbarProblem and Rule 6 block Compound 1 Motherbar traps until broken", () => {
+  const daily = [
+    { timestamp: 100, open: 195, high: 205, low: 190, close: 202 },
+    { timestamp: 200, open: 202, high: 220, low: 198, close: 210 }, // 1D High = 220
+    { timestamp: 300, open: 200, high: 209, low: 199, close: 207.8 }
+  ]
+  // Motherbar M: 200 - 210 (first 60m bar)
+  // Bar 1 inside M: 202 - 208 (1)
+  // Bar 2 inside M: 201 - 207 (2d relative to Bar 1, but still inside M 200-210!)
+  // Current Bar 3: triggers 2d-2u above 207 at 207.8, still trapped inside M (200-210)
+  const hourlyTrapped = [
+    { timestamp: 1000, open: 201, high: 210, low: 200, close: 208 },
+    { timestamp: 2000, open: 207, high: 208, low: 202, close: 205 },
+    { timestamp: 3000, open: 205, high: 207, low: 201, close: 203 },
+    { timestamp: 4000, open: 203, high: 208, low: 202.5, close: 207.8 }
+  ]
+  const mb = Model.detectMotherbarProblem(hourlyTrapped, true, 207, 207.8)
+  assert.equal(mb.isMotherbarProblem, true)
+  assert.equal(mb.motherHigh, 210)
+  assert.equal(mb.motherLow, 200)
+  assert.equal(mb.containedBars, 2)
+
+  const resTrapped = Model.evaluateStratChecklist("NVDA", hourlyTrapped, daily, { regularMarketPrice: 207.8 })
+  const r6 = resTrapped.rules.find(r => r.id === 6)
+  assert.equal(r6.passed, false)
+  assert.match(r6.detail, /Compound 1 Motherbar trap/)
+  assert.equal(resTrapped.isTradeable, false)
+
+  // Once price breaks above Motherbar high 210 -> Motherbar trap clears!
+  const mbCleared = Model.detectMotherbarProblem(hourlyTrapped, true, 207, 210.5)
+  assert.equal(mbCleared.isMotherbarProblem, false)
+})
+
+test("Update 3: computeBasketAttackMetrics excludes failed red 2u bars and computeFocusBasketSupport enforces 80% simultaneous break", () => {
+  const holdings = [
+    { symbol: "AAA", name: "Alpha", pctVal: 50 },
+    { symbol: "BBB", name: "Beta", pctVal: 50 }
+  ]
+  const candlesMap = {
+    // AAA: genuine Green 2u
+    "AAA": [
+      { open: 100, high: 105, low: 98, close: 104 },
+      { open: 104, high: 108, low: 103, close: 107 }
+    ],
+    // BBB: Failed Red 2u (broke 105 high to 106, but closed at 101 below open 104)
+    "BBB": [
+      { open: 100, high: 105, low: 98, close: 104 },
+      { open: 104, high: 106, low: 100, close: 101 }
+    ]
+  }
+  const metrics = Model.computeBasketAttackMetrics("SMH", "Semis", "Sector", holdings, candlesMap, null, "60")
+  assert.equal(metrics.count2u, 1) // Only AAA counted; failed red 2u BBB excluded
+  assert.equal(metrics.pct2u, 50)
+  assert.equal(metrics.isSimultaneousBreak, false)
+
+  // 70% support without Attack status -> HALF (0.5x), whereas 82% (>=80% Sim Break) -> FULL (1.0x)
+  const nvdaCandles = [
+    { open: 200, high: 205, low: 199, close: 204 },
+    { open: 204, high: 208, low: 203, close: 207 }
+  ]
+  const scan70 = {
+    focusPairs: {
+      "NVDA": {
+        symbol: "NVDA", basket: "SMH", peer: "TSM",
+        timeframes: {
+          "60": {
+            basket: "SMH", timeframe: "60", status: "DEVELOPING BUY",
+            pct2u: 70, pct2d: 15, pctAttack2u: 10, pctAttack2d: 0,
+            peer: { symbol: "TSM", scenario: "2u", color: "G", price: 190, inForce: "In-Force" }
+          }
+        }
+      }
+    }
+  }
+  const sup70 = Model.computeFocusBasketSupport("NVDA", "60", nvdaCandles, null, null, null, scan70)
+  assert.equal(sup70.isSimultaneousBreak, false)
+  assert.equal(sup70.sizingTier, "half")
+  assert.equal(sup70.positionSizing, "HALF (0.5x)")
+
+  scan70.focusPairs.NVDA.timeframes["60"].pct2u = 82
+  const sup82 = Model.computeFocusBasketSupport("NVDA", "60", nvdaCandles, null, null, null, scan70)
+  assert.equal(sup82.isSimultaneousBreak, true)
+  assert.equal(sup82.sizingTier, "full")
+  assert.equal(sup82.positionSizing, "FULL (1.0x)")
+})
+
+test("Update 4: evaluateStratChecklist exposes 3-tier stopLevels and caps Scenario 3 signal bar stops to entry extreme", () => {
+  const daily = [
+    { timestamp: 100, open: 100, high: 110, low: 95, close: 108 },
+    { timestamp: 200, open: 108, high: 130, low: 105, close: 118 }, // 1D High = 130
+    { timestamp: 300, open: 112, high: 120, low: 110, close: 119 }
+  ]
+  // Hourly: p2 is 112-115, p1 (signalCandle) is Scenario 3 Outside Bar (high 117, low 105 - very wide!),
+  // c0 (entry bar) opens at 116, low 115.5, high 119, close 118.5
+  const hourly32 = [
+    { timestamp: 1000, open: 113, high: 115, low: 112, close: 114 },
+    { timestamp: 2000, open: 114, high: 117, low: 105, close: 116 }, // Scenario 3 Outside Bar (low=105, 50%=111)
+    { timestamp: 3000, open: 116, high: 119, low: 115.5, close: 118.5 } // Entry bar (low=115.5)
+  ]
+  const res = Model.evaluateStratChecklist("SMH", hourly32, daily, { regularMarketPrice: 118.5 })
+  assert.ok(res.stopLevels)
+  assert.equal(res.stopLevels.tight, 116)
+  assert.equal(res.stopLevels.fiftyPct, 111)
+  assert.equal(res.stopLevels.entryExtreme, 115.5)
+  assert.equal(res.stopLevels.structural, 105)
+  // Capped to entry bar low (115.5) instead of wide 3-bar low (105)
+  assert.equal(res.stopPrice, 115.5)
+  const r8 = res.rules.find(r => r.id === 8)
+  assert.match(r8.detail, /3-Bar Capped/)
+  assert.match(r8.detail, /Tight \(Open\): \$116\.00/)
+  assert.match(r8.detail, /50%: \$111\.00/)
+})
+
+test("Update 5 & 6: detectCandleShape, expanded binary signals (3-1-2, 3-2-2, 1-3-2, 1-3), 30m setup evaluation, and takeActionWindow", () => {
+  // 1. Hammer & Shooter detection
+  const hammer = Model.detectCandleShape({ open: 108, high: 109, low: 100, close: 108.5 })
+  assert.equal(hammer.isHammer, true)
+  assert.equal(hammer.shape, "Hammer")
+  const shooter = Model.detectCandleShape({ open: 101.5, high: 110, low: 100, close: 101 })
+  assert.equal(shooter.isShooter, true)
+  assert.equal(shooter.shape, "Shooter")
+
+  // 2. 3-1-2u Chicago, 3-2d-2u, 1-3-2u, and 1-3 RevStrat in computeStratBinaryDetails
+  const c312 = Model.computeStratBinaryDetails([
+    { open: 102, high: 105, low: 100, close: 103 },
+    { open: 104, high: 108, low: 98, close: 101 },  // p2: 3
+    { open: 101, high: 104, low: 100, close: 103 }, // p1: 1
+    { open: 103, high: 106, low: 102, close: 105.5 } // cur: 2u
+  ])
+  assert.equal(c312.signalType, "3-1-2u Bullish Reversal")
+  assert.equal(c312.targetPrice, 108)
+
+  const c322 = Model.computeStratBinaryDetails([
+    { open: 102, high: 105, low: 100, close: 103 },
+    { open: 104, high: 108, low: 99, close: 101 },  // p2: 3
+    { open: 101, high: 104, low: 97, close: 98 },   // p1: 2d
+    { open: 98.5, high: 105, low: 98, close: 104.5 } // cur: 2u
+  ])
+  assert.equal(c322.signalType, "3-2d-2u Bullish Reversal")
+  assert.equal(c322.targetPrice, 108)
+
+  const c132 = Model.computeStratBinaryDetails([
+    { open: 100, high: 110, low: 95, close: 105 },
+    { open: 103, high: 106, low: 99, close: 104 },  // p2: 1
+    { open: 104, high: 108, low: 97, close: 100 },  // p1: 3
+    { open: 101, high: 109, low: 100.5, close: 108.5 } // cur: 2u
+  ])
+  assert.equal(c132.signalType, "1-3-2u Bullish RevStrat")
+  assert.equal(c132.targetPrice, 110)
+
+  const c13 = Model.computeStratBinaryDetails([
+    { open: 100, high: 110, low: 95, close: 105 },  // p2: Mother
+    { open: 103, high: 106, low: 99, close: 102 },  // p1: 1
+    { open: 100, high: 107, low: 98, close: 106.5 } // cur: 3 Green (swept 99 low, then broke 106 high)
+  ])
+  assert.equal(c13.signalType, "1-3 Bullish RevStrat")
+  assert.equal(c13.t1Price, 106)
+  assert.equal(c13.targetPrice, 110)
+
+  // 3. 30m setup evaluation in evaluateStratChecklist with 30m -> 60m Domino target and takeActionWindow
+  const daily = [
+    { timestamp: 100, open: 500, high: 510, low: 495, close: 508 },
+    { timestamp: 200, open: 508, high: 525, low: 505, close: 518 },
+    { timestamp: 300, open: 510, high: 519, low: 509, close: 517 }
+  ]
+  const hourly = [
+    { timestamp: 1000, open: 512, high: 522, low: 510, close: 515 },
+    { timestamp: 2000, open: 515, high: 520, low: 513, close: 516 }, // p60 high = 520 (Inside 1)
+    { timestamp: 3000, open: 516, high: 518.5, low: 515, close: 518 } // c60 Green
+  ]
+  const candles30m = [
+    { timestamp: 2000, open: 516, high: 519.5, low: 514, close: 515 }, // p2_30: 2d
+    { timestamp: 2500, open: 515, high: 517, low: 514.5, close: 516 }, // p1_30: 1 (trigger = 517)
+    { timestamp: 3000, open: 516, high: 518.5, low: 515.5, close: 518 } // c30: 2u Green in-force
+  ]
+  const res30 = Model.evaluateStratChecklist(
+    "SMH",
+    hourly,
+    daily,
+    { regularMarketPrice: 518 },
+    new Date(3100 * 1000),
+    { activeTimeframe: "30", activeCandles: candles30m }
+  )
+  assert.equal(res30.setupTimeframe, "30")
+  assert.equal(res30.signalName, "30m 2-1-2 Up")
+  assert.equal(res30.tradeStyle, "RETRACEMENT")
+  assert.ok(res30.takeActionWindow)
+  assert.equal(res30.takeActionWindow.triggerPrice, 517)
+  assert.equal(res30.takeActionWindow.patternTargetPrice, 519.5)
+  assert.equal(res30.takeActionWindow.isOpen, true)
+  // Targets include 30m Motherbar High (519.5) and 60m High (520)
+  assert.equal(res30.targets[0].price, 519.5)
+  assert.equal(res30.targets[1].name, "60m High")
+  assert.equal(res30.targets[1].price, 520)
+})
+
+test("Update 7: evaluateStratChecklist Rule 9 blocks opposing sector attack and SPY/QQQ 60m Motherbar context", () => {
+  const daily = [
+    { timestamp: 100, open: 200, high: 205, low: 195, close: 203 },
+    { timestamp: 200, open: 203, high: 215, low: 200, close: 210 },
+    { timestamp: 300, open: 205, high: 209, low: 204, close: 208.5 }
+  ]
+  const hourly = [
+    { timestamp: 1000, open: 205, high: 207, low: 204, close: 206 },
+    { timestamp: 2000, open: 206, high: 208, low: 205, close: 207 },
+    { timestamp: 3000, open: 207, high: 209, low: 206.5, close: 208.5 }
+  ]
+  const opposingScan = {
+    focusPairs: {
+      "NVDA": {
+        symbol: "NVDA", basket: "SMH", peer: "TSM",
+        timeframes: {
+          "60": {
+            basket: "SMH", timeframe: "60", status: "BEARISH ATTACK",
+            pct2u: 10, pct2d: 80, pctAttack2u: 0, pctAttack2d: 35,
+            peer: { symbol: "TSM", scenario: "2d", color: "R", price: 180, inForce: "In-Force" }
+          }
+        }
+      }
+    }
+  }
+  const blockedSector = Model.evaluateStratChecklist(
+    "NVDA",
+    hourly,
+    daily,
+    { regularMarketPrice: 208.5 },
+    null,
+    { attackScanResult: opposingScan }
+  )
+  const r9Sector = blockedSector.rules.find(r => r.id === 9)
+  assert.equal(r9Sector.passed, false)
+  assert.match(r9Sector.detail, /Blocked by opposing sector context/)
+  assert.equal(blockedSector.isTradeable, false)
+
+  const blockedMarket = Model.evaluateStratChecklist(
+    "NVDA",
+    hourly,
+    daily,
+    { regularMarketPrice: 208.5 },
+    null,
+    { marketContext: { indexMotherbar: true } }
+  )
+  const r9Market = blockedMarket.rules.find(r => r.id === 9)
+  assert.equal(r9Market.passed, false)
+  assert.match(r9Market.detail, /SPY\/QQQ stuck in 60m Motherbar problem/)
+  assert.equal(blockedMarket.isTradeable, false)
+})
+
+
 
 
 
