@@ -21,7 +21,7 @@ Item {
     onQuoteChanged: root.liveClockMs = Date.now()
     onHourlyCandlesChanged: root.liveClockMs = Date.now()
     onDailyCandlesChanged: root.liveClockMs = Date.now()
-    readonly property var stratChecklist: Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote, root.replayCutoffTs > 0 ? new Date((root.replayCutoffTs - 1) * 1000) : new Date(root.liveClockMs))
+    readonly property var stratChecklist: Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote, root.replayCutoffTs > 0 ? new Date((root.replayCutoffTs - 1) * 1000) : new Date(root.liveClockMs), { activeTimeframe: root.timeframe, activeCandles: root.candles, attackScanResult: root.attackScanResult })
     property var attackScanResult: null
     readonly property var focusSupport: Model.computeFocusBasketSupport(root.symbol, root.timeframe, root.candles, root.quote, root.dailyCandles, null, root.attackScanResult, root.replayCutoffTs)
     property bool syncSymbolActive: true

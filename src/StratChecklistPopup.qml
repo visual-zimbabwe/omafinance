@@ -147,7 +147,8 @@ Item {
                     if (!root.checklistData || !root.checklistData.entryState)
                         return "";
                     var bCode = (root.checklistData.bar60 && root.checklistData.bar60.code !== "-") ? (" [" + root.checklistData.bar60.code + "]") : "";
-                    return "60m STATE: " + root.checklistData.entryState.name.toUpperCase() + bCode;
+                    var tfPrefix = (root.checklistData.setupTimeframe === "30") ? "30m" : "60m";
+                    return tfPrefix + " STATE: " + root.checklistData.entryState.name.toUpperCase() + bCode;
                 }
                 color: (root.checklistData && root.checklistData.entryState && root.checklistData.entryState.passes) ? root.upColor : root.dim
                 font.family: root.fontFamily

@@ -2067,6 +2067,36 @@ function stratHtfQuality(bar1M, bar1W, bar1D, isLong) {
   }
 }
 
+function detectCandleShape(candle) {
+  var empty = { isHammer: false, isShooter: false, shape: null, bodyRatio: 0, upperWickRatio: 0, lowerWickRatio: 0 }
+  if (!candle) return empty
+  var o = Number(candle.open)
+  var h = Number(candle.high)
+  var l = Number(candle.low)
+  var c = Number(candle.close)
+  if (!isFinite(o) || !isFinite(h) || !isFinite(l) || !isFinite(c)) return empty
+  var range = h - l
+  if (range <= 0) return empty
+  var bodyTop = Math.max(o, c)
+  var bodyBot = Math.min(o, c)
+  var body = bodyTop - bodyBot
+  var upperWick = h - bodyTop
+  var lowerWick = bodyBot - l
+  var bodyRatio = body / range
+  var upperRatio = upperWick / range
+  var lowerRatio = lowerWick / range
+  var isHammer = (lowerRatio >= 0.55 && upperRatio <= 0.25 && bodyRatio <= 0.40)
+  var isShooter = (upperRatio >= 0.55 && lowerRatio <= 0.25 && bodyRatio <= 0.40)
+  return {
+    isHammer: isHammer,
+    isShooter: isShooter,
+    shape: isHammer ? "Hammer" : (isShooter ? "Shooter" : null),
+    bodyRatio: bodyRatio,
+    upperWickRatio: upperRatio,
+    lowerWickRatio: lowerRatio
+  }
+}
+
 function computeStratBinaryDetails(candles, liveQuote) {
   if (!candles || candles.length < 2) {
     return {
@@ -2159,6 +2189,62 @@ function computeStratBinaryDetails(candles, liveQuote) {
     }
   }
 
+  if (sBit === "0") {
+    if (sc_p2 === "3" && sc_p1 === "2d" && sc_cur === "2u") {
+      sBit = "1"
+      signalType = "3-2d-2u Bullish Reversal"
+      isBullish = true
+      targetPrice = p2 ? Number(p2.high) : null
+    } else if (sc_p2 === "3" && sc_p1 === "2u" && sc_cur === "2d") {
+      sBit = "1"
+      signalType = "3-2u-2d Bearish Reversal"
+      isBullish = false
+      targetPrice = p2 ? Number(p2.low) : null
+    } else if (sc_p2 === "1" && sc_p1 === "3" && sc_cur === "2u") {
+      sBit = "1"
+      signalType = "1-3-2u Bullish RevStrat"
+      isBullish = true
+      targetPrice = p3 ? Number(p3.high) : (p1 ? Number(p1.high) : null)
+    } else if (sc_p2 === "1" && sc_p1 === "3" && sc_cur === "2d") {
+      sBit = "1"
+      signalType = "1-3-2d Bearish RevStrat"
+      isBullish = false
+      targetPrice = p3 ? Number(p3.low) : (p1 ? Number(p1.low) : null)
+    } else if (sc_p1 === "1") {
+      if (sc_p2 === "3" && sc_cur === "2u") {
+        sBit = "1"
+        signalType = "3-1-2u Bullish Reversal"
+        isBullish = true
+        targetPrice = p2 ? Number(p2.high) : null
+      } else if (sc_p2 === "3" && sc_cur === "2d") {
+        sBit = "1"
+        signalType = "3-1-2d Bearish Reversal"
+        isBullish = false
+        targetPrice = p2 ? Number(p2.low) : null
+      } else if (sc_cur === "3") {
+        sBit = "1"
+        isBullish = (cBit === "1")
+        signalType = isBullish ? "1-3 Bullish RevStrat" : "1-3 Bearish RevStrat"
+        t1Price = p1 ? (isBullish ? Number(p1.high) : Number(p1.low)) : null
+        targetPrice = p2 ? (isBullish ? Number(p2.high) : Number(p2.low)) : t1Price
+      }
+    }
+  }
+
+  if (sc_p2 === "3" && sc_p1 === "2d" && sc_cur === "2u") {
+    sBit = "1"
+    signalType = "3-2d-2u Bullish Reversal"
+    isBullish = true
+    targetPrice = p2 ? Number(p2.high) : null
+  } else if (sc_p2 === "3" && sc_p1 === "2u" && sc_cur === "2d") {
+    sBit = "1"
+    signalType = "3-2u-2d Bearish Reversal"
+    isBullish = false
+    targetPrice = p2 ? Number(p2.low) : null
+  }
+
+  var p1Shape = detectCandleShape(p1)
+
   // 4. Triggered, 5. In-Force, 6. Magnitude
   var tBit = "0"
   var iBit = "0"
@@ -2230,6 +2316,7 @@ function computeStratBinaryDetails(candles, liveQuote) {
     tooltip: tooltip,
     isBullish: isBullish,
     signalType: signalType,
+    signalShape: p1Shape.shape,
     statusDesc: statusDesc,
     t1Price: (t1Price !== null && isFinite(t1Price)) ? t1Price : null,
     targetPrice: (targetPrice !== null && isFinite(targetPrice)) ? targetPrice : null
@@ -3346,12 +3433,20 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     total++
     var quote = liveQuotesMap ? liveQuotesMap[sym] : null
     var attack = detectStratAttack(candles, quote)
-    var cLast = candles[candles.length - 1]
+    var cLast = Object.assign({}, candles[candles.length - 1])
+    var livePx = stratLivePrice(quote)
+    if (livePx !== null && isFinite(livePx)) {
+      cLast.close = livePx
+      if (cLast.high === null || livePx > cLast.high) cLast.high = livePx
+      if (cLast.low === null || livePx < cLast.low) cLast.low = livePx
+    }
     var cPrev = candles[candles.length - 2]
     var s0 = stratScenario(cLast, cPrev)
+    var isGreen = Number(cLast.close) >= Number(cLast.open)
+    var isRed = Number(cLast.close) <= Number(cLast.open)
 
-    if (s0 === "2u") count2u++
-    if (s0 === "2d") count2d++
+    if (s0 === "2u" && isGreen) count2u++
+    if (s0 === "2d" && isRed) count2d++
 
     if (attack.direction === "bullish") {
       countAttack2u++
@@ -3396,6 +3491,7 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     pctAttack2u: pctAttack2u,
     pctAttack2d: pctAttack2d,
     netAttackDelta: netAttackDelta,
+    isSimultaneousBreak: (pct2u >= 80 || pct2d >= 80),
     status: status
   }
 }
@@ -3690,7 +3786,7 @@ function computeFocusBasketSupport(symbol, timeframe, candles, quote, dailyCandl
   var sizingColor = "amber"
   var sizingReason = ""
 
-  if ((attackToken === "ATK" || supportPct >= 65) && peerAligned) {
+  if ((attackToken === "ATK" || supportPct >= 80) && peerAligned) {
     sizingTier = "full"
     positionSizing = "FULL (1.0x)"
     sizingColor = "green"
@@ -3750,6 +3846,7 @@ function computeFocusBasketSupport(symbol, timeframe, candles, quote, dailyCandl
     supportToken: supportToken,
     supportColor: supportColor,
     supportPct: supportPct,
+    isSimultaneousBreak: supportPct >= 80,
     sizingTier: sizingTier,
     positionSizing: positionSizing,
     sizingColor: sizingColor,
@@ -4144,7 +4241,139 @@ function resolveUntaggedHtfTargets(isLong, setupTf, daily, weekly, monthly, entr
   return merged.slice(0, 4)
 }
 
-function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, nowDate) {
+function detectMotherbarProblem(candles, isLong, triggerPrice, livePrice) {
+  var empty = {
+    isMotherbarProblem: false,
+    motherHigh: null,
+    motherLow: null,
+    motherTimestamp: null,
+    containedBars: 0,
+    nearEdge: false,
+    detail: ""
+  }
+  if (!Array.isArray(candles) || candles.length < 4) return empty
+  var n = candles.length
+  var cur = candles[n - 1]
+  var curHigh = Number(cur.high)
+  var curLow = Number(cur.low)
+  var lp = finiteOrNull(livePrice)
+  if (lp !== null) {
+    if (!isFinite(curHigh) || lp > curHigh) curHigh = lp
+    if (!isFinite(curLow) || lp < curLow) curLow = lp
+  }
+
+  var startIdx = Math.max(0, n - 10)
+  for (var mIdx = startIdx; mIdx <= n - 4; mIdx++) {
+    var mBar = candles[mIdx]
+    if (!mBar) continue
+    var mHigh = Number(mBar.high)
+    var mLow = Number(mBar.low)
+    if (!isFinite(mHigh) || !isFinite(mLow) || mHigh <= mLow) continue
+
+    var allContained = true
+    for (var k = mIdx + 1; k <= n - 2; k++) {
+      var cb = candles[k]
+      if (!cb || Number(cb.high) > mHigh || Number(cb.low) < mLow) {
+        allContained = false
+        break
+      }
+    }
+    if (!allContained) continue
+
+    var containedCount = (n - 2) - mIdx
+    var brokeOut = isLong ? (curHigh > mHigh) : (curLow < mLow)
+    if (!brokeOut) {
+      var mRange = mHigh - mLow
+      var trig = finiteOrNull(triggerPrice)
+      var nearEdge = false
+      if (trig !== null && mRange > 0) {
+        var distToEdge = isLong ? (mHigh - trig) : (trig - mLow)
+        nearEdge = (distToEdge >= 0 && (distToEdge / mRange) <= 0.15)
+      }
+      return {
+        isMotherbarProblem: true,
+        motherHigh: mHigh,
+        motherLow: mLow,
+        motherTimestamp: mBar.timestamp != null ? mBar.timestamp : null,
+        containedBars: containedCount,
+        nearEdge: nearEdge,
+        detail: "Compound 1 Motherbar trap [" + mLow.toFixed(2) + " - " + mHigh.toFixed(2) + "] (" + containedCount + " closed bars trapped inside motherbar)"
+      }
+    }
+  }
+  return empty
+}
+
+function classifyMomentumOrRetracement(candles, isLong, isFailed2) {
+  if (isFailed2) {
+    return { style: "RETRACEMENT", label: "Retracement (Failed 2 Reversal)" }
+  }
+  if (!Array.isArray(candles) || candles.length < 3) {
+    return { style: "MOMENTUM", label: "Momentum" }
+  }
+  var n = candles.length
+  var p1 = candles[n - 2]
+  var p2 = candles[n - 3]
+  var p3 = n >= 4 ? candles[n - 4] : null
+  var sc_p1 = stratScenario(p1, p2)
+  var sc_p2 = (p2 && p3) ? stratScenario(p2, p3) : "-"
+
+  if ((isLong && sc_p1 === "2d") || (!isLong && sc_p1 === "2u")) {
+    return { style: "RETRACEMENT", label: "Retracement (Pullback Reversal)" }
+  }
+  var p2OpposingColor = p2 ? (isLong ? Number(p2.close) < Number(p2.open) : Number(p2.close) > Number(p2.open)) : false
+  if (sc_p1 === "1" && ((isLong && (sc_p2 === "2d" || sc_p2 === "3")) || (!isLong && (sc_p2 === "2u" || sc_p2 === "3")) || (sc_p2 === "-" && p2OpposingColor))) {
+    return { style: "RETRACEMENT", label: "Retracement (Inside Reversal)" }
+  }
+  return { style: "MOMENTUM", label: "Momentum (Continuation)" }
+}
+
+function resolvePatternMagnitude(setupTf, candles, isLong, entryBaseline) {
+  if (!Array.isArray(candles) || candles.length < 3) return null
+  var n = candles.length
+  var p1 = candles[n - 2]
+  var p2 = candles[n - 3]
+  var p3 = n >= 4 ? candles[n - 4] : null
+  var sc_p1 = stratScenario(p1, p2)
+  var sc_p2 = (p2 && p3) ? stratScenario(p2, p3) : "-"
+  var tfLabel = (setupTf === "30" || setupTf === "60") ? (setupTf + "m") : String(setupTf || "60m")
+  var dirWord = isLong ? "High" : "Low"
+  var reclaimPrice = p1 ? (isLong ? Number(p1.high) : Number(p1.low)) : null
+  var base = finiteOrNull(entryBaseline)
+  if (base === null && isFinite(reclaimPrice)) base = reclaimPrice
+
+  var candidates = []
+  if (sc_p2 === "1" && ((isLong && sc_p1 === "2d") || (!isLong && sc_p1 === "2u"))) {
+    if (p2) candidates.push({ price: isLong ? Number(p2.high) : Number(p2.low), name: tfLabel + " Inside " + dirWord + " (Pattern T1)" })
+    if (p3) candidates.push({ price: isLong ? Number(p3.high) : Number(p3.low), name: tfLabel + " Motherbar " + dirWord + " (Pattern T2)" })
+  } else if (sc_p1 === "1") {
+    if (p2) candidates.push({ price: isLong ? Number(p2.high) : Number(p2.low), name: tfLabel + " Motherbar " + dirWord + " (Pattern T1)" })
+    if (p3) candidates.push({ price: isLong ? Number(p3.high) : Number(p3.low), name: tfLabel + " Prior " + dirWord + " (Pattern T2)" })
+  } else {
+    if (p2) candidates.push({ price: isLong ? Number(p2.high) : Number(p2.low), name: tfLabel + " Pattern " + dirWord + " (T1)" })
+    if (p3) candidates.push({ price: isLong ? Number(p3.high) : Number(p3.low), name: tfLabel + " Pattern " + dirWord + " (T2)" })
+  }
+
+  for (var i = 0; i < candidates.length; i++) {
+    var c = candidates[i]
+    if (isFinite(c.price) && (base === null || (isLong ? c.price > base : c.price < base))) {
+      return {
+        targetPrice: c.price,
+        targetName: c.name,
+        reclaimPrice: isFinite(reclaimPrice) ? reclaimPrice : null,
+        timeframe: setupTf
+      }
+    }
+  }
+  return {
+    targetPrice: null,
+    targetName: null,
+    reclaimPrice: isFinite(reclaimPrice) ? reclaimPrice : null,
+    timeframe: setupTf
+  }
+}
+
+function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, nowDate, options) {
   var sym = normalizeSymbol(symbol)
   var hourly = Array.isArray(hourlyCandles) ? hourlyCandles : []
   var daily = Array.isArray(dailyCandles) ? dailyCandles : []
@@ -4224,14 +4453,21 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var isBullishFTFC = (col60 === "G" && col1D === "G" && col1W === "G" && col1M === "G")
   var isBearishFTFC = (col60 === "R" && col1D === "R" && col1W === "R" && col1M === "R")
 
-  // Macro HTF Consensus: Month and Week take precedence over Day
+  // Macro HTF Consensus vs 1D + 60m Override (per thestrat.ai/docs/override)
   var isMacroBullish = (col1M === "G" && col1W === "G")
   var isMacroBearish = (col1M === "R" && col1W === "R")
+  var is1D60mActiveBull = (col1D === "G" && col60 === "G" && (bar1D.scenario === "2u" || bar1D.scenario === "3") && (bar60.scenario === "2u" || bar60.scenario === "3"))
+  var is1D60mActiveBear = (col1D === "R" && col60 === "R" && (bar1D.scenario === "2d" || bar1D.scenario === "3") && (bar60.scenario === "2d" || bar60.scenario === "3"))
+  var is1D60mOverride = is1D60mActiveBull || is1D60mActiveBear || (!isMacroBullish && !isMacroBearish && col1D === col60 && (col1D === "G" || col1D === "R"))
 
   var direction = "CONFLICT"
   if (isBullishFTFC) {
     direction = "LONG"
   } else if (isBearishFTFC) {
+    direction = "SHORT"
+  } else if (is1D60mActiveBull) {
+    direction = "LONG"
+  } else if (is1D60mActiveBear) {
     direction = "SHORT"
   } else if (isMacroBullish) {
     direction = "LONG"
@@ -4246,8 +4482,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var isLong = (direction === "LONG")
   var htfQuality = stratHtfQuality(bar1M, bar1W, bar1D, isLong)
 
-  // 1. FTFC Polarity
-  var r1Pass = isBullishFTFC || isBearishFTFC
+  // 1. FTFC Polarity (Full Continuity or 1D+60m Override Partial Continuity)
+  var r1Pass = isBullishFTFC || isBearishFTFC || is1D60mOverride
 
   function fmtHtf(code, col) {
     if (code && code !== "-") return code + " " + col
@@ -4258,50 +4494,87 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var r1Detail = tfStr + (htfQuality && htfQuality.label ? (" — " + htfQuality.label) : "")
   if (!r1Pass) {
     r1Detail = "Conflict: " + r1Detail
+  } else if (is1D60mOverride && !(isBullishFTFC || isBearishFTFC)) {
+    r1Detail = "Partial Continuity (1D+60m Override): " + r1Detail
   }
 
-  // 2. Actionable Signal on Setup TF
-  var setupTf = "60"
-  var signalCandle = p60
+  // 2. Actionable Signal on Setup TF (supports 30m when activeTimeframe === "30", 60m, or 1D)
+  var opts = (options && typeof options === "object") ? options : ({})
+  var use30m = (String(opts.activeTimeframe || "") === "30" && Array.isArray(opts.activeCandles) && opts.activeCandles.length >= 3)
+  var setupCandles = use30m ? opts.activeCandles : hourly
+  var setupTf = use30m ? "30" : "60"
+  var setupLabel = use30m ? "30m" : "60m"
+  var cSetup = setupCandles.length > 0 ? setupCandles[setupCandles.length - 1] : null
+  var pSetup = setupCandles.length > 1 ? setupCandles[setupCandles.length - 2] : null
+  var barSetup = use30m ? stratBarState(cSetup, pSetup, currentPrice, nowSec, 1800) : bar60
+  var signalCandle = pSetup
   var isLong = (direction === "LONG")
-  var entryState = stratEntryState(bar60, isLong)
+  var entryState = stratEntryState(barSetup, isLong)
   var isFailed2 = (entryState.state === "FAILED_2_REVERSAL")
+  var sc_signal = "-"
 
   var validSignal = false
   var signalName = "-"
   if (isFailed2) {
     validSignal = true
-    signalName = isLong ? "60m Failed 2d Bullish Reversal" : "60m Failed 2u Bearish Reversal"
-  } else if (hourly.length >= 3) {
-    var p2_60 = hourly[hourly.length - 3]
-    var sc_prev = stratScenario(p60, p2_60)
+    signalName = setupLabel + (isLong ? " Failed 2d Bullish Reversal" : " Failed 2u Bearish Reversal")
+  } else if (setupCandles.length >= 3) {
+    var p2_setup = setupCandles[setupCandles.length - 3]
+    var p3_setup = setupCandles.length >= 4 ? setupCandles[setupCandles.length - 4] : null
+    var sc_prev = stratScenario(pSetup, p2_setup)
+    var sc_p2_setup = (p2_setup && p3_setup) ? stratScenario(p2_setup, p3_setup) : "-"
+    sc_signal = sc_prev
     if (sc_prev === "1") {
-      signalName = "60m 2-1-2 " + (isLong ? "Up" : "Down")
+      if (barSetup.scenario === "3") {
+        signalName = setupLabel + " 1-3 RevStrat " + (isLong ? "Up" : "Down")
+      } else if (sc_p2_setup === "3") {
+        signalName = setupLabel + " 3-1-2 " + (isLong ? "Up" : "Down")
+      } else {
+        signalName = setupLabel + " 2-1-2 " + (isLong ? "Up" : "Down")
+      }
       validSignal = true
     } else if ((sc_prev === "2d" && isLong) || (sc_prev === "2u" && !isLong)) {
-      signalName = "60m 2-2 Reversal " + (isLong ? "Up" : "Down")
+      if (sc_p2_setup === "1") {
+        signalName = setupLabel + " 1-2-2 RevStrat " + (isLong ? "Up" : "Down")
+      } else if (sc_p2_setup === "3") {
+        signalName = setupLabel + " 3-2-2 Reversal " + (isLong ? "Up" : "Down")
+      } else {
+        signalName = setupLabel + " 2-2 Reversal " + (isLong ? "Up" : "Down")
+      }
       validSignal = true
     } else if ((sc_prev === "2u" && isLong) || (sc_prev === "2d" && !isLong)) {
-      signalName = "60m 2-2 Continuation " + (isLong ? "Up" : "Down")
+      signalName = setupLabel + " 2-2 Continuation " + (isLong ? "Up" : "Down")
       validSignal = true
     } else if (sc_prev === "3") {
-      signalName = "60m 3-2 " + (isLong ? "Up" : "Down")
+      if (sc_p2_setup === "1") {
+        signalName = setupLabel + " 1-3-2 RevStrat " + (isLong ? "Up" : "Down")
+      } else {
+        signalName = setupLabel + " 3-2 " + (isLong ? "Up" : "Down")
+      }
       validSignal = true
     }
   }
   if (!validSignal && daily.length >= 3) {
     setupTf = "1D"
+    setupCandles = daily
+    cSetup = c1D
+    pSetup = p1D
     signalCandle = p1D
     var p2_1D = daily[daily.length - 3]
     var sc_prev1D = stratScenario(p1D, p2_1D)
+    sc_signal = sc_prev1D
     if (sc_prev1D === "1" || sc_prev1D === "2d" || sc_prev1D === "2u" || sc_prev1D === "3") {
       signalName = "1D Strat Signal (" + sc_prev1D + ")"
       validSignal = true
     }
   }
 
+  var signalShapeInfo = detectCandleShape(signalCandle)
+  var tradeStyleInfo = classifyMomentumOrRetracement(setupCandles, isLong, isFailed2)
   var r2Pass = validSignal
-  var r2Detail = validSignal ? signalName : "No actionable combo pattern"
+  var r2Detail = validSignal
+    ? (signalName + (signalShapeInfo.shape ? (" [" + signalShapeInfo.shape + "]") : "") + " — " + tradeStyleInfo.label)
+    : "No actionable combo pattern"
 
   // 3. Signal Candle Closed
   var r3Pass = signalCandle !== null
@@ -4335,17 +4608,37 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
   }
 
-  // 5. Execution Trigger Crossed
+  // 5. Execution Trigger Crossed & 3-Tier Stop Levels (Tightest / Tight / 50% / Wide)
   var triggerPrice = null
   var stopPrice = null
+  var stopLevels = { tightest: null, tight: null, fiftyPct: null, entryExtreme: null, structural: null }
   var signalCandleTimestamp = (signalCandle && signalCandle.timestamp != null) ? signalCandle.timestamp : null
 
-  if (isFailed2 && c60) {
-    triggerPrice = Number(c60.open)
-    stopPrice = isLong ? Number(bar60.low) : Number(bar60.high)
+  if (cSetup && isFinite(Number(cSetup.open)) && isFinite(Number(cSetup.high)) && isFinite(Number(cSetup.low))) {
+    stopLevels.tight = Number(cSetup.open)
+    stopLevels.tightest = (Number(cSetup.high) + Number(cSetup.low)) / 2
+    stopLevels.entryExtreme = isLong ? Number(barSetup.low != null ? barSetup.low : cSetup.low) : Number(barSetup.high != null ? barSetup.high : cSetup.high)
+  }
+  if (signalCandle && isFinite(Number(signalCandle.high)) && isFinite(Number(signalCandle.low))) {
+    stopLevels.fiftyPct = (Number(signalCandle.high) + Number(signalCandle.low)) / 2
+    stopLevels.structural = isLong ? Number(signalCandle.low) : Number(signalCandle.high)
+  }
+
+  if (isFailed2 && cSetup) {
+    triggerPrice = Number(cSetup.open)
+    stopPrice = isLong ? Number(barSetup.low) : Number(barSetup.high)
   } else if (signalCandle) {
     triggerPrice = isLong ? Number(signalCandle.high) : Number(signalCandle.low)
     stopPrice = isLong ? Number(signalCandle.low) : Number(signalCandle.high)
+    // Per thestrat.ai/docs/1-3-2 & stop-losses: on a Scenario 3 signal bar, cap stop to entry candle opposite extreme
+    if (sc_signal === "3" && stopLevels.entryExtreme !== null && isFinite(stopLevels.entryExtreme)) {
+      var validEntryStop = isLong ? (stopLevels.entryExtreme < triggerPrice && stopLevels.entryExtreme > stopPrice) : (stopLevels.entryExtreme > triggerPrice && stopLevels.entryExtreme < stopPrice)
+      if (validEntryStop) {
+        stopPrice = stopLevels.entryExtreme
+      } else if (stopLevels.fiftyPct !== null && isFinite(stopLevels.fiftyPct)) {
+        stopPrice = stopLevels.fiftyPct
+      }
+    }
   }
 
   var r5Pass = false
@@ -4372,31 +4665,38 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
   }
 
-  // 6. Execution Bar Not Stuck in Scenario 1
-  var r6Pass = entryState.passes
-  var r6Detail = entryState.detail
+  // 6. Execution Bar Not Stuck in Scenario 1 (or Compound 1 Motherbar Problem)
+  var motherbarProblem = detectMotherbarProblem(setupCandles, isLong, triggerPrice, currentPrice)
+  if (!motherbarProblem.isMotherbarProblem && setupTf === "30" && hourly.length >= 4) {
+    var mb60 = detectMotherbarProblem(hourly, isLong, triggerPrice, currentPrice)
+    if (mb60.isMotherbarProblem) {
+      motherbarProblem = Object.assign({}, mb60, { detail: "60m " + mb60.detail })
+    }
+  }
+  var r6Pass = entryState.passes && !motherbarProblem.isMotherbarProblem
+  var r6Detail = motherbarProblem.isMotherbarProblem ? motherbarProblem.detail : entryState.detail
 
   // 7. Untagged HTF Targets & Domino Effect Resolution
   var targetPrice = null
   var targetName = ""
   var targets = []
 
-  if (isFailed2 && p60) {
-    if (isLong && Number(p60.high) > currentPrice) {
+  if (isFailed2 && pSetup) {
+    if (isLong && Number(pSetup.high) > currentPrice) {
       targets.push({
-        name: "60m High (Outside Bar Trigger)",
-        price: Number(p60.high),
-        timeframe: "60",
-        dominoSignal: "60m Scenario 3 (Outside Bar)",
+        name: setupLabel + " High (Outside Bar Trigger)",
+        price: Number(pSetup.high),
+        timeframe: setupTf,
+        dominoSignal: setupLabel + " Scenario 3 (Outside Bar)",
         dominoScenario: "3",
         isReversal: true
       })
-    } else if (!isLong && Number(p60.low) < currentPrice) {
+    } else if (!isLong && Number(pSetup.low) < currentPrice) {
       targets.push({
-        name: "60m Low (Outside Bar Trigger)",
-        price: Number(p60.low),
-        timeframe: "60",
-        dominoSignal: "60m Scenario 3 (Outside Bar)",
+        name: setupLabel + " Low (Outside Bar Trigger)",
+        price: Number(pSetup.low),
+        timeframe: setupTf,
+        dominoSignal: setupLabel + " Scenario 3 (Outside Bar)",
         dominoScenario: "3",
         isReversal: true
       })
@@ -4407,12 +4707,46 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var entryBaseline = null
   if (triggerPrice !== null && isFinite(triggerPrice)) {
     entryBaseline = Number(triggerPrice)
-    if (setupTf === "60" && c60 && isFinite(Number(c60.open))) {
-      var c60OpenVal = Number(c60.open)
-      entryBaseline = isLong ? Math.max(entryBaseline, c60OpenVal) : Math.min(entryBaseline, c60OpenVal)
+    if ((setupTf === "60" || setupTf === "30") && cSetup && isFinite(Number(cSetup.open))) {
+      var cSetupOpenVal = Number(cSetup.open)
+      entryBaseline = isLong ? Math.max(entryBaseline, cSetupOpenVal) : Math.min(entryBaseline, cSetupOpenVal)
     } else if (setupTf === "1D" && c1D && isFinite(Number(c1D.open))) {
       var c1DOpenVal = Number(c1D.open)
       entryBaseline = isLong ? Math.max(entryBaseline, c1DOpenVal) : Math.min(entryBaseline, c1DOpenVal)
+    }
+  }
+
+  var patternMag = resolvePatternMagnitude(setupTf, setupCandles, isLong, entryBaseline)
+  if (setupTf === "30" && entryBaseline !== null) {
+    if (p60) {
+      var p60Val = isLong ? Number(p60.high) : Number(p60.low)
+      if (isFinite(p60Val) && (isLong ? p60Val > entryBaseline : p60Val < entryBaseline)) {
+        var dom60 = resolveDominoHtfSignal("60m", isLong, hourly)
+        targets.push({
+          name: isLong ? "60m High" : "60m Low",
+          price: p60Val,
+          timeframe: "60",
+          dominoSignal: dom60 ? dom60.signalName : null,
+          dominoScenario: dom60 ? dom60.scenarioTriggered : null,
+          isReversal: dom60 ? dom60.isReversal : false
+        })
+      }
+    }
+    if (patternMag && isFinite(patternMag.targetPrice) && (isLong ? patternMag.targetPrice > entryBaseline : patternMag.targetPrice < entryBaseline)) {
+      var alreadyHas60 = targets.length > 0 && Math.abs(targets[0].price - patternMag.targetPrice) < 0.005
+      if (!alreadyHas60) {
+        targets.push({
+          name: patternMag.targetName,
+          price: patternMag.targetPrice,
+          timeframe: "30",
+          dominoSignal: null,
+          dominoScenario: null,
+          isReversal: false
+        })
+        targets.sort(function (a, b) {
+          return isLong ? (a.price - b.price) : (b.price - a.price)
+        })
+      }
     }
   }
 
@@ -4505,14 +4839,15 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
   }
 
+  var isEntryBarStop = isFailed2 || (sc_signal === "3" && stopPrice === stopLevels.entryExtreme)
   var isStoppedOut = false
   if (stopPrice !== null && currentPrice !== null) {
     if (isLong) {
       if (currentPrice <= stopPrice) isStoppedOut = true
-      if (!isFailed2 && c60 && Number(c60.low) <= stopPrice) isStoppedOut = true
+      if (!isEntryBarStop && cSetup && Number(cSetup.low) <= stopPrice) isStoppedOut = true
     } else {
       if (currentPrice >= stopPrice) isStoppedOut = true
-      if (!isFailed2 && c60 && Number(c60.high) >= stopPrice) isStoppedOut = true
+      if (!isEntryBarStop && cSetup && Number(cSetup.high) >= stopPrice) isStoppedOut = true
     }
   }
 
@@ -4555,7 +4890,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
   }
 
-  // 8. Stop-Loss Anchored to Signal TF
+  // 8. Stop-Loss Anchored to Signal TF (Tightest / Tight / 50% / Structural)
   var r8Pass = false
   var r8Detail = "Stop not defined"
   if (isStoppedOut) {
@@ -4563,11 +4898,20 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     r8Detail = "Stopped out: $" + (stopPrice != null ? stopPrice.toFixed(2) : "") + " breached"
   } else if (stopPrice !== null && currentPrice !== null) {
     r8Pass = isLong ? (currentPrice > stopPrice) : (currentPrice < stopPrice)
-    var stopAnchorName = isFailed2 ? ("Failed " + (isLong ? "2d Low" : "2u High")) : (setupTf + " Signal " + (isLong ? "Low" : "High"))
-    r8Detail = "Stop-Loss: $" + stopPrice.toFixed(2) + " (" + stopAnchorName + ")"
+    var stopAnchorName = isFailed2
+      ? ("Failed " + (isLong ? "2d Low" : "2u High"))
+      : (sc_signal === "3" ? (setupTf + " Entry " + (isLong ? "Low" : "High") + " (3-Bar Capped)") : (setupTf + " Signal " + (isLong ? "Low" : "High")))
+    var tierExtras = []
+    if (stopLevels.tight !== null && isFinite(stopLevels.tight)) {
+      tierExtras.push("Tight (Open): $" + stopLevels.tight.toFixed(2))
+    }
+    if (stopLevels.fiftyPct !== null && isFinite(stopLevels.fiftyPct)) {
+      tierExtras.push("50%: $" + stopLevels.fiftyPct.toFixed(2))
+    }
+    r8Detail = "Stop-Loss: $" + stopPrice.toFixed(2) + " (" + stopAnchorName + ")" + (tierExtras.length ? (" | " + tierExtras.join(" | ")) : "")
   }
 
-  // 9. Runway Quality
+  // 9. Runway Quality & Market/Sector Context
   var r9Pass = r7Pass
   var r9Detail = "Opposing pivot blocks path or target untagged"
   if (r9Pass) {
@@ -4578,6 +4922,25 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
     if (htfQuality && htfQuality.status === "COMPRESSION_CHOP") {
       r9Detail += " (Caution: HTF inside compression)"
+    }
+    if (opts.attackScanResult) {
+      var focusSup = computeFocusBasketSupport(sym, setupTf, setupCandles, liveQuote, daily, weekly, opts.attackScanResult)
+      if (focusSup && focusSup.hasSupport && focusSup.sizingTier === "pass") {
+        r9Pass = false
+        r9Detail = "Blocked by opposing sector context: " + focusSup.sizingReason
+      }
+    }
+    if (r9Pass && opts.marketContext) {
+      var idxMb = Boolean(opts.marketContext.indexMotherbar)
+      if (!idxMb && Array.isArray(opts.marketContext.spyHourly) && Array.isArray(opts.marketContext.qqqHourly)) {
+        var spyMb = detectMotherbarProblem(opts.marketContext.spyHourly, isLong, null, null)
+        var qqqMb = detectMotherbarProblem(opts.marketContext.qqqHourly, isLong, null, null)
+        idxMb = Boolean(spyMb.isMotherbarProblem && qqqMb.isMotherbarProblem)
+      }
+      if (idxMb) {
+        r9Pass = false
+        r9Detail = "Blocked by market context: SPY/QQQ stuck in 60m Motherbar problem"
+      }
     }
   }
 
@@ -4678,6 +5041,20 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     targets: targets,
     domino: domino,
     stopPrice: isFinite(stopPrice) ? stopPrice : null,
+    stopLevels: stopLevels,
+    patternMagnitude: patternMag,
+    takeActionWindow: {
+      triggerPrice: isFinite(triggerPrice) ? triggerPrice : null,
+      reclaimPrice: patternMag ? patternMag.reclaimPrice : null,
+      patternTargetPrice: (patternMag && isFinite(patternMag.targetPrice)) ? patternMag.targetPrice : null,
+      patternTargetName: patternMag ? patternMag.targetName : null,
+      targetPrice: isFinite(targetPrice) ? targetPrice : null,
+      targetName: targetName || null,
+      isOpen: Boolean(r5Pass && !isTargetHit && !isStoppedOut)
+    },
+    motherbarProblem: motherbarProblem,
+    tradeStyle: tradeStyleInfo.style,
+    signalShape: signalShapeInfo.shape,
     bar60: bar60,
     entryState: entryState,
     bar1D: bar1D,
@@ -4701,7 +5078,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
       sc1W: bar1W.scenario,
       sc1D: bar1D.scenario,
       sc60: bar60.scenario,
-      isFTFC: isBullishFTFC || isBearishFTFC
+      isFTFC: isBullishFTFC || isBearishFTFC,
+      isOverride: is1D60mOverride
     },
     rules: rules
   }
@@ -6452,6 +6830,10 @@ if (typeof module !== "undefined") {
     formatCandleTime: formatCandleTime,
     formatTimeAxisLabel: formatTimeAxisLabel,
     stratScenario: stratScenario,
+    detectCandleShape: detectCandleShape,
+    detectMotherbarProblem: detectMotherbarProblem,
+    classifyMomentumOrRetracement: classifyMomentumOrRetracement,
+    resolvePatternMagnitude: resolvePatternMagnitude,
     computeStratBinaryDetails: computeStratBinaryDetails,
     computeStratDetails: computeStratDetails,
     computeHoldingStratMatrix: computeHoldingStratMatrix,
