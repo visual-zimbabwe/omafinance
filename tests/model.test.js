@@ -3013,6 +3013,330 @@ test("Update 7: evaluateStratChecklist Rule 9 blocks opposing sector attack and 
   assert.equal(blockedMarket.isTradeable, false)
 })
 
+test("Batch 2 Update 1: evaluateStratChecklist supports Macro + Intraday Flip negating 1D and 30-60 Gapper 1D Failed 2d override", () => {
+  const t1 = Math.floor(new Date("2026-09-01T14:30:00Z").getTime() / 1000)
+  const t2 = Math.floor(new Date("2026-09-07T14:30:00Z").getTime() / 1000)
+  const t3 = Math.floor(new Date("2026-09-08T14:30:00Z").getTime() / 1000)
+
+  // Case A: Macro + 60m Flip (1M=G, 1W=G, 1D opened higher at 212 and pulled back to 210 so 1D=R, then 60m flips 2u Green at 210)
+  const dailyMacroFlip = [
+    { timestamp: t1, open: 190, high: 205, low: 188, close: 202 },
+    { timestamp: t2, open: 202, high: 220, low: 200, close: 208 }, // Prior 1D High = 220 (Target)
+    { timestamp: t3, open: 212, high: 213, low: 207, close: 210 }  // 1D Red (210 < 212), but 1M(190) & 1W(202) are Green
+  ]
+  const hourlyFlip = [
+    { timestamp: t3 - 7200, open: 212, high: 213, low: 208, close: 209 },
+    { timestamp: t3 - 3600, open: 209, high: 209.5, low: 207, close: 208 }, // 2d pullback signal (high 209.5)
+    { timestamp: t3, open: 208, high: 210.5, low: 207.8, close: 210 }       // 60m 2u Green flip!
+  ]
+  const resFlip = Model.evaluateStratChecklist("AAPL", hourlyFlip, dailyMacroFlip, { regularMarketPrice: 210 })
+  assert.equal(resFlip.direction, "LONG")
+  assert.equal(resFlip.ftfcSummary.isMacroFlip, true)
+  const r1Flip = resFlip.rules.find(r => r.id === 1)
+  assert.equal(r1Flip.passed, true)
+  assert.match(r1Flip.detail, /Macro \+ 60m Flip \(Negating 1D\)/)
+  assert.equal(resFlip.isTradeable, true)
+
+  // Case B: 30-60 Gapper (1M=R, 1W=R, 1D gaps down below prior day low 180 to 176, then reclaims 1D open 177 -> 1D failed2d Green + 60m 2u Green)
+  const dailyGapper = [
+    { timestamp: t1, open: 210, high: 215, low: 195, close: 198 },
+    { timestamp: t2, open: 200, high: 192, low: 180, close: 182 }, // Prior 1D Low = 180, High = 192
+    { timestamp: t3, open: 177, high: 179.5, low: 175, close: 179 } // Broke 180 low (2d), reclaimed 177 open (Green -> failed2d!)
+  ]
+  const hourlyGapper = [
+    { timestamp: t3 - 7200, open: 177, high: 178, low: 175, close: 176.5 },
+    { timestamp: t3 - 3600, open: 176.5, high: 178.2, low: 176, close: 177.8 },
+    { timestamp: t3, open: 177.8, high: 179.5, low: 177.5, close: 179 } // 60m 2u Green
+  ]
+  const resGapper = Model.evaluateStratChecklist("AMD", hourlyGapper, dailyGapper, { regularMarketPrice: 179 })
+  assert.equal(resGapper.bar1D.failed2d, true)
+  assert.equal(resGapper.direction, "LONG")
+  const r1Gapper = resGapper.rules.find(r => r.id === 1)
+  assert.equal(r1Gapper.passed, true)
+  assert.equal(resGapper.isTradeable, true)
+})
+
+test("Batch 2 Update 2: 30m time exhaustion, 3/3 HTF In-Force exemption, resolveMeasuredMoveTarget, and Exhaustion by Price", () => {
+  // 1. Measured Move target on 2-1-2 continuation into fresh highs (no untagged HTF pivot overhead)
+  const dailyAllBroken = [
+    { timestamp: 100, open: 100, high: 105, low: 95, close: 104 },
+    { timestamp: 200, open: 104, high: 110, low: 102, close: 109 }, // p1D High = 110 (already broken!)
+    { timestamp: 300, open: 110, high: 119, low: 109, close: 118 }
+  ]
+  // Hourly 2u -> 1 -> 2u continuation: p2 range is 110..116 (6 pts), p1 inside 112..115 (trigger=115) -> Measured Move = 115 + 6 = 121
+  const hourlyMomo = [
+    { timestamp: 1000, open: 105, high: 109, low: 104, close: 108 },
+    { timestamp: 2000, open: 110, high: 116, low: 110, close: 115 }, // p2: 2u (range = 6)
+    { timestamp: 3000, open: 114, high: 115, low: 112, close: 114.5 }, // p1: 1 (trigger = 115)
+    { timestamp: 4000, open: 114.5, high: 118.5, low: 114, close: 118 } // cur: 2u
+  ]
+  const mm = Model.resolveMeasuredMoveTarget("60", hourlyMomo, true, 115)
+  assert.ok(mm)
+  assert.equal(mm.price, 121)
+  assert.equal(mm.legRange, 6)
+
+  const resMomo = Model.evaluateStratChecklist("NVDA", hourlyMomo, dailyAllBroken, { regularMarketPrice: 118 })
+  assert.equal(resMomo.isExhaustionByPrice, false)
+  assert.equal(resMomo.targetPrice, 121)
+  assert.match(resMomo.targetName, /Measured Move/)
+  assert.equal(resMomo.isTradeable, true)
+
+  // 2. Exhaustion by Price when a reversal gaps above all prior HTF & pattern pivots with no overhead targets
+  const hourlyGapExhausted = [
+    { timestamp: 1000, open: 106, high: 108, low: 104, close: 105 },
+    { timestamp: 2000, open: 105, high: 107, low: 102, close: 103 }, // p1: 2d (high 107)
+    { timestamp: 3000, open: 115, high: 118.5, low: 114.5, close: 118 } // Gapped to 115 above p1D.high (110) and p2.high (108)!
+  ]
+  const resExhPrice = Model.evaluateStratChecklist("NVDA", hourlyGapExhausted, dailyAllBroken, { regularMarketPrice: 118 })
+  assert.equal(resExhPrice.isExhaustionByPrice, true)
+  const r4Exh = resExhPrice.rules.find(r => r.id === 4)
+  const r7Exh = resExhPrice.rules.find(r => r.id === 7)
+  assert.equal(r4Exh.passed, false)
+  assert.match(r4Exh.detail, /Exhaustion by price/)
+  assert.equal(r7Exh.passed, false)
+
+  // 3. 30m Time Exhaustion (<5m left in 30m candle when inForceCount < 3) vs 3/3 HTF In-Force Exemption
+  const dailyInside = [
+    { timestamp: 100, open: 500, high: 530, low: 495, close: 520 },
+    { timestamp: 200, open: 510, high: 525, low: 505, close: 518 }, // 1D Inside (inForceCount < 3)
+    { timestamp: 300, open: 512, high: 519, low: 511, close: 518 }
+  ]
+  const candles30 = [
+    { timestamp: 1200, open: 514, high: 516, low: 512, close: 515 },
+    { timestamp: 1800, open: 515, high: 517, low: 514, close: 516 },
+    { timestamp: 3600, open: 516, high: 518.5, low: 515.5, close: 518 }
+  ]
+  // At 3600 + 1600s (26m40s into 30m bar -> <5m remaining), Rule 4 fails on 30m time exhaustion
+  const res30Late = Model.evaluateStratChecklist(
+    "SMH",
+    candles30,
+    dailyInside,
+    { regularMarketPrice: 518 },
+    new Date((3600 + 1600) * 1000),
+    { activeTimeframe: "30", activeCandles: candles30 }
+  )
+  const r4Late30 = res30Late.rules.find(r => r.id === 4)
+  assert.equal(r4Late30.passed, false)
+  assert.match(r4Late30.detail, /<5m remaining in 30m candle/)
+
+  // When 1M, 1W, and 1D are all 3 in-force (inForceCount === 3), time exhaustion is exempted!
+  const tM1 = Math.floor(new Date("2026-08-15T14:30:00Z").getTime() / 1000)
+  const tM2 = Math.floor(new Date("2026-09-01T14:30:00Z").getTime() / 1000)
+  const tW2_1 = Math.floor(new Date("2026-09-07T14:30:00Z").getTime() / 1000)
+  const tW2_2 = Math.floor(new Date("2026-09-08T14:30:00Z").getTime() / 1000)
+  const dailyAll3InForce = [
+    { timestamp: tM1, open: 480, high: 500, low: 470, close: 495 },   // Aug high = 500
+    { timestamp: tM2, open: 501, high: 510, low: 498, close: 508 },   // Sep W1 high = 510 (1M broke 500 -> 1M 2u G)
+    { timestamp: tW2_1, open: 508, high: 515, low: 506, close: 514 }, // Sep W2 D1 high = 515 (1W broke 510 -> 1W 2u G)
+    { timestamp: tW2_2, open: 514, high: 519, low: 513, close: 518 }  // Sep W2 D2 broke 515 -> 1D 2u G (all 3 HTFs in-force!)
+  ]
+  const res30Exempt = Model.evaluateStratChecklist(
+    "SMH",
+    candles30,
+    dailyAll3InForce,
+    { regularMarketPrice: 518 },
+    new Date((3600 + 1600) * 1000),
+    { activeTimeframe: "30", activeCandles: candles30 }
+  )
+  assert.equal(res30Exempt.htfQuality.inForceCount, 3)
+  const r4Exempt = res30Exempt.rules.find(r => r.id === 4)
+  assert.equal(r4Exempt.passed, true)
+})
+
+test("Batch 2 Update 3: computeFocusBasketSupport keeps intraday Most 2s in tooltip, adds 1D Most 2s, and cross-checks opposing 1D Most 2s", () => {
+  const googl2uCandles = [
+    { open: 170, high: 172, low: 169, close: 171 },
+    { open: 171, high: 175, low: 170.5, close: 174.5 }
+  ]
+  const scanWithOpposing1D = {
+    focusPairs: {
+      "GOOGL": {
+        symbol: "GOOGL",
+        basket: "XLC",
+        peer: "META",
+        timeframes: {
+          "60": {
+            basket: "XLC",
+            timeframe: "60",
+            status: "BULLISH ATTACK",
+            pct2u: 74,
+            pct2d: 18,
+            pctAttack2u: 26,
+            pctAttack2d: 4,
+            peer: { symbol: "META", scenario: "2u", color: "G", price: 584.20, inForce: "In-Force" }
+          },
+          "1D": {
+            basket: "XLC",
+            timeframe: "1D",
+            status: "DEVELOPING SELL",
+            pct2u: 25,
+            pct2d: 65,
+            pctAttack2u: 4,
+            pctAttack2d: 18,
+            peer: { symbol: "META", scenario: "2d", color: "R", price: 584.20, inForce: "In-Force" }
+          }
+        }
+      }
+    }
+  }
+  const res = Model.computeFocusBasketSupport("GOOGL", "60", googl2uCandles, null, null, null, scanWithOpposing1D)
+  // Tooltip keeps intraday 60m Most 2s AND appends 1D Most 2s
+  assert.match(res.supportTooltip, /Basket Support: 74% of XLC holdings are currently breaking 2U on 60/)
+  assert.match(res.supportTooltip, /1D Most 2s: 25% 2U vs 65% 2D/)
+  assert.ok(res.dailyMost2s)
+  assert.equal(res.dailyMost2s.pct2u, 25)
+  assert.equal(res.dailyMost2s.pct2d, 65)
+  // Sizing capped from FULL to HALF because 1D Most 2s is 65% opposing (2D)
+  assert.equal(res.sizingTier, "half")
+  assert.equal(res.positionSizing, "HALF (0.5x)")
+  assert.match(res.sizingReason, /1D Most 2s opposing/)
+})
+
+test("Batch 2 Update 4: detectCandleShape identifies Doji vs Engulfing 3-bars and Rule 2 blocks 3-2 continuation off Doji 3", () => {
+  const prev = { open: 102, high: 105, low: 100, close: 104 }
+  const doji3 = Model.detectCandleShape({ open: 102.2, high: 108, low: 97, close: 102.8 }, prev)
+  assert.equal(doji3.isDoji, true)
+  assert.equal(doji3.shape, "Doji")
+
+  const engulfing3 = Model.detectCandleShape({ open: 98, high: 108, low: 97, close: 107.2 }, prev)
+  assert.equal(engulfing3.isEngulfing, true)
+  assert.equal(engulfing3.shape, "Engulfing")
+
+  // In evaluateStratChecklist, a 3-2 continuation off a Doji 3 bar fails Rule 2
+  const daily = [
+    { timestamp: 100, open: 95, high: 105, low: 92, close: 103 },
+    { timestamp: 200, open: 103, high: 120, low: 101, close: 112 },
+    { timestamp: 300, open: 105, high: 111, low: 104, close: 110 }
+  ]
+  const hourlyDoji32 = [
+    { timestamp: 1000, open: 102, high: 105, low: 100, close: 104 },
+    { timestamp: 2000, open: 102.2, high: 108, low: 97, close: 102.8 }, // Doji 3 signal bar
+    { timestamp: 3000, open: 107, high: 110.5, low: 106.5, close: 110 }
+  ]
+  const resDoji = Model.evaluateStratChecklist("SPY", hourlyDoji32, daily, { regularMarketPrice: 110 })
+  const r2Doji = resDoji.rules.find(r => r.id === 2)
+  assert.equal(r2Doji.passed, false)
+  assert.match(r2Doji.detail, /Doji 3 indecision bar/)
+})
+
+test("Batch 2 Update 5: I-O-I (1-3-1-2), Pivot Machine Gun (PMG), and Kicker pattern detection", () => {
+  // 1. 1-3-1-2u I-O-I in computeStratBinaryDetails and evaluateStratChecklist
+  const ioiCandles = [
+    { timestamp: 1000, open: 100, high: 110, low: 90, close: 105 },  // p4: Mother
+    { timestamp: 2000, open: 102, high: 106, low: 95, close: 104 },  // p3: 1 (inside p4)
+    { timestamp: 3000, open: 104, high: 109, low: 92, close: 96 },   // p2: 3 (outside p3)
+    { timestamp: 4000, open: 97, high: 103, low: 95, close: 102 },   // p1: 1 (inside p2, trigger=103)
+    { timestamp: 5000, open: 102, high: 105, low: 101, close: 104.5 } // cur: 2u breakout
+  ]
+  const binIoi = Model.computeStratBinaryDetails(ioiCandles)
+  assert.equal(binIoi.signalType, "1-3-1-2u I-O-I Bullish Breakout")
+  assert.equal(binIoi.targetPrice, 109)
+
+  const daily = [
+    { timestamp: 100, open: 95, high: 105, low: 90, close: 102 },
+    { timestamp: 200, open: 102, high: 115, low: 100, close: 110 },
+    { timestamp: 300, open: 100, high: 106, low: 99, close: 104.5 }
+  ]
+  const chkIoi = Model.evaluateStratChecklist("QQQ", ioiCandles, daily, { regularMarketPrice: 104.5 })
+  assert.equal(chkIoi.signalName, "60m 1-3-1-2 I-O-I Up")
+
+  // 2. Pivot Machine Gun (PMG): 5 consecutive lower highs followed by bullish reversal
+  const pmgCandles = [
+    { timestamp: 1000, open: 111, high: 112, low: 108, close: 109 },
+    { timestamp: 2000, open: 109, high: 110, low: 106, close: 107 },
+    { timestamp: 3000, open: 107, high: 108, low: 104, close: 105 },
+    { timestamp: 4000, open: 105, high: 106, low: 102, close: 103 },
+    { timestamp: 5000, open: 103, high: 104, low: 100, close: 101 }, // 5th lower high (104)
+    { timestamp: 6000, open: 101.5, high: 105.5, low: 101, close: 105 } // Reversal above 104!
+  ]
+  const pmg = Model.detectPivotMachineGun(pmgCandles, true)
+  assert.equal(pmg.isPMG, true)
+  assert.equal(pmg.count, 5)
+  assert.equal(pmg.topTarget, 112)
+
+  // 3. Kicker Pattern: strong bearish bar closing near low, followed by gap-up above p1.high
+  const kickerCandles = [
+    { timestamp: 1000, open: 108, high: 109, low: 103, close: 106 },
+    { timestamp: 2000, open: 106, high: 106.5, low: 100, close: 100.5 }, // Strong red bar closing near low
+    { timestamp: 3000, open: 107, high: 110, low: 106.8, close: 109.5 }  // Full gap above 106.5!
+  ]
+  const kicker = Model.detectKickerPattern(kickerCandles, 109.5)
+  assert.equal(kicker.isKicker, true)
+  assert.equal(kicker.direction, "LONG")
+  assert.equal(kicker.gapType, "FULL")
+})
+
+test("Batch 2 Update 6 & 7: Broadening Formation target integration and 30m isArmed / alert freshness", () => {
+  // 1. Broadening formation target integration in evaluateStratChecklist
+  const baseMon = 1793021400 // Monday
+  const bfHourly = [
+    { timestamp: baseMon, open: 100, high: 104, low: 99, close: 103 },
+    { timestamp: baseMon + 3600, open: 103, high: 102, low: 97, close: 98 },      // Lower low (97)
+    { timestamp: baseMon + 7200, open: 98, high: 106, low: 98, close: 105 },      // Higher high (106)
+    { timestamp: baseMon + 10800, open: 105, high: 104, low: 95, close: 96 },     // Lower low (95)
+    { timestamp: baseMon + 14400, open: 96, high: 100, low: 96, close: 99 },      // Inside/pullback (high 100)
+    { timestamp: baseMon + 18000, open: 99, high: 102, low: 98.5, close: 101.5 }  // 2u trigger above 100 toward BF Upper Ray
+  ]
+  const daily = [
+    { timestamp: baseMon - 172800, open: 95, high: 105, low: 92, close: 102 },
+    { timestamp: baseMon - 86400, open: 102, high: 115, low: 98, close: 110 },
+    { timestamp: baseMon, open: 98, high: 106, low: 95, close: 101.5 }
+  ]
+  const resBf = Model.evaluateStratChecklist("IWM", bfHourly, daily, { regularMarketPrice: 101.5 })
+  assert.ok(resBf.broadeningTarget)
+  assert.equal(resBf.broadeningTarget.kind, "bf")
+  assert.ok(resBf.targets.some(t => t.kind === "bf"))
+
+  // 2. 30m isArmed statusTag and activeCandleTimestamp + 1800s alert freshness gate
+  const candles30Inside = [
+    { timestamp: baseMon, open: 100, high: 105, low: 98, close: 104 },
+    { timestamp: baseMon + 1800, open: 104, high: 106, low: 101, close: 105 },
+    { timestamp: baseMon + 3600, open: 103, high: 105, low: 102, close: 104.5 } // 30m Inside bar (Green)
+  ]
+  const res30Armed = Model.evaluateStratChecklist(
+    "IWM",
+    bfHourly,
+    daily,
+    { regularMarketPrice: 104.5 },
+    new Date((baseMon + 3900) * 1000),
+    { activeTimeframe: "30", activeCandles: candles30Inside }
+  )
+  assert.equal(res30Armed.setupTimeframe, "30")
+  assert.equal(res30Armed.activeCandleTimestamp, baseMon + 3600)
+  assert.equal(res30Armed.isArmed, true)
+  assert.equal(res30Armed.statusTag, "ARMED - 30m Inside (Wait for Break)")
+
+  // Alert transition blocks stale 30m bar when nowSec - activeCandleTimestamp >= 1800s
+  const openRthDate = new Date("2026-07-15T15:00:00Z")
+  const openSec = Math.floor(openRthDate.getTime() / 1000)
+  const stale30Chk = {
+    symbol: "IWM",
+    direction: "LONG",
+    setupTimeframe: "30",
+    signalCandleTimestamp: openSec - 3600,
+    activeCandleTimestamp: openSec - 1800, // 1800s old -> stale 30m bar!
+    triggerPrice: 105,
+    stopPrice: 101,
+    targetPrice: 110,
+    targetName: "1D High",
+    currentPrice: 105.5,
+    isTradeable: true,
+    isArmed: false,
+    isTargetHit: false,
+    isStoppedOut: false
+  }
+  const staleAlert = Model.evaluateStratAlertTransition(
+    stale30Chk,
+    { session: "regular", price: 105.5 },
+    {},
+    {},
+    { nowDate: openRthDate, allowInitialTrigger: true }
+  )
+  assert.equal(staleAlert.shouldNotify, false)
+  assert.equal(staleAlert.reason, "MARKET_CLOSED")
+})
+
+
 
 
 
