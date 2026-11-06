@@ -3341,3 +3341,53 @@ test("Batch 2 Update 6 & 7: Broadening Formation target integration and 30m isAr
 
 
 
+
+test("nextUsMarketOpenMs returns the next 09:30 ET weekday open, DST-aware", () => {
+  // Fri 2026-11-06 10:46 MST (17:46 UTC), market open -> Mon 2026-11-09 09:30 EST (14:30 UTC)
+  assert.equal(Model.nextUsMarketOpenMs(new Date("2026-11-06T17:46:00Z")), Date.UTC(2026, 10, 9, 14, 30))
+  // Tue 2026-07-14 06:00 ET (10:00 UTC, pre-open) -> same day 09:30 EDT (13:30 UTC)
+  assert.equal(Model.nextUsMarketOpenMs(new Date("2026-07-14T10:00:00Z")), Date.UTC(2026, 6, 14, 13, 30))
+  // Exactly at the open -> next session
+  assert.equal(Model.nextUsMarketOpenMs(new Date(Date.UTC(2026, 6, 14, 13, 30))), Date.UTC(2026, 6, 15, 13, 30))
+  // Sat 2026-03-07 (before DST) -> Mon 2026-03-09 09:30 EDT (DST starts Sun Mar 8)
+  assert.equal(Model.nextUsMarketOpenMs(new Date("2026-03-07T15:00:00Z")), Date.UTC(2026, 2, 9, 13, 30))
+})
+
+test("alert mute state: live, timed, indefinite, expiry", () => {
+  const now = new Date("2026-11-06T17:46:00Z")
+  assert.equal(Model.isAlertsMuted(0, now), false)
+  assert.equal(Model.isAlertsMuted(undefined, now), false)
+  assert.equal(Model.isAlertsMuted("garbage", now), false)
+  assert.equal(Model.isAlertsMuted(-1, now), true)
+  assert.equal(Model.isAlertsMuted(now.getTime() + 1000, now), true)
+  assert.equal(Model.isAlertsMuted(now.getTime() - 1000, now), false)
+
+  assert.equal(Model.alertsMuteUntilForMode("open", now), Date.UTC(2026, 10, 9, 14, 30))
+  assert.equal(Model.alertsMuteUntilForMode("1h", now), now.getTime() + 3600000)
+  assert.equal(Model.alertsMuteUntilForMode("indefinite", now), Model.ALERT_MUTE_INDEFINITE)
+  assert.equal(Model.alertsMuteUntilForMode("", now), 0)
+
+  assert.equal(Model.alertsMuteStatusText(0, now), "")
+  assert.equal(Model.alertsMuteStatusText(-1, now), "Alerts muted until you unmute")
+  assert.match(Model.alertsMuteStatusText(now.getTime() + 3600000, now), /^Alerts muted until \d{1,2}:\d{2} (AM|PM)$/)
+})
+
+test("alert mute persists through serializeState/parseState and drops once expired", () => {
+  const future = Date.now() + 3600000
+  const raw = Model.serializeState(["SPY"], ["SPY"], "1D", "2x2", {}, [], {}, {}, "", ["60"], [-1], { alertsMutedUntil: future })
+  assert.equal(Model.parseState(raw).alertsMutedUntil, future)
+
+  const rawIndef = Model.serializeState(["SPY"], ["SPY"], "1D", "2x2", {}, [], {}, {}, "", ["60"], [-1], { alertsMutedUntil: -1 })
+  assert.equal(Model.parseState(rawIndef).alertsMutedUntil, -1)
+
+  const rawExpired = Model.serializeState(["SPY"], ["SPY"], "1D", "2x2", {}, [], {}, {}, "", ["60"], [-1], { alertsMutedUntil: Date.now() - 1000 })
+  assert.equal(JSON.parse(rawExpired).alertsMutedUntil, undefined)
+})
+
+test("alert log keeps the muted flag", () => {
+  const log = Model.appendAlertLog([], { id: "a", symbol: "SPY", timestamp: 1, muted: true }, 50)
+  assert.equal(log[0].muted, true)
+  const log2 = Model.appendAlertLog(log, { id: "b", symbol: "QQQ", timestamp: 2 }, 50)
+  assert.equal(log2[0].muted, false)
+  assert.equal(log2[1].muted, true)
+})
