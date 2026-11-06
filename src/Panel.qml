@@ -46,6 +46,12 @@ Panel {
     property var signalStates: ({})
     property var symbolPriceMemory: ({})
     property var alertLog: []
+    // 0 = live, -1 = muted until unmuted, >0 = muted until epoch ms (see Model.isAlertsMuted)
+    property double alertsMutedUntil: 0
+    property double muteClockMs: Date.now()
+    readonly property bool alertsMuted: Model.isAlertsMuted(alertsMutedUntil, new Date(muteClockMs))
+    readonly property string alertsMuteStatus: Model.alertsMuteStatusText(alertsMutedUntil, new Date(muteClockMs))
+    readonly property string alertSoundPath: "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"
     property var armedWatchlistSetups: []
     property var bgCandleCache: ({})
     property var bgScanQueue: []
@@ -377,7 +383,8 @@ Panel {
         stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, discordWebhook, gridTimeframes, gridZooms, {
             symbolLevels: root.symbolLevels,
             signalStates: root.signalStates,
-            alertLog: root.alertLog
+            alertLog: root.alertLog,
+            alertsMutedUntil: root.alertsMutedUntil
         }));
     }
 
@@ -493,6 +500,39 @@ Panel {
         root.persist();
     }
 
+    // mode: "open" (until next market open), "1h", "indefinite"; anything else unmutes.
+    function setAlertsMute(mode) {
+        root.alertsMutedUntil = Model.alertsMuteUntilForMode(mode, new Date());
+        root.muteClockMs = Date.now();
+        root.persist();
+    }
+
+    function toggleAlertsMute() {
+        root.setAlertsMute(Model.isAlertsMuted(root.alertsMutedUntil, new Date()) ? "" : "open");
+    }
+
+    // Single delivery gate for every alert (watchlist background engine and grid windows).
+    // alert: { title, body, discordPayload, logEntry }
+    // While muted, the event is still logged (tagged muted) but nothing is delivered.
+    function dispatchAlert(alert) {
+        if (!alert)
+            return;
+        var muted = Model.isAlertsMuted(root.alertsMutedUntil, new Date());
+        if (alert.logEntry) {
+            var entry = Object.assign({}, alert.logEntry);
+            if (muted)
+                entry.muted = true;
+            root.recordAlertEvent(entry);
+        }
+        if (muted)
+            return;
+        Quickshell.execDetached(["notify-send", "-a", "Omafinance", "-u", "normal", String(alert.title || ""), String(alert.body || "")]);
+        Quickshell.execDetached(["pw-play", root.alertSoundPath]);
+        var webhook = root.discordWebhook;
+        if (alert.discordPayload && webhook && webhook.indexOf("https://discord.com/api/webhooks/") === 0)
+            Quickshell.execDetached(["curl", "-fsS", "-H", "Content-Type: application/json", "-X", "POST", "-d", alert.discordPayload, webhook]);
+    }
+
     function syncActiveGridsAlertState() {
         if (!root.activeGridWindows)
             return;
@@ -585,20 +625,12 @@ Panel {
                 levelsChanged = true;
                 for (var t = 0; t < res.triggered.length; t++) {
                     var ev = res.triggered[t];
-                    bgNotifyProc.command = ["notify-send", "-a", "Omafinance", "-u", "normal", ev.title, ev.body];
-                    bgNotifyProc.running = true;
-                    bgSoundProc.command = ["pw-play", "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"];
-                    bgSoundProc.running = true;
-                    var webhook = root.discordWebhook;
-                    if (webhook && webhook.indexOf("https://discord.com/api/webhooks/") === 0) {
-                        var payload = Model.discordPriceAlertPayload(sym, ev.level, ev.currentPrice, ev.direction);
-                        if (payload) {
-                            bgDiscordProc.command = ["curl", "-fsS", "-H", "Content-Type: application/json", "-X", "POST", "-d", payload, webhook];
-                            bgDiscordProc.running = true;
-                        }
-                    }
-                    if (ev.logEntry)
-                        root.alertLog = Model.appendAlertLog(root.alertLog, ev.logEntry, 50);
+                    root.dispatchAlert({
+                        title: ev.title,
+                        body: ev.body,
+                        discordPayload: ev.discordPayload,
+                        logEntry: ev.logEntry
+                    });
                 }
             }
         }
@@ -687,20 +719,12 @@ Panel {
             root.persist();
         }
         if (transition.shouldNotify && transition.eventType) {
-            if (transition.logEntry)
-                root.recordAlertEvent(transition.logEntry);
-            bgNotifyProc.command = ["notify-send", "-a", "Omafinance", "-u", "normal", transition.title, transition.body];
-            bgNotifyProc.running = true;
-            bgSoundProc.command = ["pw-play", "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"];
-            bgSoundProc.running = true;
-            var webhook = root.discordWebhook;
-            if (webhook && webhook.indexOf("https://discord.com/api/webhooks/") === 0) {
-                var payload = Model.discordAlertPayload(chk, transition.eventType);
-                if (payload) {
-                    bgDiscordProc.command = ["curl", "-fsS", "-H", "Content-Type: application/json", "-X", "POST", "-d", payload, webhook];
-                    bgDiscordProc.running = true;
-                }
-            }
+            root.dispatchAlert({
+                title: transition.title,
+                body: transition.body,
+                discordPayload: Model.discordAlertPayload(chk, transition.eventType),
+                logEntry: transition.logEntry
+            });
         }
     }
 
@@ -736,6 +760,8 @@ Panel {
             signalStates = state.signalStates;
         if (state.alertLog)
             alertLog = state.alertLog;
+        alertsMutedUntil = state.alertsMutedUntil !== undefined ? state.alertsMutedUntil : 0;
+        muteClockMs = Date.now();
         root.syncActiveGridsAlertState();
         clampSelected();
         if (before !== after && (opened || showBarQuote))
@@ -1380,18 +1406,6 @@ Panel {
     }
 
     Process {
-        id: bgNotifyProc
-    }
-
-    Process {
-        id: bgSoundProc
-    }
-
-    Process {
-        id: bgDiscordProc
-    }
-
-    Process {
         id: bgChartProc
         onExited: function (exitCode) {
             var raw = String(bgChartStdout.text || "");
@@ -1713,9 +1727,38 @@ Panel {
         }
     }
 
+    Timer {
+        id: alertsMuteClock
+        interval: 30000
+        running: root.alertsMutedUntil > 0
+        repeat: true
+        onTriggered: {
+            root.muteClockMs = Date.now();
+            if (!Model.isAlertsMuted(root.alertsMutedUntil, new Date())) {
+                root.alertsMutedUntil = 0;
+                root.persist();
+            }
+        }
+    }
+
     IpcHandler {
         target: root.ipcTarget
 
+        function muteAlerts(): void {
+            root.setAlertsMute("open");
+        }
+        function muteAlertsFor(mode: string): void {
+            root.setAlertsMute(mode);
+        }
+        function unmuteAlerts(): void {
+            root.setAlertsMute("");
+        }
+        function toggleAlertsMute(): void {
+            root.toggleAlertsMute();
+        }
+        function alertsMuteStatus(): string {
+            return root.alertsMuteStatus || "Alerts live";
+        }
         function open(): void {
             root.openFromHotkey();
         }
@@ -2242,6 +2285,8 @@ Panel {
             id: gridWin
             visible: true
             discordWebhook: root.discordWebhook
+            alertsMuted: root.alertsMuted
+            alertsMuteStatus: root.alertsMuteStatus
 
             onSymbolLevelsChangedExternally: function (sym, nextLevels) {
                 if (!sym)
@@ -2259,9 +2304,11 @@ Panel {
                 root.persist();
             }
 
-            onAlertEventTriggered: function (logEntry) {
-                root.recordAlertEvent(logEntry);
+            onAlertDispatchRequested: function (alert) {
+                root.dispatchAlert(alert);
             }
+
+            onAlertsMuteToggleRequested: root.toggleAlertsMute()
 
             onStateSaveRequested: function (mode, sync, symbols, splits) {
                 root.gridMode = mode;

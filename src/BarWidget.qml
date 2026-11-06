@@ -54,6 +54,7 @@ BarWidget {
             panelLoader.item.closeForPopoutSwitch();
     }
 
+    readonly property bool alertsMuted: panelLoader.item ? panelLoader.item.alertsMuted === true : false
     readonly property real openPanelIndicatorWidth: statusLabel.implicitWidth
 
     implicitWidth: button.implicitWidth
@@ -80,14 +81,16 @@ BarWidget {
         text: {
             if (!panelLoader.item)
                 return "-";
-            return root.vertical ? panelLoader.item.verticalLabel : panelLoader.item.label;
+            var base = root.vertical ? panelLoader.item.verticalLabel : panelLoader.item.label;
+            // Bell-slash prefix while alerts are muted
+            return root.alertsMuted ? ("\uf1f6 " + base) : base;
         }
         labelVisible: false
         hasVisualContent: button.text !== ""
         fixedWidth: root.vertical ? -1 : statusLabel.implicitWidth + button.scaledHorizontalMargin * 2
         foreground: root.pillColor
         useActiveColor: false
-        tooltipText: ""
+        tooltipText: root.alertsMuted && panelLoader.item ? (panelLoader.item.alertsMuteStatus + " · right-click to unmute") : ""
         horizontalMargin: 8.75
         verticalPadding: 8.75
 
@@ -116,6 +119,8 @@ BarWidget {
                 return;
             if (b === Qt.MiddleButton)
                 root.refresh();
+            else if (b === Qt.RightButton && panelLoader.item && panelLoader.item.toggleAlertsMute)
+                panelLoader.item.toggleAlertsMute();
             else
                 root.togglePanel();
         }

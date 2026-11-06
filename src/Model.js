@@ -251,7 +251,8 @@ function normalizeAlertLog(rawLog) {
       triggerPrice: finiteOrNull(item.triggerPrice),
       title: String(item.title || ""),
       summary: sumTxt,
-      body: sumTxt
+      body: sumTxt,
+      muted: item.muted === true
     })
   }
   return out
@@ -328,6 +329,9 @@ function parseState(raw) {
     if (data.alertLog !== undefined && Array.isArray(data.alertLog)) {
       res.alertLog = normalizeAlertLog(data.alertLog)
     }
+    if (data.alertsMutedUntil !== undefined) {
+      res.alertsMutedUntil = normalizeAlertsMutedUntil(data.alertsMutedUntil)
+    }
     return res
   } catch (e) {
     return fallback
@@ -384,6 +388,9 @@ function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, grid
     if (Array.isArray(extra.alertLog) && extra.alertLog.length > 0) {
       var normLog = normalizeAlertLog(extra.alertLog)
       if (normLog.length > 0) obj.alertLog = normLog
+    }
+    if (extra.alertsMutedUntil !== undefined && isAlertsMuted(extra.alertsMutedUntil, new Date())) {
+      obj.alertsMutedUntil = normalizeAlertsMutedUntil(extra.alertsMutedUntil)
     }
   }
 
@@ -5613,6 +5620,84 @@ function isUsMarketOpen(nowDate, allowExtended) {
   return mins >= 570 && mins < 960
 }
 
+// ---------------------------------------------------------------------------
+// Alert mute ("chart-only" days)
+//
+// Mute state is a single number, `alertsMutedUntil`:
+//   0  -> alerts are live
+//   -1 -> muted until manually unmuted
+//   >0 -> muted until that epoch-ms timestamp (auto-expires)
+// Muting only suppresses delivery (desktop notification, sound, Discord).
+// The alert engines keep evaluating so state stays consistent and nothing
+// stale fires in a burst on unmute.
+// ---------------------------------------------------------------------------
+
+var ALERT_MUTE_INDEFINITE = -1
+
+// Next regular-session open (09:30 ET, Mon-Fri) strictly after nowDate.
+// Exchange holidays are not modelled; a holiday simply ends the mute early.
+function nextUsMarketOpenMs(nowDate) {
+  var d = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate : new Date()
+  var nowMs = d.getTime()
+  var etNow = new Date(nowMs + (isUsDstUtc(nowMs) ? -4 : -5) * 3600000)
+  for (var i = 0; i < 10; i++) {
+    var y = etNow.getUTCFullYear()
+    var m = etNow.getUTCMonth()
+    var day = etNow.getUTCDate() + i
+    var weekday = new Date(Date.UTC(y, m, day)).getUTCDay()
+    if (weekday === 0 || weekday === 6) continue
+    // 09:30 ET expressed as UTC; resolve DST offset at that instant.
+    var guessUtc = Date.UTC(y, m, day, 9, 30) + 5 * 3600000
+    var offsetH = isUsDstUtc(guessUtc) ? -4 : -5
+    var openUtc = Date.UTC(y, m, day, 9, 30) - offsetH * 3600000
+    if (openUtc > nowMs) return openUtc
+  }
+  return nowMs + 86400000
+}
+
+function normalizeAlertsMutedUntil(value) {
+  var n = Number(value)
+  if (!isFinite(n)) return 0
+  if (n === ALERT_MUTE_INDEFINITE) return ALERT_MUTE_INDEFINITE
+  return n > 0 ? Math.floor(n) : 0
+}
+
+function isAlertsMuted(mutedUntil, nowDate) {
+  var v = normalizeAlertsMutedUntil(mutedUntil)
+  if (v === ALERT_MUTE_INDEFINITE) return true
+  if (v <= 0) return false
+  var nowMs = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate.getTime() : Date.now()
+  return v > nowMs
+}
+
+// mode: "open" (until next market open), "1h", "indefinite", anything else -> unmute
+function alertsMuteUntilForMode(mode, nowDate) {
+  var d = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate : new Date()
+  if (mode === "open") return nextUsMarketOpenMs(d)
+  if (mode === "1h") return d.getTime() + 3600000
+  if (mode === "indefinite") return ALERT_MUTE_INDEFINITE
+  return 0
+}
+
+function formatMuteClock(ms, nowDate) {
+  var t = new Date(ms)
+  var now = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate : new Date()
+  var h = t.getHours()
+  var mm = t.getMinutes()
+  var clock = ((h % 12) || 12) + ":" + (mm < 10 ? "0" : "") + mm + (h < 12 ? " AM" : " PM")
+  var sameDay = t.getFullYear() === now.getFullYear() && t.getMonth() === now.getMonth() && t.getDate() === now.getDate()
+  if (sameDay) return clock
+  var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+  return days[t.getDay()] + " " + clock
+}
+
+function alertsMuteStatusText(mutedUntil, nowDate) {
+  if (!isAlertsMuted(mutedUntil, nowDate)) return ""
+  var v = normalizeAlertsMutedUntil(mutedUntil)
+  if (v === ALERT_MUTE_INDEFINITE) return "Alerts muted until you unmute"
+  return "Alerts muted until " + formatMuteClock(v, nowDate)
+}
+
 function isAlertSessionOpen(symbol, quote, allowExtended, nowDate) {
   var sym = normalizeSymbol(symbol)
   if (isCryptoSymbol(sym)) return true
@@ -7226,7 +7311,13 @@ if (typeof module !== "undefined") {
     isAlertSessionOpen: isAlertSessionOpen,
     evaluateStratAlertTransition: evaluateStratAlertTransition,
     discordPriceAlertPayload: discordPriceAlertPayload,
-    evaluatePriceLevelAlerts: evaluatePriceLevelAlerts
+    evaluatePriceLevelAlerts: evaluatePriceLevelAlerts,
+    ALERT_MUTE_INDEFINITE: ALERT_MUTE_INDEFINITE,
+    nextUsMarketOpenMs: nextUsMarketOpenMs,
+    normalizeAlertsMutedUntil: normalizeAlertsMutedUntil,
+    isAlertsMuted: isAlertsMuted,
+    alertsMuteUntilForMode: alertsMuteUntilForMode,
+    alertsMuteStatusText: alertsMuteStatusText
   }
 }
 
