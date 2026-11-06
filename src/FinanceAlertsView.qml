@@ -95,6 +95,96 @@ Column {
         font.bold: true
     }
 
+    // Section 0: Mute (chart-only days). Engines keep tracking; delivery is suppressed.
+    Rectangle {
+        id: muteCard
+        width: parent.width
+        implicitHeight: muteCol.implicitHeight + Style.space(18)
+        color: controller.alertsMuted ? Qt.rgba(controller.contentUrgent.r, controller.contentUrgent.g, controller.contentUrgent.b, 0.12) : Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.08)
+        radius: Style.space(8)
+        border.color: controller.alertsMuted ? Qt.rgba(controller.contentUrgent.r, controller.contentUrgent.g, controller.contentUrgent.b, 0.45) : Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.15)
+        border.width: 1
+
+        Column {
+            id: muteCol
+            anchors.fill: parent
+            anchors.margins: Style.space(9)
+            spacing: Style.space(8)
+
+            Text {
+                width: parent.width
+                text: controller.alertsMuted ? ("\uf1f6  " + controller.alertsMuteStatus) : "\uf0f3  Alerts live"
+                color: controller.alertsMuted ? controller.contentUrgent : controller.contentForeground
+                font.family: controller.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+                elide: Text.ElideRight
+            }
+
+            Text {
+                width: parent.width
+                visible: controller.alertsMuted
+                text: "No notifications, sounds, or Discord posts. Muted events are still logged below."
+                color: controller.dim
+                font.family: controller.contentFontFamily
+                font.pixelSize: Style.font.bodySmall - 1
+                wrapMode: Text.WordWrap
+            }
+
+            Row {
+                spacing: Style.space(6)
+
+                Repeater {
+                    model: controller.alertsMuted ? [
+                        {
+                            mode: "",
+                            label: "Unmute"
+                        }
+                    ] : [
+                        {
+                            mode: "open",
+                            label: "Mute until open"
+                        },
+                        {
+                            mode: "1h",
+                            label: "Mute 1h"
+                        },
+                        {
+                            mode: "indefinite",
+                            label: "Mute until I unmute"
+                        }
+                    ]
+
+                    delegate: Rectangle {
+                        required property var modelData
+                        width: muteBtnLabel.implicitWidth + Style.space(16)
+                        height: muteBtnLabel.implicitHeight + Style.space(10)
+                        radius: Style.space(6)
+                        color: Qt.rgba(controller.contentForeground.r, controller.contentForeground.g, controller.contentForeground.b, 0.12)
+                        border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.3)
+                        border.width: 1
+
+                        Text {
+                            id: muteBtnLabel
+                            anchors.centerIn: parent
+                            text: modelData.label
+                            color: controller.contentForeground
+                            font.family: controller.contentFontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: controller.setAlertsMute(modelData.mode)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Section 1: Create Price Alert
     Rectangle {
         width: parent.width
@@ -592,9 +682,9 @@ Column {
                                     minute: "2-digit",
                                     second: "2-digit"
                                 });
-                                return modelData.symbol + " · " + modelData.eventType + " (" + tStr + ")";
+                                return modelData.symbol + " · " + modelData.eventType + (modelData.muted ? " · MUTED" : "") + " (" + tStr + ")";
                             }
-                            color: controller.contentForeground
+                            color: modelData.muted ? controller.dim : controller.contentForeground
                             font.family: controller.contentFontFamily
                             font.pixelSize: Style.font.bodySmall
                             font.bold: true
