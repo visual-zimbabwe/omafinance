@@ -38,6 +38,7 @@ Panel {
     property var gridZooms: [-1, -1, -1, -1, -1]
     property var gridSplits: ({})
     property var activeGridWindows: []
+    property var activeSectorWindows: []
     property var layouts: ({})
     property string activeLayoutName: ""
     property string layoutActionStatus: ""
@@ -2361,6 +2362,89 @@ Panel {
                     }
                     root.activeGridWindows = remaining;
                     gridWin.destroy();
+                }
+            }
+        }
+    }
+
+    function openSectorAnalysis(sectorSym) {
+        root.openSectorAnalysisWindow(sectorSym);
+    }
+
+    function openSectorBreadth() {
+        root.openSectorAnalysisWindow("SMH");
+    }
+
+    function openSectorAnalysisWindow(sectorSym) {
+        var sym = (sectorSym && typeof sectorSym === "string" && sectorSym.trim() !== "") ? sectorSym.trim().toUpperCase() : "SMH";
+        root.close();
+
+        if (root.activeSectorWindows && root.activeSectorWindows.length > 0) {
+            for (var i = 0; i < root.activeSectorWindows.length; i++) {
+                var existing = root.activeSectorWindows[i];
+                if (existing && existing.visible) {
+                    existing.sectorSymbol = sym;
+                    existing.forceActiveFocus();
+                    return;
+                }
+            }
+        }
+
+        var nextWindows = [];
+        for (var j = 0; j < (root.activeSectorWindows || []).length; j++) {
+            if (root.activeSectorWindows[j] && root.activeSectorWindows[j].visible)
+                nextWindows.push(root.activeSectorWindows[j]);
+        }
+
+        var win = sectorAnalysisComponent.createObject(root, {
+            sectorSymbol: sym,
+            discordWebhook: root.discordWebhook,
+            alertsMuted: root.alertsMuted,
+            alertsMuteStatus: root.alertsMuteStatus,
+            symbolLevels: root.symbolLevels || ({})
+        });
+
+        if (win) {
+            nextWindows.push(win);
+            root.activeSectorWindows = nextWindows;
+        }
+    }
+
+    Component {
+        id: sectorAnalysisComponent
+        SectorAnalysisWindow {
+            id: secWin
+            visible: true
+            discordWebhook: root.discordWebhook
+            alertsMuted: root.alertsMuted
+            alertsMuteStatus: root.alertsMuteStatus
+
+            onSymbolLevelsChangedExternally: function (sym, nextLevels) {
+                if (!sym)
+                    return;
+                var nextMap = Object.assign({}, root.symbolLevels || ({}));
+                nextMap[sym] = nextLevels || [];
+                root.symbolLevels = nextMap;
+                root.syncActiveGridsAlertState();
+                root.persist();
+            }
+
+            onAlertDispatchRequested: function (alert) {
+                root.dispatchAlert(alert);
+            }
+
+            onAlertsMuteToggleRequested: root.toggleAlertsMute()
+
+            onVisibleChanged: {
+                if (!visible) {
+                    var remaining = [];
+                    for (var i = 0; i < (root.activeSectorWindows || []).length; i++) {
+                        var w = root.activeSectorWindows[i];
+                        if (w && w !== secWin && w.visible)
+                            remaining.push(w);
+                    }
+                    root.activeSectorWindows = remaining;
+                    secWin.destroy();
                 }
             }
         }

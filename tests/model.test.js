@@ -3391,3 +3391,63 @@ test("alert log keeps the muted flag", () => {
   assert.equal(log2[0].muted, false)
   assert.equal(log2[1].muted, true)
 })
+
+test("sector analysis: sector definitions, query parsing, scenario matching, and sorting", () => {
+  // 1. Sector Definitions
+  const smh = Model.getSectorInfo("SMH")
+  assert.equal(smh.symbol, "SMH")
+  assert.equal(smh.name, "VanEck Semiconductor ETF")
+  const xlc = Model.getSectorInfo("xlc")
+  assert.equal(xlc.symbol, "XLC")
+  assert.equal(Model.getSectorInfo("XYZ"), null)
+
+  // 2. Query Parsing
+  assert.deepEqual(Model.parseScenarioQuery("1, hammer, 2dg"), [["1"], ["hammer"], ["2dg"]])
+  assert.deepEqual(Model.parseScenarioQuery("2u if, 3"), [["2u", "if"], ["3"]])
+  assert.deepEqual(Model.parseScenarioQuery(""), [])
+  assert.deepEqual(Model.parseScenarioQuery("   "), [])
+
+  // 3. Scenario Matching
+  const prevBar = { open: 100, high: 110, low: 90, close: 105 }
+  const insideBar = [{ open: 98, high: 108, low: 92, close: 102 }, prevBar, { open: 100, high: 105, low: 95, close: 102 }]
+  // insideBar: last candle is high 105 < 110, low 95 > 90 -> 1 inside bar
+  assert.equal(Model.matchesScenarioQuery(insideBar, null, "1"), true)
+  assert.equal(Model.matchesScenarioQuery(insideBar, null, "2u"), false)
+  assert.equal(Model.matchesScenarioQuery(insideBar, null, "1, hammer, 2dg"), true)
+
+  // 2u in force
+  const twoUBar = [prevBar, { open: 105, high: 115, low: 95, close: 112 }]
+  assert.equal(Model.matchesScenarioQuery(twoUBar, null, "2u"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUBar, null, "2u if"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUBar, null, "2d"), false)
+
+  // 2d Green (hammer-type / rejection)
+  const twoDgBar = [prevBar, { open: 88, high: 108, low: 85, close: 95 }]
+  assert.equal(Model.matchesScenarioQuery(twoDgBar, null, "2dg"), true)
+  assert.equal(Model.matchesScenarioQuery(twoDgBar, null, "2dr"), false)
+
+  // 4. Sorting
+  const holdings = [
+    { symbol: "AMD", pctVal: 5.6, valUSD: 4000, price: 150 },
+    { symbol: "NVDA", pctVal: 17.5, valUSD: 13000, price: 140 },
+    { symbol: "TSM", pctVal: 9.3, valUSD: 7000, price: 190 }
+  ]
+  const byWeightDesc = Model.sortSectorHoldings(holdings, "weight", "desc")
+  assert.equal(byWeightDesc[0].symbol, "NVDA")
+  assert.equal(byWeightDesc[1].symbol, "TSM")
+  assert.equal(byWeightDesc[2].symbol, "AMD")
+
+  const byWeightAsc = Model.sortSectorHoldings(holdings, "weight", "asc")
+  assert.equal(byWeightAsc[0].symbol, "AMD")
+  assert.equal(byWeightAsc[2].symbol, "NVDA")
+
+  const quotes = {
+    "NVDA": { regularMarketPrice: 140 },
+    "TSM": { regularMarketPrice: 190 },
+    "AMD": { regularMarketPrice: 150 }
+  }
+  const byPriceDesc = Model.sortSectorHoldings(holdings, "price", "desc", quotes)
+  assert.equal(byPriceDesc[0].symbol, "TSM")
+  assert.equal(byPriceDesc[1].symbol, "AMD")
+  assert.equal(byPriceDesc[2].symbol, "NVDA")
+})

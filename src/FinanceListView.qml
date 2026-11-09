@@ -84,6 +84,17 @@ Column {
             }
 
             PanelActionButton {
+                id: sectorBtn
+                iconText: "\uf080"
+                tooltipText: "Sector Analysis & Scanner"
+                foreground: controller.dim
+                fontFamily: controller.contentFontFamily
+                hasCursor: controller.listChrome === "sector"
+                bordered: controller.listChrome === "sector"
+                onClicked: controller.openSectorAnalysis()
+            }
+
+            PanelActionButton {
                 id: gearBtn
                 iconText: "\uf013"
                 tooltipText: "Settings"

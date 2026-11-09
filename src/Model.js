@@ -7170,6 +7170,172 @@ function computeActiveBroadening(candles, lookbackBars, anchorMode) {
   return result;
 }
 
+var sectorBaskets = {
+  "SMH": { symbol: "SMH", name: "VanEck Semiconductor ETF", holdingsFile: "SMH.json" },
+  "XLC": { symbol: "XLC", name: "Communication Services Select Sector SPDR Fund", holdingsFile: "XLC.json" }
+};
+
+function getSectorInfo(symbol) {
+  var sym = normalizeSymbol(symbol);
+  return sectorBaskets[sym] || null;
+}
+
+function parseScenarioQuery(query) {
+  if (!query || typeof query !== "string") return [];
+  var trimmed = query.trim();
+  if (!trimmed) return [];
+  var clauses = trimmed.split(",");
+  var result = [];
+  for (var i = 0; i < clauses.length; i++) {
+    var raw = clauses[i].trim();
+    if (!raw) continue;
+    var tokens = raw.split(/\s+/).filter(function(t) { return t.length > 0; });
+    if (tokens.length > 0) {
+      result.push(tokens.map(function(t) { return t.toLowerCase(); }));
+    }
+  }
+  return result;
+}
+
+function matchesScenarioTokens(candles, quote, tokens) {
+  if (!tokens || tokens.length === 0) return true;
+  if (!Array.isArray(candles) || candles.length < 2) return false;
+
+  var n = candles.length;
+  var cLast = Object.assign({}, candles[n - 1]);
+  var cPrev = candles[n - 2];
+  var cTwo = n >= 3 ? candles[n - 3] : null;
+
+  var livePx = stratLivePrice(quote);
+  if (livePx !== null && isFinite(livePx)) {
+    cLast.close = livePx;
+    if (cLast.high === null || livePx > cLast.high) cLast.high = livePx;
+    if (cLast.low === null || livePx < cLast.low) cLast.low = livePx;
+  }
+
+  var open = Number(cLast.open);
+  var high = Number(cLast.high);
+  var low = Number(cLast.low);
+  var close = Number(cLast.close);
+  var prevHigh = Number(cPrev.high);
+  var prevLow = Number(cPrev.low);
+
+  var sc = stratScenario(cLast, cPrev);
+  var scPrev = cTwo ? stratScenario(cPrev, cTwo) : null;
+  var isGreen = close >= open;
+  var isRed = close < open;
+  var range = high - low;
+
+  var inForce = false;
+  if (sc === "2u" && close >= prevHigh) inForce = true;
+  if (sc === "2d" && close <= prevLow) inForce = true;
+
+  var isHammer = false;
+  var isShooter = false;
+  if (range > 0) {
+    var upperWick = high - Math.max(open, close);
+    var lowerWick = Math.min(open, close) - low;
+    if (lowerWick >= (range * 0.45) && upperWick <= (range * 0.30)) {
+      isHammer = true;
+    }
+    if (upperWick >= (range * 0.45) && lowerWick <= (range * 0.30)) {
+      isShooter = true;
+    }
+  }
+
+  for (var i = 0; i < tokens.length; i++) {
+    var t = tokens[i];
+    if (t === "1" || t === "inside") {
+      if (sc !== "1") return false;
+    } else if (t === "2u") {
+      if (sc !== "2u") return false;
+    } else if (t === "2d") {
+      if (sc !== "2d") return false;
+    } else if (t === "3" || t === "outside") {
+      if (sc !== "3") return false;
+    } else if (t === "2ug") {
+      if (sc !== "2u" || !isGreen) return false;
+    } else if (t === "2ur") {
+      if (sc !== "2u" || !isRed) return false;
+    } else if (t === "2dg") {
+      if (sc !== "2d" || !isGreen) return false;
+    } else if (t === "2dr") {
+      if (sc !== "2d" || !isRed) return false;
+    } else if (t === "g" || t === "green") {
+      if (!isGreen) return false;
+    } else if (t === "r" || t === "red") {
+      if (!isRed) return false;
+    } else if (t === "hammer") {
+      if (!isHammer) return false;
+    } else if (t === "shooter") {
+      if (!isShooter) return false;
+    } else if (t === "if" || t === "inforce") {
+      if (!inForce) return false;
+    } else if (t === "2-1-2") {
+      if (scPrev !== "1" || (sc !== "2u" && sc !== "2d")) return false;
+    } else if (t === "2-2") {
+      if ((scPrev !== "2u" && scPrev !== "2d") || (sc !== "2u" && sc !== "2d")) return false;
+    } else if (t === "3-2") {
+      if (scPrev !== "3" || (sc !== "2u" && sc !== "2d")) return false;
+    } else if (t === "revstrat" || t === "1-3") {
+      var is13 = (scPrev === "1" && sc === "3");
+      var is32 = (scPrev === "3" && (sc === "2u" || sc === "2d"));
+      if (!is13 && !is32) return false;
+    }
+  }
+  return true;
+}
+
+function matchesScenarioQuery(candles, quote, query) {
+  var clauses = parseScenarioQuery(query);
+  if (clauses.length === 0) return true;
+  for (var i = 0; i < clauses.length; i++) {
+    if (matchesScenarioTokens(candles, quote, clauses[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sortSectorHoldings(holdings, sortField, sortDirection, quotesMap) {
+  if (!Array.isArray(holdings)) return [];
+  var list = holdings.slice();
+  var field = (sortField || "weight").toLowerCase();
+  var isAsc = (sortDirection || "desc").toLowerCase() === "asc";
+  var sign = isAsc ? 1 : -1;
+
+  list.sort(function(a, b) {
+    if (field === "weight") {
+      var wa = Number(a.pctVal || a.weight || 0);
+      var wb = Number(b.pctVal || b.weight || 0);
+      if (wa !== wb) return (wa - wb) * sign;
+    } else if (field === "mcap" || field === "market cap") {
+      var ma = Number(a.valUSD || a.marketCap || 0);
+      var mb = Number(b.valUSD || b.marketCap || 0);
+      if (ma !== mb) return (ma - mb) * sign;
+    } else if (field === "price") {
+      var qa = quotesMap ? quotesMap[a.symbol] : null;
+      var qb = quotesMap ? quotesMap[b.symbol] : null;
+      var pa = stratLivePrice(qa) || Number(qa && qa.regularMarketPrice) || 0;
+      var pb = stratLivePrice(qb) || Number(qb && qb.regularMarketPrice) || 0;
+      if (pa !== pb) return (pa - pb) * sign;
+    } else if (field === "change" || field === "change %") {
+      var qa2 = quotesMap ? quotesMap[a.symbol] : null;
+      var qb2 = quotesMap ? quotesMap[b.symbol] : null;
+      var ca = Number(qa2 && qa2.regularMarketChangePercent) || 0;
+      var cb = Number(qb2 && qb2.regularMarketChangePercent) || 0;
+      if (ca !== cb) return (ca - cb) * sign;
+    } else if (field === "atr" || field === "atr %") {
+      var aa = Number(a.atrPercent || 0);
+      var ab = Number(b.atrPercent || 0);
+      if (aa !== ab) return (aa - ab) * sign;
+    }
+    return String(a.symbol || "").localeCompare(String(b.symbol || ""));
+  });
+
+  return list;
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -7317,7 +7483,13 @@ if (typeof module !== "undefined") {
     normalizeAlertsMutedUntil: normalizeAlertsMutedUntil,
     isAlertsMuted: isAlertsMuted,
     alertsMuteUntilForMode: alertsMuteUntilForMode,
-    alertsMuteStatusText: alertsMuteStatusText
+    alertsMuteStatusText: alertsMuteStatusText,
+    sectorBaskets: sectorBaskets,
+    getSectorInfo: getSectorInfo,
+    parseScenarioQuery: parseScenarioQuery,
+    matchesScenarioTokens: matchesScenarioTokens,
+    matchesScenarioQuery: matchesScenarioQuery,
+    sortSectorHoldings: sortSectorHoldings
   }
 }
 

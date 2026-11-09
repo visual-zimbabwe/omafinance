@@ -19,7 +19,8 @@ const qmlFiles = [
   "GridCell.qml",
   "GridWindow.qml",
   "BasketSupportPopup.qml",
-  "FinanceAlertsView.qml"
+  "FinanceAlertsView.qml",
+  "SectorAnalysisWindow.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
