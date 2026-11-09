@@ -243,7 +243,7 @@ FloatingWindow {
         onTriggered: root.refreshBatchQuotes()
     }
 
-    // Chart Fetch Engine
+    // Chart Fetch Engine (Multi-Worker Parallel Fetching)
     function cacheKey(sym, tf) {
         return sym + ":" + tf;
     }
@@ -253,9 +253,9 @@ FloatingWindow {
         return root.chartCache[key] || [];
     }
 
-    function requestChartFetch(sym, tf, force) {
+    function queueFetch(sym, tf, force) {
         var key = cacheKey(sym, tf);
-        if (!force && root.chartCache[key])
+        if (!force && root.chartCache[key] && root.chartCache[key].length > 0)
             return;
         for (var i = 0; i < root.pendingFetches.length; i++) {
             if (root.pendingFetches[i].symbol === sym && root.pendingFetches[i].rangeKey === tf)
@@ -265,62 +265,181 @@ FloatingWindow {
             symbol: sym,
             rangeKey: tf
         });
-        if (!chartFetchProc.running)
-            processNextFetch();
+        triggerWorkers();
     }
 
-    property string currentFetchSymbol: ""
-    property string currentFetchRange: ""
+    function requestChartFetch(sym, tf, force) {
+        queueFetch(sym, tf, force);
+    }
 
-    function processNextFetch() {
-        if (root.pendingFetches.length === 0)
-            return;
-        var next = root.pendingFetches.shift();
-        currentFetchSymbol = next.symbol;
-        currentFetchRange = next.rangeKey;
+    function triggerWorkers() {
+        if (!worker0.running && root.pendingFetches.length > 0)
+            worker0.startNext();
+        if (!worker1.running && root.pendingFetches.length > 0)
+            worker1.startNext();
+        if (!worker2.running && root.pendingFetches.length > 0)
+            worker2.startNext();
+        if (!worker3.running && root.pendingFetches.length > 0)
+            worker3.startNext();
+    }
 
-        var rangeSpec = Model.chartSpec(currentFetchRange);
-        if (!rangeSpec) {
-            processNextFetch();
-            return;
+    function handleWorkerResult(sym, tf, raw, exitCode) {
+        if (exitCode === 0 && raw) {
+            try {
+                var parsed = Model.parseChart(raw, tf, sym);
+                if (parsed && Array.isArray(parsed.candles) && parsed.candles.length > 0) {
+                    var k = root.cacheKey(sym, tf);
+                    var nextCache = Object.assign({}, root.chartCache);
+                    nextCache[k] = parsed.candles;
+                    root.chartCache = nextCache;
+
+                    if (parsed.symbol && (!root.quotes[sym] || tf === "60" || tf === "30")) {
+                        var nextQuotes = Object.assign({}, root.quotes);
+                        nextQuotes[sym] = parsed;
+                        root.quotes = nextQuotes;
+                    }
+                }
+            } catch (e) {
+                console.log("[SectorAnalysis] Chart parse error:", sym, tf, e);
+            }
         }
-        var cmd = Model.chartCommand(currentFetchSymbol, currentFetchRange, rangeSpec);
-        chartFetchProc.command = cmd;
-        chartFetchProc.running = true;
+        Qt.callLater(root.triggerWorkers);
     }
 
     Process {
-        id: chartFetchProc
-        onExited: function (exitCode) {
-            var raw = String(chartFetchStdout.text || "").trim();
-            if (exitCode === 0 && raw) {
-                try {
-                    var candles = Model.parseChart(raw, currentFetchRange);
-                    if (candles && candles.length > 0) {
-                        var k = cacheKey(currentFetchSymbol, currentFetchRange);
-                        var nextCache = Object.assign({}, root.chartCache);
-                        nextCache[k] = candles;
-                        root.chartCache = nextCache;
-                    }
-                } catch (e) {
-                    console.log("[SectorAnalysis] Chart parse error:", currentFetchSymbol, currentFetchRange, e);
-                }
+        id: worker0
+        property string curSym: ""
+        property string curRange: ""
+        function startNext() {
+            if (root.pendingFetches.length === 0 || running)
+                return;
+            var next = root.pendingFetches.shift();
+            curSym = next.symbol;
+            curRange = next.rangeKey;
+            var spec = Model.chartSpec(curRange);
+            if (!spec) {
+                Qt.callLater(root.triggerWorkers);
+                return;
             }
-            if (root.pendingFetches.length > 0)
-                processNextFetch();
+            command = Model.chartCommand(curSym, curRange, spec);
+            running = true;
+        }
+        onExited: function (exitCode) {
+            root.handleWorkerResult(curSym, curRange, worker0Out.text, exitCode);
         }
         stdout: StdioCollector {
-            id: chartFetchStdout
+            id: worker0Out
+            waitForEnd: true
+        }
+    }
+
+    Process {
+        id: worker1
+        property string curSym: ""
+        property string curRange: ""
+        function startNext() {
+            if (root.pendingFetches.length === 0 || running)
+                return;
+            var next = root.pendingFetches.shift();
+            curSym = next.symbol;
+            curRange = next.rangeKey;
+            var spec = Model.chartSpec(curRange);
+            if (!spec) {
+                Qt.callLater(root.triggerWorkers);
+                return;
+            }
+            command = Model.chartCommand(curSym, curRange, spec);
+            running = true;
+        }
+        onExited: function (exitCode) {
+            root.handleWorkerResult(curSym, curRange, worker1Out.text, exitCode);
+        }
+        stdout: StdioCollector {
+            id: worker1Out
+            waitForEnd: true
+        }
+    }
+
+    Process {
+        id: worker2
+        property string curSym: ""
+        property string curRange: ""
+        function startNext() {
+            if (root.pendingFetches.length === 0 || running)
+                return;
+            var next = root.pendingFetches.shift();
+            curSym = next.symbol;
+            curRange = next.rangeKey;
+            var spec = Model.chartSpec(curRange);
+            if (!spec) {
+                Qt.callLater(root.triggerWorkers);
+                return;
+            }
+            command = Model.chartCommand(curSym, curRange, spec);
+            running = true;
+        }
+        onExited: function (exitCode) {
+            root.handleWorkerResult(curSym, curRange, worker2Out.text, exitCode);
+        }
+        stdout: StdioCollector {
+            id: worker2Out
+            waitForEnd: true
+        }
+    }
+
+    Process {
+        id: worker3
+        property string curSym: ""
+        property string curRange: ""
+        function startNext() {
+            if (root.pendingFetches.length === 0 || running)
+                return;
+            var next = root.pendingFetches.shift();
+            curSym = next.symbol;
+            curRange = next.rangeKey;
+            var spec = Model.chartSpec(curRange);
+            if (!spec) {
+                Qt.callLater(root.triggerWorkers);
+                return;
+            }
+            command = Model.chartCommand(curSym, curRange, spec);
+            running = true;
+        }
+        onExited: function (exitCode) {
+            root.handleWorkerResult(curSym, curRange, worker3Out.text, exitCode);
+        }
+        stdout: StdioCollector {
+            id: worker3Out
             waitForEnd: true
         }
     }
 
     function refreshVisibleCharts(force) {
         var syms = getAllSymbols();
+        // 1. Priority 1: active timeframe for ALL symbols
         for (var i = 0; i < syms.length; i++) {
-            requestChartFetch(syms[i], root.timeframe, force);
-            requestChartFetch(syms[i], "60", force);
-            requestChartFetch(syms[i], "1D", force);
+            queueFetch(syms[i], root.timeframe, force);
+        }
+        // 2. Priority 2: 1D and 60m for breadth calculations
+        if (root.timeframe !== "1D") {
+            for (var j = 0; j < syms.length; j++) {
+                queueFetch(syms[j], "1D", force);
+            }
+        }
+        if (root.timeframe !== "60") {
+            for (var k = 0; k < syms.length; k++) {
+                queueFetch(syms[k], "60", force);
+            }
+        }
+    }
+
+    onInDrillDownChanged: {
+        if (root.inDrillDown && root.drillDownSymbol) {
+            queueFetch(root.drillDownSymbol, "30", false);
+            queueFetch(root.drillDownSymbol, "60", false);
+            queueFetch(root.drillDownSymbol, "1D", false);
+            queueFetch(root.drillDownSymbol, "1W", false);
+            queueFetch(root.drillDownSymbol, "1M", false);
         }
     }
 
@@ -809,7 +928,6 @@ FloatingWindow {
                 Grid {
                     anchors.fill: parent
                     columns: gridViewport.cols
-                    rows: gridViewport.rows
                     spacing: 0
 
                     Repeater {
