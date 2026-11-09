@@ -630,4 +630,22 @@ test("grid window supports F fullscreen toggle, Tab/Backtab timeframe cycling in
   assert.match(panel, /previousGridMode:\s*baseMode/)
 })
 
+test("sector analysis window supports multi-tier recursive locking, 4-worker chart engine, and 2+3 drilldown", () => {
+  const win = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+
+  assert.match(win, /property var lockStack:\s*\[\]/)
+  assert.match(win, /function pushLockTier\(\)/)
+  assert.match(win, /function popLockTier\(targetLength\)/)
+  assert.match(win, /function clearLockStack\(\)/)
+  assert.match(win, /function getTierHoldingsCount\(tierIdx\)/)
+  assert.match(win, /readonly property int activeLockedHoldingsCount:/)
+  assert.match(win, /readonly property bool canLockNextTier:/)
+  assert.match(win, /onSectorSymbolChanged:\s*\{[\s\S]*?root\.clearLockStack\(\)/)
+  assert.match(win, /id:\s*lockBtn/)
+  assert.match(win, /\(Locked\)/)
+  assert.match(cell, /companyName/)
+  assert.match(cell, /hideStratBadge/)
+})
+
 

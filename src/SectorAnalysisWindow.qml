@@ -23,6 +23,9 @@ FloatingWindow {
     property bool inDrillDown: false
     property string drillDownSymbol: ""
 
+    property var lockStack: []
+    readonly property var activeLockedSymbols: (root.lockStack && root.lockStack.length > 0) ? root.lockStack[root.lockStack.length - 1] : null
+
     property var holdings: []
     property var quotes: ({})
     property var chartCache: ({})
@@ -55,7 +58,72 @@ FloatingWindow {
     }
 
     onSectorSymbolChanged: {
+        root.clearLockStack();
         loadHoldingsForSector(root.sectorSymbol);
+    }
+
+    function getTierHoldingsCount(tierIdx) {
+        if (!root.lockStack || tierIdx < 0 || tierIdx >= root.lockStack.length)
+            return 0;
+        var list = root.lockStack[tierIdx];
+        var c = 0;
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] !== root.sectorSymbol)
+                c++;
+        }
+        return c;
+    }
+
+    readonly property int activeLockedHoldingsCount: {
+        if (!root.activeLockedSymbols)
+            return root.totalHoldingsCount;
+        var c = 0;
+        for (var i = 0; i < root.activeLockedSymbols.length; i++) {
+            if (root.activeLockedSymbols[i] !== root.sectorSymbol)
+                c++;
+        }
+        return c;
+    }
+
+    readonly property bool canLockNextTier: {
+        if (root.matchingHoldingsCount === 0)
+            return false;
+        if (root.lockStack.length === 0)
+            return true;
+        return root.matchingHoldingsCount < root.activeLockedHoldingsCount;
+    }
+
+    function pushLockTier() {
+        if (!root.filteredTiles || root.filteredTiles.length === 0)
+            return;
+        var symbols = [];
+        for (var i = 0; i < root.filteredTiles.length; i++) {
+            symbols.push(root.filteredTiles[i].symbol);
+        }
+        var nextStack = root.lockStack ? root.lockStack.slice() : [];
+        nextStack.push(symbols);
+        root.lockStack = nextStack;
+        root.activeTileIndex = 0;
+        if (typeof scenarioField !== "undefined") {
+            scenarioField.text = "";
+            root.scenarioFilter = "";
+        }
+    }
+
+    function popLockTier(targetLength) {
+        if (!root.lockStack || targetLength <= 0 || targetLength > root.lockStack.length)
+            return;
+        root.lockStack = root.lockStack.slice(0, targetLength);
+        root.activeTileIndex = 0;
+    }
+
+    function clearLockStack() {
+        root.lockStack = [];
+        root.activeTileIndex = 0;
+        if (typeof scenarioField !== "undefined") {
+            scenarioField.text = "";
+            root.scenarioFilter = "";
+        }
     }
 
     onTimeframeChanged: {
@@ -134,27 +202,31 @@ FloatingWindow {
         return Model.computeBasketAttackMetrics(root.sectorSymbol, root.sectorFullName, "Sector", root.holdings, dailyCandlesMap, root.quotes, root.timeframe);
     }
 
-    // Filter and Sort Engine
+    // Filter and Sort Engine (Evaluates against active locked sub-universe if active)
     readonly property var filteredTiles: {
         var list = [];
         var filterQuery = (root.scenarioFilter || "").trim();
+        var lockedSyms = root.activeLockedSymbols;
 
         // 1. Sector ETF Benchmark Tile Candidate
         var etfSymbol = root.sectorSymbol;
-        var etfCandles = root.getCandles(etfSymbol, root.timeframe);
-        var etfQuote = root.quotes[etfSymbol] || null;
-        var etfMatches = true;
-        if (filterQuery.length > 0) {
-            etfMatches = Model.matchesScenarioQuery(etfCandles, etfQuote, filterQuery);
-        }
-        if (etfMatches) {
-            list.push({
-                symbol: etfSymbol,
-                name: root.sectorFullName + " (Sector ETF)",
-                isEtf: true,
-                pctVal: 100,
-                valUSD: 0
-            });
+        var etfInUniverse = (!lockedSyms || lockedSyms.indexOf(etfSymbol) !== -1);
+        if (etfInUniverse) {
+            var etfCandles = root.getCandles(etfSymbol, root.timeframe);
+            var etfQuote = root.quotes[etfSymbol] || null;
+            var etfMatches = true;
+            if (filterQuery.length > 0) {
+                etfMatches = Model.matchesScenarioQuery(etfCandles, etfQuote, filterQuery);
+            }
+            if (etfMatches) {
+                list.push({
+                    symbol: etfSymbol,
+                    name: root.sectorFullName + " (Sector ETF)",
+                    isEtf: true,
+                    pctVal: 100,
+                    valUSD: 0
+                });
+            }
         }
 
         // 2. Component Holdings
@@ -164,6 +236,9 @@ FloatingWindow {
             if (!h || !h.symbol || h.delisted)
                 continue;
             var cSym = h.symbol;
+            if (lockedSyms && lockedSyms.indexOf(cSym) === -1)
+                continue;
+
             var cCandles = root.getCandles(cSym, root.timeframe);
             var cQuote = root.quotes[cSym] || null;
 
@@ -736,6 +811,155 @@ FloatingWindow {
                             }
                         }
 
+                        // Lock Control (Option B: Recursive Multi-Tier Funneling)
+                        Rectangle {
+                            id: lockBtn
+                            height: Style.space(24)
+                            implicitWidth: lockRow.implicitWidth + Style.space(16)
+                            radius: Style.space(4)
+                            color: root.lockStack.length > 0 ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16) : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+                            border.color: root.lockStack.length > 0 ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
+                            border.width: 1
+                            opacity: (root.lockStack.length === 0 && root.matchingHoldingsCount === 0) ? 0.4 : 1.0
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Row {
+                                id: lockRow
+                                anchors.centerIn: parent
+                                spacing: Style.space(4)
+
+                                // Lock Icon
+                                Text {
+                                    textFormat: Text.PlainText
+                                    text: "\uf023"
+                                    color: root.lockStack.length > 0 ? Color.accent : (root.matchingHoldingsCount === 0 ? root.dim : root.foreground)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.caption
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                // Unlocked State: "LOCK" label
+                                Text {
+                                    visible: root.lockStack.length === 0
+                                    textFormat: Text.PlainText
+                                    text: "LOCK"
+                                    color: root.matchingHoldingsCount === 0 ? root.dim : root.foreground
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.caption
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                // Locked State: Breadcrumb Tiers
+                                Repeater {
+                                    model: root.lockStack.length
+
+                                    Row {
+                                        id: tierItem
+                                        required property int index
+                                        spacing: Style.space(4)
+                                        anchors.verticalCenter: parent.verticalCenter
+
+                                        Text {
+                                            visible: tierItem.index > 0
+                                            textFormat: Text.PlainText
+                                            text: "▸"
+                                            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.4)
+                                            font.family: root.fontFamily
+                                            font.pixelSize: Style.font.caption
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+
+                                        Text {
+                                            id: tierText
+                                            textFormat: Text.PlainText
+                                            text: "" + root.getTierHoldingsCount(tierItem.index)
+                                            color: tierItem.index === (root.lockStack.length - 1) ? Color.accent : (tierHover.hovered ? root.foreground : root.dim)
+                                            font.family: root.fontFamily
+                                            font.pixelSize: Style.font.caption
+                                            font.bold: true
+                                            anchors.verticalCenter: parent.verticalCenter
+
+                                            MouseArea {
+                                                id: tierHover
+                                                anchors.fill: parent
+                                                anchors.margins: -Style.space(2)
+                                                hoverEnabled: true
+                                                enabled: tierItem.index < (root.lockStack.length - 1)
+                                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                onClicked: root.popLockTier(tierItem.index + 1)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Stack Next Tier Trigger (+N)
+                                Item {
+                                    visible: root.lockStack.length > 0 && root.canLockNextTier
+                                    width: addNextTierText.implicitWidth + Style.space(4)
+                                    height: addNextTierText.implicitHeight
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Text {
+                                        id: addNextTierText
+                                        anchors.centerIn: parent
+                                        textFormat: Text.PlainText
+                                        text: "(+" + root.matchingHoldingsCount + ")"
+                                        color: nextTierHover.hovered ? root.foreground : Color.accent
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                        font.bold: true
+                                    }
+
+                                    MouseArea {
+                                        id: nextTierHover
+                                        anchors.fill: parent
+                                        anchors.margins: -Style.space(2)
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.pushLockTier()
+                                    }
+                                }
+
+                                // Clear Lock Stack [✕]
+                                Item {
+                                    visible: root.lockStack.length > 0
+                                    width: clearText.implicitWidth + Style.space(4)
+                                    height: clearText.implicitHeight
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    Text {
+                                        id: clearText
+                                        anchors.centerIn: parent
+                                        textFormat: Text.PlainText
+                                        text: "✕"
+                                        color: clearHover.hovered ? root.foreground : root.dim
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                        font.bold: true
+                                    }
+
+                                    MouseArea {
+                                        id: clearHover
+                                        anchors.fill: parent
+                                        anchors.margins: -Style.space(3)
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.clearLockStack()
+                                    }
+                                }
+                            }
+
+                            // Click handler for unlocked state
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: root.lockStack.length === 0 && root.matchingHoldingsCount > 0
+                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                onClicked: root.pushLockTier()
+                            }
+                        }
+
                         // Sort Selector Button
                         Rectangle {
                             height: Style.space(24)
@@ -875,7 +1099,7 @@ FloatingWindow {
                     }
 
                     Item {
-                        width: masterHeader.width - parent.children[0].implicitWidth - showingTextItem.implicitWidth - Style.space(24)
+                        width: Math.max(0, parent.width - parent.children[0].implicitWidth - showingTextItem.implicitWidth)
                         height: 1
                     }
 
@@ -889,8 +1113,8 @@ FloatingWindow {
                         Text {
                             id: showingText
                             textFormat: Text.PlainText
-                            text: "Showing: " + root.matchingHoldingsCount + "/" + root.totalHoldingsCount
-                            color: root.dim
+                            text: root.lockStack.length > 0 ? ("Showing: " + root.matchingHoldingsCount + "/" + root.activeLockedHoldingsCount + " (Locked)") : ("Showing: " + root.matchingHoldingsCount + "/" + root.totalHoldingsCount)
+                            color: root.lockStack.length > 0 ? Color.accent : root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
                             font.bold: true
