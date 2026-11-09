@@ -55,7 +55,11 @@ FloatingWindow {
     signal stateSaveRequested(string mode, var sync, var symbols, var splits)
     signal symbolLevelsChangedExternally(string sym, var nextLevels)
     signal signalStatesUpdated(var nextStates)
-    signal alertEventTriggered(var logEntry)
+    // Delivery (notification, sound, Discord, log) is owned by Panel.dispatchAlert so mute applies everywhere.
+    signal alertDispatchRequested(var alert)
+    signal alertsMuteToggleRequested
+    property bool alertsMuted: false
+    property string alertsMuteStatus: ""
 
     function setReplayCutoff(ts) {
         root.replayCutoffTs = (isFinite(ts) && ts > 0) ? ts : 0;
@@ -306,18 +310,6 @@ FloatingWindow {
         }
     }
 
-    Process {
-        id: stratNotifyProc
-    }
-
-    Process {
-        id: stratSoundProc
-    }
-
-    Process {
-        id: stratDiscordProc
-    }
-
     property var signalStates: ({})
 
     function evaluateActivePriceLevelAlerts(incomingQuotes) {
@@ -345,20 +337,12 @@ FloatingWindow {
                 root.symbolLevelsChangedExternally(sym, res.nextLevels);
                 for (var t = 0; t < res.triggered.length; t++) {
                     var ev = res.triggered[t];
-                    stratNotifyProc.command = ["notify-send", "-a", "Omafinance", "-u", "normal", ev.title, ev.body];
-                    stratNotifyProc.running = true;
-                    stratSoundProc.command = ["pw-play", "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"];
-                    stratSoundProc.running = true;
-                    var webhook = root.discordWebhook;
-                    if (webhook && webhook.indexOf("https://discord.com/api/webhooks/") === 0) {
-                        var payload = Model.discordPriceAlertPayload(sym, ev.level, ev.currentPrice, ev.direction);
-                        if (payload) {
-                            stratDiscordProc.command = ["curl", "-fsS", "-H", "Content-Type: application/json", "-X", "POST", "-d", payload, webhook];
-                            stratDiscordProc.running = true;
-                        }
-                    }
-                    if (ev.logEntry)
-                        root.alertEventTriggered(ev.logEntry);
+                    root.alertDispatchRequested({
+                        title: ev.title,
+                        body: ev.body,
+                        discordPayload: ev.discordPayload,
+                        logEntry: ev.logEntry
+                    });
                 }
             }
         }
@@ -388,27 +372,12 @@ FloatingWindow {
         if (!transition.shouldNotify || !transition.eventType)
             return;
 
-        var eventType = transition.eventType;
-        var title = transition.title;
-        var body = transition.body;
-
-        if (transition.logEntry)
-            root.alertEventTriggered(transition.logEntry);
-
-        stratNotifyProc.command = ["notify-send", "-a", "Omafinance", "-u", "normal", title, body];
-        stratNotifyProc.running = true;
-
-        stratSoundProc.command = ["pw-play", "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"];
-        stratSoundProc.running = true;
-
-        var webhook = root.discordWebhook;
-        if (webhook && webhook.indexOf("https://discord.com/api/webhooks/") === 0) {
-            var payload = Model.discordAlertPayload(chk, eventType);
-            if (payload) {
-                stratDiscordProc.command = ["curl", "-fsS", "-H", "Content-Type: application/json", "-X", "POST", "-d", payload, webhook];
-                stratDiscordProc.running = true;
-            }
-        }
+        root.alertDispatchRequested({
+            title: transition.title,
+            body: transition.body,
+            discordPayload: Model.discordAlertPayload(chk, transition.eventType),
+            logEntry: transition.logEntry
+        });
     }
 
     Timer {
@@ -1231,6 +1200,29 @@ FloatingWindow {
                                 root.saveGridState();
                             }
                         }
+                    }
+
+                    Text {
+                        id: alertsMuteToggle
+                        textFormat: Text.PlainText
+                        text: "ALERTS " + (root.alertsMuted ? "[MUTED]" : "[ON]")
+                        color: root.alertsMuted ? Color.urgent : root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        font.bold: true
+
+                        MouseArea {
+                            id: alertsMuteMouse
+                            anchors.fill: parent
+                            anchors.margins: -Style.space(4)
+                            cursorShape: Qt.PointingHandCursor
+                            hoverEnabled: true
+                            onClicked: root.alertsMuteToggleRequested()
+                        }
+
+                        QQC.ToolTip.visible: alertsMuteMouse.containsMouse
+                        QQC.ToolTip.delay: 400
+                        QQC.ToolTip.text: root.alertsMuted ? (root.alertsMuteStatus + " · click to unmute") : "Click to mute alerts until the next market open"
                     }
                 }
             }

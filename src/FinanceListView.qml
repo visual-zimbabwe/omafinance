@@ -63,9 +63,9 @@ Column {
 
             PanelActionButton {
                 id: alertsBtn
-                iconText: "\uf0f3"
-                tooltipText: "Alerts & Study Radar"
-                foreground: controller.dim
+                iconText: controller.alertsMuted ? "\uf1f6" : "\uf0f3"
+                tooltipText: controller.alertsMuted ? ("Alerts & Study Radar · " + controller.alertsMuteStatus) : "Alerts & Study Radar"
+                foreground: controller.alertsMuted ? controller.contentUrgent : controller.dim
                 fontFamily: controller.contentFontFamily
                 hasCursor: controller.listChrome === "alerts"
                 bordered: controller.listChrome === "alerts"
@@ -81,6 +81,17 @@ Column {
                 hasCursor: controller.listChrome === "layout"
                 bordered: controller.listChrome === "layout"
                 onClicked: controller.openLayouts()
+            }
+
+            PanelActionButton {
+                id: sectorBtn
+                iconText: "\uf080"
+                tooltipText: "Sector Analysis & Scanner"
+                foreground: controller.dim
+                fontFamily: controller.contentFontFamily
+                hasCursor: controller.listChrome === "sector"
+                bordered: controller.listChrome === "sector"
+                onClicked: controller.openSectorAnalysis()
             }
 
             PanelActionButton {

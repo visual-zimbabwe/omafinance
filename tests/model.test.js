@@ -3341,3 +3341,113 @@ test("Batch 2 Update 6 & 7: Broadening Formation target integration and 30m isAr
 
 
 
+
+test("nextUsMarketOpenMs returns the next 09:30 ET weekday open, DST-aware", () => {
+  // Fri 2026-11-06 10:46 MST (17:46 UTC), market open -> Mon 2026-11-09 09:30 EST (14:30 UTC)
+  assert.equal(Model.nextUsMarketOpenMs(new Date("2026-11-06T17:46:00Z")), Date.UTC(2026, 10, 9, 14, 30))
+  // Tue 2026-07-14 06:00 ET (10:00 UTC, pre-open) -> same day 09:30 EDT (13:30 UTC)
+  assert.equal(Model.nextUsMarketOpenMs(new Date("2026-07-14T10:00:00Z")), Date.UTC(2026, 6, 14, 13, 30))
+  // Exactly at the open -> next session
+  assert.equal(Model.nextUsMarketOpenMs(new Date(Date.UTC(2026, 6, 14, 13, 30))), Date.UTC(2026, 6, 15, 13, 30))
+  // Sat 2026-03-07 (before DST) -> Mon 2026-03-09 09:30 EDT (DST starts Sun Mar 8)
+  assert.equal(Model.nextUsMarketOpenMs(new Date("2026-03-07T15:00:00Z")), Date.UTC(2026, 2, 9, 13, 30))
+})
+
+test("alert mute state: live, timed, indefinite, expiry", () => {
+  const now = new Date("2026-11-06T17:46:00Z")
+  assert.equal(Model.isAlertsMuted(0, now), false)
+  assert.equal(Model.isAlertsMuted(undefined, now), false)
+  assert.equal(Model.isAlertsMuted("garbage", now), false)
+  assert.equal(Model.isAlertsMuted(-1, now), true)
+  assert.equal(Model.isAlertsMuted(now.getTime() + 1000, now), true)
+  assert.equal(Model.isAlertsMuted(now.getTime() - 1000, now), false)
+
+  assert.equal(Model.alertsMuteUntilForMode("open", now), Date.UTC(2026, 10, 9, 14, 30))
+  assert.equal(Model.alertsMuteUntilForMode("1h", now), now.getTime() + 3600000)
+  assert.equal(Model.alertsMuteUntilForMode("indefinite", now), Model.ALERT_MUTE_INDEFINITE)
+  assert.equal(Model.alertsMuteUntilForMode("", now), 0)
+
+  assert.equal(Model.alertsMuteStatusText(0, now), "")
+  assert.equal(Model.alertsMuteStatusText(-1, now), "Alerts muted until you unmute")
+  assert.match(Model.alertsMuteStatusText(now.getTime() + 3600000, now), /^Alerts muted until \d{1,2}:\d{2} (AM|PM)$/)
+})
+
+test("alert mute persists through serializeState/parseState and drops once expired", () => {
+  const future = Date.now() + 3600000
+  const raw = Model.serializeState(["SPY"], ["SPY"], "1D", "2x2", {}, [], {}, {}, "", ["60"], [-1], { alertsMutedUntil: future })
+  assert.equal(Model.parseState(raw).alertsMutedUntil, future)
+
+  const rawIndef = Model.serializeState(["SPY"], ["SPY"], "1D", "2x2", {}, [], {}, {}, "", ["60"], [-1], { alertsMutedUntil: -1 })
+  assert.equal(Model.parseState(rawIndef).alertsMutedUntil, -1)
+
+  const rawExpired = Model.serializeState(["SPY"], ["SPY"], "1D", "2x2", {}, [], {}, {}, "", ["60"], [-1], { alertsMutedUntil: Date.now() - 1000 })
+  assert.equal(JSON.parse(rawExpired).alertsMutedUntil, undefined)
+})
+
+test("alert log keeps the muted flag", () => {
+  const log = Model.appendAlertLog([], { id: "a", symbol: "SPY", timestamp: 1, muted: true }, 50)
+  assert.equal(log[0].muted, true)
+  const log2 = Model.appendAlertLog(log, { id: "b", symbol: "QQQ", timestamp: 2 }, 50)
+  assert.equal(log2[0].muted, false)
+  assert.equal(log2[1].muted, true)
+})
+
+test("sector analysis: sector definitions, query parsing, scenario matching, and sorting", () => {
+  // 1. Sector Definitions
+  const smh = Model.getSectorInfo("SMH")
+  assert.equal(smh.symbol, "SMH")
+  assert.equal(smh.name, "VanEck Semiconductor ETF")
+  const xlc = Model.getSectorInfo("xlc")
+  assert.equal(xlc.symbol, "XLC")
+  assert.equal(Model.getSectorInfo("XYZ"), null)
+
+  // 2. Query Parsing
+  assert.deepEqual(Model.parseScenarioQuery("1, hammer, 2dg"), [["1"], ["hammer"], ["2dg"]])
+  assert.deepEqual(Model.parseScenarioQuery("2u if, 3"), [["2u", "if"], ["3"]])
+  assert.deepEqual(Model.parseScenarioQuery(""), [])
+  assert.deepEqual(Model.parseScenarioQuery("   "), [])
+
+  // 3. Scenario Matching
+  const prevBar = { open: 100, high: 110, low: 90, close: 105 }
+  const insideBar = [{ open: 98, high: 108, low: 92, close: 102 }, prevBar, { open: 100, high: 105, low: 95, close: 102 }]
+  // insideBar: last candle is high 105 < 110, low 95 > 90 -> 1 inside bar
+  assert.equal(Model.matchesScenarioQuery(insideBar, null, "1"), true)
+  assert.equal(Model.matchesScenarioQuery(insideBar, null, "2u"), false)
+  assert.equal(Model.matchesScenarioQuery(insideBar, null, "1, hammer, 2dg"), true)
+
+  // 2u in force
+  const twoUBar = [prevBar, { open: 105, high: 115, low: 95, close: 112 }]
+  assert.equal(Model.matchesScenarioQuery(twoUBar, null, "2u"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUBar, null, "2u if"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUBar, null, "2d"), false)
+
+  // 2d Green (hammer-type / rejection)
+  const twoDgBar = [prevBar, { open: 88, high: 108, low: 85, close: 95 }]
+  assert.equal(Model.matchesScenarioQuery(twoDgBar, null, "2dg"), true)
+  assert.equal(Model.matchesScenarioQuery(twoDgBar, null, "2dr"), false)
+
+  // 4. Sorting
+  const holdings = [
+    { symbol: "AMD", pctVal: 5.6, valUSD: 4000, price: 150 },
+    { symbol: "NVDA", pctVal: 17.5, valUSD: 13000, price: 140 },
+    { symbol: "TSM", pctVal: 9.3, valUSD: 7000, price: 190 }
+  ]
+  const byWeightDesc = Model.sortSectorHoldings(holdings, "weight", "desc")
+  assert.equal(byWeightDesc[0].symbol, "NVDA")
+  assert.equal(byWeightDesc[1].symbol, "TSM")
+  assert.equal(byWeightDesc[2].symbol, "AMD")
+
+  const byWeightAsc = Model.sortSectorHoldings(holdings, "weight", "asc")
+  assert.equal(byWeightAsc[0].symbol, "AMD")
+  assert.equal(byWeightAsc[2].symbol, "NVDA")
+
+  const quotes = {
+    "NVDA": { regularMarketPrice: 140 },
+    "TSM": { regularMarketPrice: 190 },
+    "AMD": { regularMarketPrice: 150 }
+  }
+  const byPriceDesc = Model.sortSectorHoldings(holdings, "price", "desc", quotes)
+  assert.equal(byPriceDesc[0].symbol, "TSM")
+  assert.equal(byPriceDesc[1].symbol, "AMD")
+  assert.equal(byPriceDesc[2].symbol, "NVDA")
+})

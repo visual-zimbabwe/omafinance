@@ -9,6 +9,7 @@ Item {
 
     property int cellIndex: 0
     property string symbol: "AAPL"
+    property string companyName: ""
     property string timeframe: "1D"
     property var quote: null
     property var candles: []
@@ -25,11 +26,8 @@ Item {
     property var attackScanResult: null
     readonly property var focusSupport: Model.computeFocusBasketSupport(root.symbol, root.timeframe, root.candles, root.quote, root.dailyCandles, null, root.attackScanResult, root.replayCutoffTs)
     property bool syncSymbolActive: true
-    readonly property bool isExecutionTimeframeCell: {
-        if (!root.stratChecklist || !root.stratChecklist.setupTimeframe)
-            return false;
-        return root.timeframe === root.stratChecklist.setupTimeframe;
-    }
+    property bool hideStratBadge: false
+    property bool isExecutionTimeframeCell: (!root.hideStratBadge && root.stratChecklist && root.stratChecklist.setupTimeframe && root.timeframe === root.stratChecklist.setupTimeframe)
     property bool activeFocusCell: false
     focus: activeFocusCell
     onActiveFocusCellChanged: {
@@ -354,7 +352,9 @@ Item {
                     font.bold: true
 
                     MouseArea {
+                        id: symHoverArea
                         anchors.fill: parent
+                        hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             root.forceActiveFocus();
@@ -969,11 +969,13 @@ Item {
         fontFamily: root.fontFamily
     }
 
-    // Hover Tooltip Popup Overlay for Basket Support Tokens
+    // Hover Tooltip Popup Overlay for Basket Support Tokens and Company Name
     Item {
         id: focusSupportHoverTooltip
-        readonly property bool showTooltip: (atkHoverArea.containsMouse || peerHoverArea.containsMouse || supHoverArea.containsMouse) && root.focusSupport !== null
+        readonly property bool showTooltip: ((atkHoverArea.containsMouse || peerHoverArea.containsMouse || supHoverArea.containsMouse) && root.focusSupport !== null) || (symHoverArea.containsMouse && root.companyName !== "")
         readonly property string tooltipText: {
+            if (symHoverArea.containsMouse && root.companyName !== "")
+                return root.companyName;
             if (!root.focusSupport)
                 return "";
             if (atkHoverArea.containsMouse)
@@ -996,7 +998,7 @@ Item {
             border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
             border.width: 1
 
-            x: Math.max(Style.space(8), Math.min(root.width - width - Style.space(8), focusSupportBadgeItem.mapToItem(root, 0, 0).x - Style.space(4)))
+            x: symHoverArea.containsMouse ? Style.space(8) : Math.max(Style.space(8), Math.min(root.width - width - Style.space(8), focusSupportBadgeItem.mapToItem(root, 0, 0).x - Style.space(4)))
             y: Style.space(34)
 
             Text {

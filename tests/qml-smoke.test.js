@@ -19,7 +19,8 @@ const qmlFiles = [
   "GridCell.qml",
   "GridWindow.qml",
   "BasketSupportPopup.qml",
-  "FinanceAlertsView.qml"
+  "FinanceAlertsView.qml",
+  "SectorAnalysisWindow.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
@@ -459,11 +460,31 @@ test("grid cells provide live 9-rule Strat checklist text status on execution ti
   assert.match(cell, /id:\s*cellChecklistPopup/)
   assert.match(cell, /signal stratTradeableDetected/)
   assert.match(grid, /notifyStratTradeable/)
-  assert.match(grid, /notify-send/)
-  assert.match(grid, /stratSoundProc/)
-  assert.match(grid, /pw-play/)
-  assert.match(grid, /stratDiscordProc/)
+  assert.match(grid, /alertDispatchRequested/)
   assert.match(grid, /discordAlertPayload/)
+  assert.doesNotMatch(grid, /notify-send/)
+})
+
+test("all alert delivery goes through Panel.dispatchAlert and honours mute", () => {
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const bar = fs.readFileSync(source("BarWidget.qml"), "utf8")
+  const alertsView = fs.readFileSync(source("FinanceAlertsView.qml"), "utf8")
+
+  const dispatch = panel.match(/function dispatchAlert\(alert\) \{[\s\S]*?\n    \}\n/)
+  assert.ok(dispatch, "dispatchAlert exists")
+  assert.match(dispatch[0], /Model\.isAlertsMuted\(root\.alertsMutedUntil/)
+  assert.match(dispatch[0], /if \(muted\)\s*return;[\s\S]*notify-send[\s\S]*pw-play[\s\S]*curl/)
+  // notify-send / pw-play / Discord curl appear only inside dispatchAlert
+  assert.equal((panel.match(/notify-send/g) || []).length, 1)
+  assert.equal((panel.match(/"pw-play"/g) || []).length, 1)
+  assert.match(panel, /onAlertDispatchRequested:[\s\S]*?root\.dispatchAlert\(alert\)/)
+  assert.match(panel, /alertsMutedUntil: root\.alertsMutedUntil/)
+  assert.match(panel, /function toggleAlertsMute\(\): void/)
+  assert.doesNotMatch(grid, /pw-play|webhooks\//)
+  assert.match(grid, /ALERTS /)
+  assert.match(bar, /Qt\.RightButton[\s\S]*toggleAlertsMute/)
+  assert.match(alertsView, /controller\.setAlertsMute\(modelData\.mode\)/)
 })
 
 test("candlestick chart renders extended-hours price line and right-scale badge when session is outside regular hours", () => {
@@ -607,6 +628,24 @@ test("grid window supports F fullscreen toggle, Tab/Backtab timeframe cycling in
   assert.match(cell, /onChartDoubleClicked:/)
   assert.match(cell, /onChartPressed:/)
   assert.match(panel, /previousGridMode:\s*baseMode/)
+})
+
+test("sector analysis window supports multi-tier recursive locking, 4-worker chart engine, and 2+3 drilldown", () => {
+  const win = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+
+  assert.match(win, /property var lockStack:\s*\[\]/)
+  assert.match(win, /function pushLockTier\(\)/)
+  assert.match(win, /function popLockTier\(targetLength\)/)
+  assert.match(win, /function clearLockStack\(\)/)
+  assert.match(win, /function getTierHoldingsCount\(tierIdx\)/)
+  assert.match(win, /readonly property int activeLockedHoldingsCount:/)
+  assert.match(win, /readonly property bool canLockNextTier:/)
+  assert.match(win, /onSectorSymbolChanged:\s*\{[\s\S]*?root\.clearLockStack\(\)/)
+  assert.match(win, /id:\s*lockBtn/)
+  assert.match(win, /\(Locked\)/)
+  assert.match(cell, /companyName/)
+  assert.match(cell, /hideStratBadge/)
 })
 
 

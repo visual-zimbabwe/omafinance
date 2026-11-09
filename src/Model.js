@@ -251,7 +251,8 @@ function normalizeAlertLog(rawLog) {
       triggerPrice: finiteOrNull(item.triggerPrice),
       title: String(item.title || ""),
       summary: sumTxt,
-      body: sumTxt
+      body: sumTxt,
+      muted: item.muted === true
     })
   }
   return out
@@ -328,6 +329,9 @@ function parseState(raw) {
     if (data.alertLog !== undefined && Array.isArray(data.alertLog)) {
       res.alertLog = normalizeAlertLog(data.alertLog)
     }
+    if (data.alertsMutedUntil !== undefined) {
+      res.alertsMutedUntil = normalizeAlertsMutedUntil(data.alertsMutedUntil)
+    }
     return res
   } catch (e) {
     return fallback
@@ -384,6 +388,9 @@ function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, grid
     if (Array.isArray(extra.alertLog) && extra.alertLog.length > 0) {
       var normLog = normalizeAlertLog(extra.alertLog)
       if (normLog.length > 0) obj.alertLog = normLog
+    }
+    if (extra.alertsMutedUntil !== undefined && isAlertsMuted(extra.alertsMutedUntil, new Date())) {
+      obj.alertsMutedUntil = normalizeAlertsMutedUntil(extra.alertsMutedUntil)
     }
   }
 
@@ -5613,6 +5620,84 @@ function isUsMarketOpen(nowDate, allowExtended) {
   return mins >= 570 && mins < 960
 }
 
+// ---------------------------------------------------------------------------
+// Alert mute ("chart-only" days)
+//
+// Mute state is a single number, `alertsMutedUntil`:
+//   0  -> alerts are live
+//   -1 -> muted until manually unmuted
+//   >0 -> muted until that epoch-ms timestamp (auto-expires)
+// Muting only suppresses delivery (desktop notification, sound, Discord).
+// The alert engines keep evaluating so state stays consistent and nothing
+// stale fires in a burst on unmute.
+// ---------------------------------------------------------------------------
+
+var ALERT_MUTE_INDEFINITE = -1
+
+// Next regular-session open (09:30 ET, Mon-Fri) strictly after nowDate.
+// Exchange holidays are not modelled; a holiday simply ends the mute early.
+function nextUsMarketOpenMs(nowDate) {
+  var d = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate : new Date()
+  var nowMs = d.getTime()
+  var etNow = new Date(nowMs + (isUsDstUtc(nowMs) ? -4 : -5) * 3600000)
+  for (var i = 0; i < 10; i++) {
+    var y = etNow.getUTCFullYear()
+    var m = etNow.getUTCMonth()
+    var day = etNow.getUTCDate() + i
+    var weekday = new Date(Date.UTC(y, m, day)).getUTCDay()
+    if (weekday === 0 || weekday === 6) continue
+    // 09:30 ET expressed as UTC; resolve DST offset at that instant.
+    var guessUtc = Date.UTC(y, m, day, 9, 30) + 5 * 3600000
+    var offsetH = isUsDstUtc(guessUtc) ? -4 : -5
+    var openUtc = Date.UTC(y, m, day, 9, 30) - offsetH * 3600000
+    if (openUtc > nowMs) return openUtc
+  }
+  return nowMs + 86400000
+}
+
+function normalizeAlertsMutedUntil(value) {
+  var n = Number(value)
+  if (!isFinite(n)) return 0
+  if (n === ALERT_MUTE_INDEFINITE) return ALERT_MUTE_INDEFINITE
+  return n > 0 ? Math.floor(n) : 0
+}
+
+function isAlertsMuted(mutedUntil, nowDate) {
+  var v = normalizeAlertsMutedUntil(mutedUntil)
+  if (v === ALERT_MUTE_INDEFINITE) return true
+  if (v <= 0) return false
+  var nowMs = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate.getTime() : Date.now()
+  return v > nowMs
+}
+
+// mode: "open" (until next market open), "1h", "indefinite", anything else -> unmute
+function alertsMuteUntilForMode(mode, nowDate) {
+  var d = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate : new Date()
+  if (mode === "open") return nextUsMarketOpenMs(d)
+  if (mode === "1h") return d.getTime() + 3600000
+  if (mode === "indefinite") return ALERT_MUTE_INDEFINITE
+  return 0
+}
+
+function formatMuteClock(ms, nowDate) {
+  var t = new Date(ms)
+  var now = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate : new Date()
+  var h = t.getHours()
+  var mm = t.getMinutes()
+  var clock = ((h % 12) || 12) + ":" + (mm < 10 ? "0" : "") + mm + (h < 12 ? " AM" : " PM")
+  var sameDay = t.getFullYear() === now.getFullYear() && t.getMonth() === now.getMonth() && t.getDate() === now.getDate()
+  if (sameDay) return clock
+  var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+  return days[t.getDay()] + " " + clock
+}
+
+function alertsMuteStatusText(mutedUntil, nowDate) {
+  if (!isAlertsMuted(mutedUntil, nowDate)) return ""
+  var v = normalizeAlertsMutedUntil(mutedUntil)
+  if (v === ALERT_MUTE_INDEFINITE) return "Alerts muted until you unmute"
+  return "Alerts muted until " + formatMuteClock(v, nowDate)
+}
+
 function isAlertSessionOpen(symbol, quote, allowExtended, nowDate) {
   var sym = normalizeSymbol(symbol)
   if (isCryptoSymbol(sym)) return true
@@ -7085,6 +7170,172 @@ function computeActiveBroadening(candles, lookbackBars, anchorMode) {
   return result;
 }
 
+var sectorBaskets = {
+  "SMH": { symbol: "SMH", name: "VanEck Semiconductor ETF", holdingsFile: "SMH.json" },
+  "XLC": { symbol: "XLC", name: "Communication Services Select Sector SPDR Fund", holdingsFile: "XLC.json" }
+};
+
+function getSectorInfo(symbol) {
+  var sym = normalizeSymbol(symbol);
+  return sectorBaskets[sym] || null;
+}
+
+function parseScenarioQuery(query) {
+  if (!query || typeof query !== "string") return [];
+  var trimmed = query.trim();
+  if (!trimmed) return [];
+  var clauses = trimmed.split(",");
+  var result = [];
+  for (var i = 0; i < clauses.length; i++) {
+    var raw = clauses[i].trim();
+    if (!raw) continue;
+    var tokens = raw.split(/\s+/).filter(function(t) { return t.length > 0; });
+    if (tokens.length > 0) {
+      result.push(tokens.map(function(t) { return t.toLowerCase(); }));
+    }
+  }
+  return result;
+}
+
+function matchesScenarioTokens(candles, quote, tokens) {
+  if (!tokens || tokens.length === 0) return true;
+  if (!Array.isArray(candles) || candles.length < 2) return false;
+
+  var n = candles.length;
+  var cLast = Object.assign({}, candles[n - 1]);
+  var cPrev = candles[n - 2];
+  var cTwo = n >= 3 ? candles[n - 3] : null;
+
+  var livePx = stratLivePrice(quote);
+  if (livePx !== null && isFinite(livePx)) {
+    cLast.close = livePx;
+    if (cLast.high === null || livePx > cLast.high) cLast.high = livePx;
+    if (cLast.low === null || livePx < cLast.low) cLast.low = livePx;
+  }
+
+  var open = Number(cLast.open);
+  var high = Number(cLast.high);
+  var low = Number(cLast.low);
+  var close = Number(cLast.close);
+  var prevHigh = Number(cPrev.high);
+  var prevLow = Number(cPrev.low);
+
+  var sc = stratScenario(cLast, cPrev);
+  var scPrev = cTwo ? stratScenario(cPrev, cTwo) : null;
+  var isGreen = close >= open;
+  var isRed = close < open;
+  var range = high - low;
+
+  var inForce = false;
+  if (sc === "2u" && close >= prevHigh) inForce = true;
+  if (sc === "2d" && close <= prevLow) inForce = true;
+
+  var isHammer = false;
+  var isShooter = false;
+  if (range > 0) {
+    var upperWick = high - Math.max(open, close);
+    var lowerWick = Math.min(open, close) - low;
+    if (lowerWick >= (range * 0.45) && upperWick <= (range * 0.30)) {
+      isHammer = true;
+    }
+    if (upperWick >= (range * 0.45) && lowerWick <= (range * 0.30)) {
+      isShooter = true;
+    }
+  }
+
+  for (var i = 0; i < tokens.length; i++) {
+    var t = tokens[i];
+    if (t === "1" || t === "inside") {
+      if (sc !== "1") return false;
+    } else if (t === "2u") {
+      if (sc !== "2u") return false;
+    } else if (t === "2d") {
+      if (sc !== "2d") return false;
+    } else if (t === "3" || t === "outside") {
+      if (sc !== "3") return false;
+    } else if (t === "2ug") {
+      if (sc !== "2u" || !isGreen) return false;
+    } else if (t === "2ur") {
+      if (sc !== "2u" || !isRed) return false;
+    } else if (t === "2dg") {
+      if (sc !== "2d" || !isGreen) return false;
+    } else if (t === "2dr") {
+      if (sc !== "2d" || !isRed) return false;
+    } else if (t === "g" || t === "green") {
+      if (!isGreen) return false;
+    } else if (t === "r" || t === "red") {
+      if (!isRed) return false;
+    } else if (t === "hammer") {
+      if (!isHammer) return false;
+    } else if (t === "shooter") {
+      if (!isShooter) return false;
+    } else if (t === "if" || t === "inforce") {
+      if (!inForce) return false;
+    } else if (t === "2-1-2") {
+      if (scPrev !== "1" || (sc !== "2u" && sc !== "2d")) return false;
+    } else if (t === "2-2") {
+      if ((scPrev !== "2u" && scPrev !== "2d") || (sc !== "2u" && sc !== "2d")) return false;
+    } else if (t === "3-2") {
+      if (scPrev !== "3" || (sc !== "2u" && sc !== "2d")) return false;
+    } else if (t === "revstrat" || t === "1-3") {
+      var is13 = (scPrev === "1" && sc === "3");
+      var is32 = (scPrev === "3" && (sc === "2u" || sc === "2d"));
+      if (!is13 && !is32) return false;
+    }
+  }
+  return true;
+}
+
+function matchesScenarioQuery(candles, quote, query) {
+  var clauses = parseScenarioQuery(query);
+  if (clauses.length === 0) return true;
+  for (var i = 0; i < clauses.length; i++) {
+    if (matchesScenarioTokens(candles, quote, clauses[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function sortSectorHoldings(holdings, sortField, sortDirection, quotesMap) {
+  if (!Array.isArray(holdings)) return [];
+  var list = holdings.slice();
+  var field = (sortField || "weight").toLowerCase();
+  var isAsc = (sortDirection || "desc").toLowerCase() === "asc";
+  var sign = isAsc ? 1 : -1;
+
+  list.sort(function(a, b) {
+    if (field === "weight") {
+      var wa = Number(a.pctVal || a.weight || 0);
+      var wb = Number(b.pctVal || b.weight || 0);
+      if (wa !== wb) return (wa - wb) * sign;
+    } else if (field === "mcap" || field === "market cap") {
+      var ma = Number(a.valUSD || a.marketCap || 0);
+      var mb = Number(b.valUSD || b.marketCap || 0);
+      if (ma !== mb) return (ma - mb) * sign;
+    } else if (field === "price") {
+      var qa = quotesMap ? quotesMap[a.symbol] : null;
+      var qb = quotesMap ? quotesMap[b.symbol] : null;
+      var pa = stratLivePrice(qa) || Number(qa && qa.regularMarketPrice) || 0;
+      var pb = stratLivePrice(qb) || Number(qb && qb.regularMarketPrice) || 0;
+      if (pa !== pb) return (pa - pb) * sign;
+    } else if (field === "change" || field === "change %") {
+      var qa2 = quotesMap ? quotesMap[a.symbol] : null;
+      var qb2 = quotesMap ? quotesMap[b.symbol] : null;
+      var ca = Number(qa2 && qa2.regularMarketChangePercent) || 0;
+      var cb = Number(qb2 && qb2.regularMarketChangePercent) || 0;
+      if (ca !== cb) return (ca - cb) * sign;
+    } else if (field === "atr" || field === "atr %") {
+      var aa = Number(a.atrPercent || 0);
+      var ab = Number(b.atrPercent || 0);
+      if (aa !== ab) return (aa - ab) * sign;
+    }
+    return String(a.symbol || "").localeCompare(String(b.symbol || ""));
+  });
+
+  return list;
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -7226,7 +7477,19 @@ if (typeof module !== "undefined") {
     isAlertSessionOpen: isAlertSessionOpen,
     evaluateStratAlertTransition: evaluateStratAlertTransition,
     discordPriceAlertPayload: discordPriceAlertPayload,
-    evaluatePriceLevelAlerts: evaluatePriceLevelAlerts
+    evaluatePriceLevelAlerts: evaluatePriceLevelAlerts,
+    ALERT_MUTE_INDEFINITE: ALERT_MUTE_INDEFINITE,
+    nextUsMarketOpenMs: nextUsMarketOpenMs,
+    normalizeAlertsMutedUntil: normalizeAlertsMutedUntil,
+    isAlertsMuted: isAlertsMuted,
+    alertsMuteUntilForMode: alertsMuteUntilForMode,
+    alertsMuteStatusText: alertsMuteStatusText,
+    sectorBaskets: sectorBaskets,
+    getSectorInfo: getSectorInfo,
+    parseScenarioQuery: parseScenarioQuery,
+    matchesScenarioTokens: matchesScenarioTokens,
+    matchesScenarioQuery: matchesScenarioQuery,
+    sortSectorHoldings: sortSectorHoldings
   }
 }
 
