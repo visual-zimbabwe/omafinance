@@ -7346,6 +7346,27 @@ function mergeLiveCandle(candles, liveQuote, rangeKey) {
 
   var rk = String(rangeKey || "1D");
   var isDaily = (rk === "1D" || rk === "D" || rk === "day" || rk === "1d");
+  var isWeekly = (rk === "1W" || rk === "W" || rk === "week" || rk === "1w");
+  var isMonthly = (rk === "1M" || rk === "M" || rk === "month" || rk === "1m");
+  var isYearly = (rk === "1Y" || rk === "Y" || rk === "year" || rk === "1y");
+
+  var spanSec = 86400;
+  if (rk === "1") spanSec = 60;
+  else if (rk === "5") spanSec = 300;
+  else if (rk === "15") spanSec = 900;
+  else if (rk === "30") spanSec = 1800;
+  else if (rk === "60" || rk === "60m" || rk === "1h") spanSec = 3600;
+  else if (isDaily) spanSec = 86400;
+  else if (isWeekly) spanSec = 7 * 86400;
+  else if (isMonthly) spanSec = 32 * 86400;
+  else if (isYearly) spanSec = 366 * 86400;
+
+  var ts = finiteOrNull(cLast.timestamp);
+  var nowSec = Math.floor(Date.now() / 1000);
+  if (ts !== null && ts > 1000000000 && (nowSec - ts) > (spanSec * 1.5)) {
+    return candles;
+  }
+
   var dHigh = isDaily && liveQuote ? finiteOrNull(liveQuote.regularMarketDayHigh !== undefined ? liveQuote.regularMarketDayHigh : liveQuote.dayHigh) : null;
   var dLow = isDaily && liveQuote ? finiteOrNull(liveQuote.regularMarketDayLow !== undefined ? liveQuote.regularMarketDayLow : liveQuote.dayLow) : null;
 

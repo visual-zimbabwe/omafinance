@@ -379,9 +379,18 @@ FloatingWindow {
                     nextCache[k] = parsed.candles;
                     root.chartCache = nextCache;
 
-                    if (parsed.symbol && (!root.quotes[sym] || tf === "60" || tf === "30")) {
+                    if (parsed.symbol) {
+                        var existingQ = root.quotes[sym];
                         var nextQuotes = Object.assign({}, root.quotes);
-                        nextQuotes[sym] = parsed;
+                        if (!existingQ) {
+                            nextQuotes[sym] = parsed;
+                        } else {
+                            var enriched = Object.assign({}, existingQ);
+                            if (parsed.ftfc) enriched.ftfc = parsed.ftfc;
+                            if (parsed.bar60) enriched.bar60 = parsed.bar60;
+                            if (parsed.closes && (!enriched.closes || enriched.closes.length === 0)) enriched.closes = parsed.closes;
+                            nextQuotes[sym] = enriched;
+                        }
                         root.quotes = nextQuotes;
                     }
                     root.chartFailureCount = 0;

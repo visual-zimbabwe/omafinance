@@ -289,12 +289,21 @@ FloatingWindow {
                 nextCache[key] = parsed.candles;
                 root.chartCache = nextCache;
 
-                if (parsed.symbol && (!root.quotes[root.currentFetchSymbol] || root.currentFetchRange === "60" || root.currentFetchRange === "30")) {
+                if (parsed.symbol) {
+                    var existingQuote = root.quotes[root.currentFetchSymbol];
                     var nextQuotes = Object.assign({}, root.quotes);
-                    nextQuotes[root.currentFetchSymbol] = parsed;
+                    if (!existingQuote) {
+                        nextQuotes[root.currentFetchSymbol] = parsed;
+                    } else {
+                        var enriched = Object.assign({}, existingQuote);
+                        if (parsed.ftfc) enriched.ftfc = parsed.ftfc;
+                        if (parsed.bar60) enriched.bar60 = parsed.bar60;
+                        if (parsed.closes && (!enriched.closes || enriched.closes.length === 0)) enriched.closes = parsed.closes;
+                        nextQuotes[root.currentFetchSymbol] = enriched;
+                    }
                     root.quotes = nextQuotes;
                     var singleQuoteMap = ({});
-                    singleQuoteMap[root.currentFetchSymbol] = parsed;
+                    singleQuoteMap[root.currentFetchSymbol] = nextQuotes[root.currentFetchSymbol];
                     root.evaluateActivePriceLevelAlerts(singleQuoteMap);
                 }
                 root.chartFailureCount = 0;
