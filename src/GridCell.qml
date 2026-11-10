@@ -77,9 +77,8 @@ Item {
 
     readonly property var activeHoverCandle: chart.hoverCandle
     readonly property bool editingLevel: chart.editingLevel
-    readonly property var effectiveCandles: Model.mergeLiveCandle(root.candles, root.quote, root.timeframe)
     readonly property var currentBar: {
-        var src = root.effectiveCandles || root.candles || [];
+        var src = root.candles || [];
         if (src.length === 0)
             return null;
         var last = src[src.length - 1];
@@ -616,7 +615,7 @@ Item {
                 anchors.fill: parent
                 symbol: root.symbol
                 rangeKey: root.timeframe
-                candles: root.effectiveCandles
+                candles: root.candles
                 externalLevels: true
                 priceLevels: root.priceLevels
                 configuredZoom: root.zoomCount

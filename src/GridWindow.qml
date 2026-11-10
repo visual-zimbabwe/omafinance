@@ -291,20 +291,22 @@ FloatingWindow {
 
                 if (parsed.symbol) {
                     var existingQuote = root.quotes[root.currentFetchSymbol];
-                    var nextQuotes = Object.assign({}, root.quotes);
                     if (!existingQuote) {
+                        var nextQuotes = Object.assign({}, root.quotes);
                         nextQuotes[root.currentFetchSymbol] = parsed;
-                    } else {
+                        root.quotes = nextQuotes;
+                        var singleQuoteMap = ({});
+                        singleQuoteMap[root.currentFetchSymbol] = parsed;
+                        root.evaluateActivePriceLevelAlerts(singleQuoteMap);
+                    } else if (parsed.ftfc || parsed.bar60) {
                         var enriched = Object.assign({}, existingQuote);
                         if (parsed.ftfc) enriched.ftfc = parsed.ftfc;
                         if (parsed.bar60) enriched.bar60 = parsed.bar60;
                         if (parsed.closes && (!enriched.closes || enriched.closes.length === 0)) enriched.closes = parsed.closes;
-                        nextQuotes[root.currentFetchSymbol] = enriched;
+                        var nextQuotesEnriched = Object.assign({}, root.quotes);
+                        nextQuotesEnriched[root.currentFetchSymbol] = enriched;
+                        root.quotes = nextQuotesEnriched;
                     }
-                    root.quotes = nextQuotes;
-                    var singleQuoteMap = ({});
-                    singleQuoteMap[root.currentFetchSymbol] = nextQuotes[root.currentFetchSymbol];
-                    root.evaluateActivePriceLevelAlerts(singleQuoteMap);
                 }
                 root.chartFailureCount = 0;
             } else {

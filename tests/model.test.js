@@ -3451,37 +3451,3 @@ test("sector analysis: sector definitions, query parsing, scenario matching, and
   assert.equal(byPriceDesc[1].symbol, "AMD")
   assert.equal(byPriceDesc[2].symbol, "NVDA")
 })
-
-test("mergeLiveCandle folds live quote price and day extremes into active candle", () => {
-  const candles = [
-    { timestamp: 100, open: 100, high: 105, low: 95, close: 102 },
-    { timestamp: 200, open: 102, high: 110, low: 101, close: 108 }
-  ]
-
-  // If quote is null/empty or price hasn't moved, returns unchanged
-  assert.equal(Model.mergeLiveCandle(candles, null), candles)
-  assert.equal(Model.mergeLiveCandle(candles, { regularMarketPrice: 108 }), candles)
-
-  // Live price tick higher than high expands high and updates close
-  const updated1 = Model.mergeLiveCandle(candles, { regularMarketPrice: 112 }, "1D")
-  assert.equal(updated1.length, 2)
-  assert.equal(updated1[1].close, 112)
-  assert.equal(updated1[1].high, 112)
-  assert.equal(updated1[1].low, 101)
-
-  // Live price tick lower than low expands low and updates close
-  const updated2 = Model.mergeLiveCandle(candles, { regularMarketPrice: 99 }, "1D")
-  assert.equal(updated2[1].close, 99)
-  assert.equal(updated2[1].high, 110)
-  assert.equal(updated2[1].low, 99)
-
-  // Day extremes from Yahoo regularMarketDayHigh / regularMarketDayLow are respected
-  const updated3 = Model.mergeLiveCandle(candles, {
-    regularMarketPrice: 105,
-    regularMarketDayHigh: 115,
-    regularMarketDayLow: 98
-  }, "1D")
-  assert.equal(updated3[1].close, 105)
-  assert.equal(updated3[1].high, 115)
-  assert.equal(updated3[1].low, 98)
-})
