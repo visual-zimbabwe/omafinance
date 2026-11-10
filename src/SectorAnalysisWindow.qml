@@ -10,8 +10,23 @@ FloatingWindow {
     id: root
 
     property string sectorSymbol: "SMH"
-    readonly property var sectorInfo: Model.getSectorInfo(root.sectorSymbol)
-    readonly property string sectorFullName: sectorInfo ? sectorInfo.name : ""
+    readonly property var sectorTickers: Model.parseSectorTickers(root.sectorSymbol)
+    readonly property bool isMultiTicker: sectorTickers.length > 1
+    readonly property var sectorInfo: (!root.isMultiTicker && sectorTickers.length > 0) ? Model.getSectorInfo(sectorTickers[0]) : null
+    readonly property string sectorFullName: {
+        if (root.isMultiTicker) {
+            return sectorTickers.length + " Tickers";
+        }
+        if (root.sectorInfo) {
+            return root.sectorInfo.name;
+        }
+        var s = (sectorTickers.length === 1) ? sectorTickers[0] : root.sectorSymbol;
+        var q = root.quotes[s];
+        if (q && (q.shortName || q.longName)) {
+            return q.shortName || q.longName;
+        }
+        return "";
+    }
     property string timeframe: "1W"
     property string scenarioFilter: ""
     property string sortField: "weight" // "weight", "mcap", "price", "change", "atr"
@@ -41,7 +56,11 @@ FloatingWindow {
     signal alertsMuteToggleRequested
     signal symbolLevelsChangedExternally(string sym, var nextLevels)
 
-    title: "Omafinance Sector Analysis - " + root.sectorSymbol + " (" + root.timeframe + ")"
+    title: {
+        var t = root.sectorTickers;
+        var label = (t.length > 1) ? t.join(", ") : root.sectorSymbol;
+        return "Omafinance Sector Analysis - " + label + " (" + root.timeframe + ")";
+    }
     color: Color.background
     implicitWidth: Style.space(1360)
     implicitHeight: Style.space(880)
@@ -54,18 +73,34 @@ FloatingWindow {
     readonly property string fontFamily: Style.font.family
 
     Component.onCompleted: {
-        loadHoldingsForSector(root.sectorSymbol);
+        if (root.isMultiTicker) {
+            root.holdings = [];
+            refreshBatchQuotes();
+            refreshVisibleCharts(false);
+        } else {
+            var s = (root.sectorTickers.length === 1) ? root.sectorTickers[0] : root.sectorSymbol;
+            loadHoldingsForSector(s);
+        }
     }
 
     onSectorSymbolChanged: {
         root.clearLockStack();
-        loadHoldingsForSector(root.sectorSymbol);
+        if (root.isMultiTicker) {
+            root.holdings = [];
+            refreshBatchQuotes();
+            refreshVisibleCharts(false);
+        } else {
+            var s = (root.sectorTickers.length === 1) ? root.sectorTickers[0] : root.sectorSymbol;
+            loadHoldingsForSector(s);
+        }
     }
 
     function getTierHoldingsCount(tierIdx) {
         if (!root.lockStack || tierIdx < 0 || tierIdx >= root.lockStack.length)
             return 0;
         var list = root.lockStack[tierIdx];
+        if (root.isMultiTicker)
+            return list.length;
         var c = 0;
         for (var i = 0; i < list.length; i++) {
             if (list[i] !== root.sectorSymbol)
@@ -77,6 +112,8 @@ FloatingWindow {
     readonly property int activeLockedHoldingsCount: {
         if (!root.activeLockedSymbols)
             return root.totalHoldingsCount;
+        if (root.isMultiTicker)
+            return root.activeLockedSymbols.length;
         var c = 0;
         for (var i = 0; i < root.activeLockedSymbols.length; i++) {
             if (root.activeLockedSymbols[i] !== root.sectorSymbol)
@@ -135,9 +172,12 @@ FloatingWindow {
     }
 
     function setSector(sym) {
-        var norm = Model.normalizeSymbol(sym);
-        if (norm && norm !== root.sectorSymbol) {
-            root.sectorSymbol = norm;
+        var parsed = Model.parseSectorTickers(sym);
+        if (parsed.length > 0) {
+            var joined = parsed.join(",");
+            if (joined !== root.sectorSymbol) {
+                root.sectorSymbol = joined;
+            }
         }
     }
 
@@ -175,13 +215,13 @@ FloatingWindow {
                     var parsed = JSON.parse(raw);
                     if (parsed && Array.isArray(parsed.holdings)) {
                         root.holdings = parsed.holdings;
-                        refreshBatchQuotes();
-                        refreshVisibleCharts(false);
                     }
                 } catch (e) {
                     console.log("[SectorAnalysis] Error parsing holdings:", e);
                 }
             }
+            refreshBatchQuotes();
+            refreshVisibleCharts(false);
         }
         stdout: StdioCollector {
             id: holdingsStdout
@@ -192,14 +232,27 @@ FloatingWindow {
     // Breadth Attack Metrics Calculation (Equal-Weighted, exactly matching Model.computeBasketAttackMetrics)
     readonly property var breadthMetrics: {
         var dailyCandlesMap = {};
-        for (var i = 0; i < root.holdings.length; i++) {
-            var h = root.holdings[i];
-            if (h && h.symbol) {
-                var sym = h.symbol;
+        var targetHoldings = [];
+        var labelSym = root.sectorSymbol;
+        var labelName = root.sectorFullName;
+
+        if (root.isMultiTicker) {
+            for (var i = 0; i < root.sectorTickers.length; i++) {
+                var sym = root.sectorTickers[i];
+                targetHoldings.push({ symbol: sym });
                 dailyCandlesMap[sym] = root.getCandles(sym, root.timeframe);
             }
+        } else {
+            for (var j = 0; j < root.holdings.length; j++) {
+                var h = root.holdings[j];
+                if (h && h.symbol) {
+                    var s = h.symbol;
+                    dailyCandlesMap[s] = root.getCandles(s, root.timeframe);
+                }
+            }
+            targetHoldings = root.holdings;
         }
-        return Model.computeBasketAttackMetrics(root.sectorSymbol, root.sectorFullName, "Sector", root.holdings, dailyCandlesMap, root.quotes, root.timeframe);
+        return Model.computeBasketAttackMetrics(labelSym, labelName, "Sector", targetHoldings, dailyCandlesMap, root.quotes, root.timeframe);
     }
 
     // Filter and Sort Engine (Evaluates against active locked sub-universe if active)
@@ -208,8 +261,40 @@ FloatingWindow {
         var filterQuery = (root.scenarioFilter || "").trim();
         var lockedSyms = root.activeLockedSymbols;
 
-        // 1. Sector ETF Benchmark Tile Candidate
-        var etfSymbol = root.sectorSymbol;
+        if (root.isMultiTicker) {
+            var matchedMulti = [];
+            for (var m = 0; m < root.sectorTickers.length; m++) {
+                var sym = root.sectorTickers[m];
+                if (lockedSyms && lockedSyms.indexOf(sym) === -1)
+                    continue;
+
+                var candles = root.getCandles(sym, root.timeframe);
+                var quote = root.quotes[sym] || null;
+                var matches = true;
+                if (filterQuery.length > 0) {
+                    matches = Model.matchesScenarioQuery(candles, quote, filterQuery);
+                }
+                if (matches) {
+                    var sInfo = Model.getSectorInfo(sym);
+                    var qName = quote ? (quote.shortName || quote.longName || quote.name) : "";
+                    matchedMulti.push({
+                        symbol: sym,
+                        name: sInfo ? sInfo.name : (qName || sym),
+                        isEtf: !!sInfo,
+                        pctVal: 0,
+                        valUSD: 0
+                    });
+                }
+            }
+            if (root.sortField === "weight") {
+                return root.sortAscending ? matchedMulti.slice().reverse() : matchedMulti;
+            } else {
+                return Model.sortSectorHoldings(matchedMulti, root.sortField, root.sortAscending ? "asc" : "desc", root.quotes);
+            }
+        }
+
+        // Single Ticker Mode: Sector ETF Benchmark Tile Candidate
+        var etfSymbol = (root.sectorTickers.length === 1) ? root.sectorTickers[0] : root.sectorSymbol;
         var etfInUniverse = (!lockedSyms || lockedSyms.indexOf(etfSymbol) !== -1);
         if (etfInUniverse) {
             var etfCandles = root.getCandles(etfSymbol, root.timeframe);
@@ -221,7 +306,7 @@ FloatingWindow {
             if (etfMatches) {
                 list.push({
                     symbol: etfSymbol,
-                    name: root.sectorFullName + " (Sector ETF)",
+                    name: root.sectorFullName ? (root.sectorFullName + " (Sector ETF)") : (etfQuote ? (etfQuote.shortName || etfQuote.longName || etfSymbol) : etfSymbol),
                     isEtf: true,
                     pctVal: 100,
                     valUSD: 0
@@ -229,7 +314,7 @@ FloatingWindow {
             }
         }
 
-        // 2. Component Holdings
+        // Single Ticker Mode: Component Holdings
         var matchedHoldings = [];
         for (var i = 0; i < root.holdings.length; i++) {
             var h = root.holdings[i];
@@ -242,16 +327,16 @@ FloatingWindow {
             var cCandles = root.getCandles(cSym, root.timeframe);
             var cQuote = root.quotes[cSym] || null;
 
-            var matches = true;
+            var cMatches = true;
             if (filterQuery.length > 0) {
-                matches = Model.matchesScenarioQuery(cCandles, cQuote, filterQuery);
+                cMatches = Model.matchesScenarioQuery(cCandles, cQuote, filterQuery);
             }
-            if (matches) {
+            if (cMatches) {
                 matchedHoldings.push(h);
             }
         }
 
-        // 3. Sort Component Holdings
+        // Sort Component Holdings
         var sorted = Model.sortSectorHoldings(matchedHoldings, root.sortField, root.sortAscending ? "asc" : "desc", root.quotes);
         for (var j = 0; j < sorted.length; j++) {
             list.push(sorted[j]);
@@ -260,11 +345,20 @@ FloatingWindow {
         return list;
     }
 
-    readonly property int totalHoldingsCount: root.holdings.length
+    readonly property int totalHoldingsCount: {
+        if (root.isMultiTicker) {
+            return root.sectorTickers.length;
+        }
+        return root.holdings.length > 0 ? root.holdings.length : 1;
+    }
+
     readonly property int matchingHoldingsCount: {
+        if (root.isMultiTicker) {
+            return root.filteredTiles.length;
+        }
         var count = 0;
-        for (var i = 0; i < filteredTiles.length; i++) {
-            if (!filteredTiles[i].isEtf)
+        for (var i = 0; i < root.filteredTiles.length; i++) {
+            if (!root.filteredTiles[i].isEtf || root.holdings.length === 0)
                 count++;
         }
         return count;
@@ -272,7 +366,11 @@ FloatingWindow {
 
     // Live Batch Quotes (2-second interval)
     function getAllSymbols() {
-        var syms = [root.sectorSymbol];
+        if (root.isMultiTicker) {
+            return root.sectorTickers;
+        }
+        var singleSym = (root.sectorTickers.length === 1) ? root.sectorTickers[0] : root.sectorSymbol;
+        var syms = singleSym ? [singleSym] : [];
         for (var i = 0; i < root.holdings.length; i++) {
             var h = root.holdings[i];
             if (h && h.symbol && syms.indexOf(h.symbol) === -1)
@@ -636,28 +734,44 @@ FloatingWindow {
 
                         // Sector Ticker Switcher
                         Rectangle {
-                            width: Style.space(60)
+                            id: sectorBox
+                            width: Math.max(Style.space(60), Math.min(Style.space(260), sectorInput.contentWidth + Style.space(16)))
                             height: Style.space(24)
                             radius: Style.space(4)
                             color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
                             border.color: sectorInput.activeFocus ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
                             border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
+                            clip: true
 
                             TextInput {
                                 id: sectorInput
                                 anchors.fill: parent
-                                horizontalAlignment: TextInput.AlignHCenter
+                                anchors.leftMargin: Style.space(6)
+                                anchors.rightMargin: Style.space(6)
+                                horizontalAlignment: (contentWidth > (width - Style.space(12))) ? TextInput.AlignLeft : TextInput.AlignHCenter
                                 verticalAlignment: TextInput.AlignVCenter
+                                clip: true
                                 text: root.sectorSymbol
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.bodySmall
                                 font.bold: true
+                                font.capitalization: Font.AllUppercase
+                                inputMethodHints: Qt.ImhUppercaseOnly | Qt.ImhNoPredictiveText
                                 selectByMouse: true
 
+                                onTextEdited: {
+                                    var curPos = cursorPosition;
+                                    var upper = text.toUpperCase();
+                                    if (text !== upper) {
+                                        text = upper;
+                                        cursorPosition = curPos;
+                                    }
+                                }
+
                                 onAccepted: {
-                                    var val = text.trim();
+                                    var val = text.trim().toUpperCase();
                                     if (val.length > 0) {
                                         root.setSector(val);
                                     }
@@ -667,11 +781,13 @@ FloatingWindow {
 
                                 onActiveFocusChanged: {
                                     if (!activeFocus) {
-                                        var val = text.trim();
+                                        var val = text.trim().toUpperCase();
                                         if (val.length > 0) {
                                             root.setSector(val);
                                         }
                                         text = root.sectorSymbol;
+                                    } else {
+                                        selectAll();
                                     }
                                 }
 
@@ -693,14 +809,12 @@ FloatingWindow {
 
                             MouseArea {
                                 anchors.fill: parent
+                                z: 2
+                                acceptedButtons: Qt.RightButton
                                 cursorShape: Qt.PointingHandCursor
-                                acceptedButtons: Qt.LeftButton | Qt.RightButton
                                 onClicked: function (mouse) {
                                     if (mouse.button === Qt.RightButton) {
                                         root.toggleSector();
-                                    } else {
-                                        sectorInput.text = "";
-                                        sectorInput.forceActiveFocus();
                                     }
                                 }
                             }
@@ -710,6 +824,7 @@ FloatingWindow {
                         Text {
                             textFormat: Text.PlainText
                             text: root.sectorFullName
+                            visible: root.sectorFullName.length > 0
                             color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.caption
@@ -722,6 +837,7 @@ FloatingWindow {
                             textFormat: Text.PlainText
                             text: "·"
                             color: root.dim
+                            visible: root.sectorFullName.length > 0
                             anchors.verticalCenter: parent.verticalCenter
                         }
 

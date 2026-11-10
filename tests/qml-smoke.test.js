@@ -646,6 +646,11 @@ test("sector analysis window supports multi-tier recursive locking, 4-worker cha
   assert.match(win, /\(Locked\)/)
   assert.match(cell, /companyName/)
   assert.match(cell, /hideStratBadge/)
+  assert.match(win, /readonly property var sectorTickers:\s*Model\.parseSectorTickers/)
+  assert.match(win, /readonly property bool isMultiTicker:\s*sectorTickers\.length > 1/)
+  assert.match(win, /font\.capitalization:\s*Font\.AllUppercase/)
+  assert.match(win, /id:\s*sectorBox[\s\S]*?clip:\s*true/)
+  assert.match(win, /onTextEdited:[\s\S]*?text\.toUpperCase\(\)/)
 })
 
 

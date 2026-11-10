@@ -3393,13 +3393,21 @@ test("alert log keeps the muted flag", () => {
 })
 
 test("sector analysis: sector definitions, query parsing, scenario matching, and sorting", () => {
-  // 1. Sector Definitions
+  // 1. Sector Definitions & Ticker Parsing
   const smh = Model.getSectorInfo("SMH")
   assert.equal(smh.symbol, "SMH")
   assert.equal(smh.name, "VanEck Semiconductor ETF")
   const xlc = Model.getSectorInfo("xlc")
   assert.equal(xlc.symbol, "XLC")
   assert.equal(Model.getSectorInfo("XYZ"), null)
+
+  assert.deepEqual(Model.parseSectorTickers("SMH"), ["SMH"])
+  assert.deepEqual(Model.parseSectorTickers("SMH,XLC,DIA"), ["SMH", "XLC", "DIA"])
+  assert.deepEqual(Model.parseSectorTickers("smh, xlc, dia"), ["SMH", "XLC", "DIA"])
+  assert.deepEqual(Model.parseSectorTickers("SMH, XLC, SMH, DIA"), ["SMH", "XLC", "DIA"])
+  assert.deepEqual(Model.parseSectorTickers("SMH, , XLC,"), ["SMH", "XLC"])
+  assert.deepEqual(Model.parseSectorTickers(""), [])
+  assert.deepEqual(Model.parseSectorTickers(null), [])
 
   // 2. Query Parsing
   assert.deepEqual(Model.parseScenarioQuery("1, hammer, 2dg"), [["1"], ["hammer"], ["2dg"]])

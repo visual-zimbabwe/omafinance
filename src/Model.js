@@ -7180,6 +7180,19 @@ function getSectorInfo(symbol) {
   return sectorBaskets[sym] || null;
 }
 
+function parseSectorTickers(symbolString) {
+  if (!symbolString || typeof symbolString !== "string") return [];
+  var parts = symbolString.split(",");
+  var res = [];
+  for (var i = 0; i < parts.length; i++) {
+    var s = normalizeSymbol(parts[i]);
+    if (s.length > 0 && res.indexOf(s) === -1) {
+      res.push(s);
+    }
+  }
+  return res;
+}
+
 function parseScenarioQuery(query) {
   if (!query || typeof query !== "string") return [];
   var trimmed = query.trim();
@@ -7486,6 +7499,7 @@ if (typeof module !== "undefined") {
     alertsMuteStatusText: alertsMuteStatusText,
     sectorBaskets: sectorBaskets,
     getSectorInfo: getSectorInfo,
+    parseSectorTickers: parseSectorTickers,
     parseScenarioQuery: parseScenarioQuery,
     matchesScenarioTokens: matchesScenarioTokens,
     matchesScenarioQuery: matchesScenarioQuery,
