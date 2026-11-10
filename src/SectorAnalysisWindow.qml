@@ -1392,6 +1392,66 @@ FloatingWindow {
                                 font.pixelSize: Style.font.caption
                             }
                         }
+
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "|"
+                            color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.3)
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        // F2u Metric (Failed 2u Reversal)
+                        Row {
+                            spacing: Style.space(3)
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Text {
+                                textFormat: Text.PlainText
+                                text: "F2u: " + Math.round(root.breadthMetrics.pctF2u || 0) + "%"
+                                color: (root.breadthMetrics.pctF2u || 0) >= 20 ? root.downColor : root.foreground
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                                font.bold: true
+                            }
+
+                            Text {
+                                textFormat: Text.PlainText
+                                text: (root.breadthMetrics.countF2u || 0) + "/" + root.breadthMetrics.totalHoldings
+                                color: root.dim
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                            }
+                        }
+
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "|"
+                            color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.3)
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        // F2d Metric (Failed 2d Reversal)
+                        Row {
+                            spacing: Style.space(3)
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Text {
+                                textFormat: Text.PlainText
+                                text: "F2d: " + Math.round(root.breadthMetrics.pctF2d || 0) + "%"
+                                color: (root.breadthMetrics.pctF2d || 0) >= 20 ? root.upColor : root.foreground
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                                font.bold: true
+                            }
+
+                            Text {
+                                textFormat: Text.PlainText
+                                text: (root.breadthMetrics.countF2d || 0) + "/" + root.breadthMetrics.totalHoldings
+                                color: root.dim
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                            }
+                        }
                     }
 
                     // Showing Count (far right on row 3)
