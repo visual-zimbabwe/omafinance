@@ -640,30 +640,69 @@ FloatingWindow {
                             height: Style.space(24)
                             radius: Style.space(4)
                             color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                            border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
+                            border.color: sectorInput.activeFocus ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
                             border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
 
                             TextInput {
                                 id: sectorInput
-                                anchors.centerIn: parent
+                                anchors.fill: parent
+                                horizontalAlignment: TextInput.AlignHCenter
+                                verticalAlignment: TextInput.AlignVCenter
                                 text: root.sectorSymbol
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.bodySmall
                                 font.bold: true
                                 selectByMouse: true
+
                                 onAccepted: {
-                                    root.setSector(text);
+                                    var val = text.trim();
+                                    if (val.length > 0) {
+                                        root.setSector(val);
+                                    }
+                                    text = root.sectorSymbol;
                                     keyboardListener.forceActiveFocus();
                                 }
+
+                                onActiveFocusChanged: {
+                                    if (!activeFocus) {
+                                        var val = text.trim();
+                                        if (val.length > 0) {
+                                            root.setSector(val);
+                                        }
+                                        text = root.sectorSymbol;
+                                    }
+                                }
+
+                                Keys.onPressed: function (event) {
+                                    if (event.key === Qt.Key_Escape) {
+                                        text = root.sectorSymbol;
+                                        keyboardListener.forceActiveFocus();
+                                        event.accepted = true;
+                                    }
+                                }
+                            }
+
+                            Binding {
+                                target: sectorInput
+                                property: "text"
+                                value: root.sectorSymbol
+                                when: !sectorInput.activeFocus
                             }
 
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                acceptedButtons: Qt.RightButton
-                                onClicked: root.toggleSector()
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                onClicked: function (mouse) {
+                                    if (mouse.button === Qt.RightButton) {
+                                        root.toggleSector();
+                                    } else {
+                                        sectorInput.text = "";
+                                        sectorInput.forceActiveFocus();
+                                    }
+                                }
                             }
                         }
 
