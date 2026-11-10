@@ -33,6 +33,7 @@ FloatingWindow {
     property bool sortAscending: false
     property bool showBroadening: true
     property bool syncCrosshair: true
+    property int globalBarCount: 140
 
     property int activeTileIndex: 0
     property bool inDrillDown: false
@@ -884,6 +885,89 @@ FloatingWindow {
                                 }
                             }
                         }
+
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "·"
+                            color: root.dim
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        // Bar Count Selector
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "BARS:"
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: true
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        Rectangle {
+                            id: barsBox
+                            width: Style.space(48)
+                            height: Style.space(24)
+                            radius: Style.space(4)
+                            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+                            border.color: barsInput.activeFocus ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
+                            border.width: 1
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            TextInput {
+                                id: barsInput
+                                anchors.fill: parent
+                                anchors.leftMargin: Style.space(4)
+                                anchors.rightMargin: Style.space(4)
+                                horizontalAlignment: TextInput.AlignHCenter
+                                verticalAlignment: TextInput.AlignVCenter
+                                text: "" + root.globalBarCount
+                                color: root.foreground
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                                selectByMouse: true
+                                inputMethodHints: Qt.ImhDigitsOnly
+                                validator: RegularExpressionValidator { regularExpression: /[0-9]*/ }
+
+                                onTextChanged: {
+                                    if (activeFocus) {
+                                        barDebounceTimer.restart();
+                                    }
+                                }
+
+                                onActiveFocusChanged: {
+                                    if (activeFocus) {
+                                        selectAll();
+                                    } else {
+                                        barsInput.text = "" + root.globalBarCount;
+                                    }
+                                }
+
+                                Keys.onPressed: function (ev) {
+                                    if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter || ev.key === Qt.Key_Escape) {
+                                        keyboardListener.forceActiveFocus();
+                                        ev.accepted = true;
+                                    }
+                                }
+                            }
+
+                            Binding {
+                                target: barsInput
+                                property: "text"
+                                value: "" + root.globalBarCount
+                                when: !barsInput.activeFocus
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.IBeamCursor
+                                enabled: !barsInput.activeFocus
+                                onClicked: {
+                                    barsInput.forceActiveFocus();
+                                    barsInput.selectAll();
+                                }
+                            }
+                        }
                     }
 
                     // GROUP 2: Strat Filtering & Controls
@@ -1340,6 +1424,7 @@ FloatingWindow {
                                 showBroadening: root.showBroadening
                                 hideStratBadge: true
                                 activeFocusCell: root.activeTileIndex === tileWrapper.index
+                                zoomCount: root.globalBarCount
 
                                 quote: root.quotes[tileWrapper.modelData.symbol] || null
                                 candles: root.getCandles(tileWrapper.modelData.symbol, root.timeframe)
@@ -1363,6 +1448,11 @@ FloatingWindow {
                                 onCrosshairCleared: {
                                     if (root.syncCrosshair) {
                                         root.clearCrosshair();
+                                    }
+                                }
+                                onZoomChangedManually: function (idx, nextZoom) {
+                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
+                                        root.globalBarCount = nextZoom;
                                     }
                                 }
                             }
@@ -1452,10 +1542,16 @@ FloatingWindow {
                                 symbol: root.drillDownSymbol
                                 timeframe: "30"
                                 showBroadening: root.showBroadening
+                                zoomCount: root.globalBarCount
                                 quote: root.quotes[root.drillDownSymbol] || null
                                 candles: root.getCandles(root.drillDownSymbol, "30")
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
+                                onZoomChangedManually: function (idx, nextZoom) {
+                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
+                                        root.globalBarCount = nextZoom;
+                                    }
+                                }
                             }
 
                             GridCell {
@@ -1465,10 +1561,16 @@ FloatingWindow {
                                 symbol: root.drillDownSymbol
                                 timeframe: "60"
                                 showBroadening: root.showBroadening
+                                zoomCount: root.globalBarCount
                                 quote: root.quotes[root.drillDownSymbol] || null
                                 candles: root.getCandles(root.drillDownSymbol, "60")
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
+                                onZoomChangedManually: function (idx, nextZoom) {
+                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
+                                        root.globalBarCount = nextZoom;
+                                    }
+                                }
                             }
                         }
 
@@ -1485,10 +1587,16 @@ FloatingWindow {
                                 symbol: root.drillDownSymbol
                                 timeframe: "1D"
                                 showBroadening: root.showBroadening
+                                zoomCount: root.globalBarCount
                                 quote: root.quotes[root.drillDownSymbol] || null
                                 candles: root.getCandles(root.drillDownSymbol, "1D")
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
+                                onZoomChangedManually: function (idx, nextZoom) {
+                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
+                                        root.globalBarCount = nextZoom;
+                                    }
+                                }
                             }
 
                             GridCell {
@@ -1498,10 +1606,16 @@ FloatingWindow {
                                 symbol: root.drillDownSymbol
                                 timeframe: "1W"
                                 showBroadening: root.showBroadening
+                                zoomCount: root.globalBarCount
                                 quote: root.quotes[root.drillDownSymbol] || null
                                 candles: root.getCandles(root.drillDownSymbol, "1W")
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
+                                onZoomChangedManually: function (idx, nextZoom) {
+                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
+                                        root.globalBarCount = nextZoom;
+                                    }
+                                }
                             }
 
                             GridCell {
@@ -1511,10 +1625,16 @@ FloatingWindow {
                                 symbol: root.drillDownSymbol
                                 timeframe: "1M"
                                 showBroadening: root.showBroadening
+                                zoomCount: root.globalBarCount
                                 quote: root.quotes[root.drillDownSymbol] || null
                                 candles: root.getCandles(root.drillDownSymbol, "1M")
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
+                                onZoomChangedManually: function (idx, nextZoom) {
+                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
+                                        root.globalBarCount = nextZoom;
+                                    }
+                                }
                             }
                         }
                     }
@@ -1530,6 +1650,24 @@ FloatingWindow {
         onTriggered: {
             root.scenarioFilter = scenarioField.text;
             root.activeTileIndex = 0;
+        }
+    }
+
+    Timer {
+        id: barDebounceTimer
+        interval: 120
+        repeat: false
+        onTriggered: {
+            var raw = barsInput.text.trim();
+            if (raw.length === 0)
+                return;
+            var num = parseInt(raw, 10);
+            if (!isNaN(num)) {
+                var clamped = Math.max(8, num);
+                if (root.globalBarCount !== clamped) {
+                    root.globalBarCount = clamped;
+                }
+            }
         }
     }
 }
