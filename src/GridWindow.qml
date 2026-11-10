@@ -289,13 +289,24 @@ FloatingWindow {
                 nextCache[key] = parsed.candles;
                 root.chartCache = nextCache;
 
-                if (parsed.symbol && (!root.quotes[root.currentFetchSymbol] || root.currentFetchRange === "60" || root.currentFetchRange === "30")) {
-                    var nextQuotes = Object.assign({}, root.quotes);
-                    nextQuotes[root.currentFetchSymbol] = parsed;
-                    root.quotes = nextQuotes;
-                    var singleQuoteMap = ({});
-                    singleQuoteMap[root.currentFetchSymbol] = parsed;
-                    root.evaluateActivePriceLevelAlerts(singleQuoteMap);
+                if (parsed.symbol) {
+                    var existingQuote = root.quotes[root.currentFetchSymbol];
+                    if (!existingQuote) {
+                        var nextQuotes = Object.assign({}, root.quotes);
+                        nextQuotes[root.currentFetchSymbol] = parsed;
+                        root.quotes = nextQuotes;
+                        var singleQuoteMap = ({});
+                        singleQuoteMap[root.currentFetchSymbol] = parsed;
+                        root.evaluateActivePriceLevelAlerts(singleQuoteMap);
+                    } else if (parsed.ftfc || parsed.bar60) {
+                        var enriched = Object.assign({}, existingQuote);
+                        if (parsed.ftfc) enriched.ftfc = parsed.ftfc;
+                        if (parsed.bar60) enriched.bar60 = parsed.bar60;
+                        if (parsed.closes && (!enriched.closes || enriched.closes.length === 0)) enriched.closes = parsed.closes;
+                        var nextQuotesEnriched = Object.assign({}, root.quotes);
+                        nextQuotesEnriched[root.currentFetchSymbol] = enriched;
+                        root.quotes = nextQuotesEnriched;
+                    }
                 }
                 root.chartFailureCount = 0;
             } else {

@@ -368,7 +368,7 @@ FloatingWindow {
                     nextCache[k] = parsed.candles;
                     root.chartCache = nextCache;
 
-                    if (parsed.symbol && (!root.quotes[sym] || tf === "60" || tf === "30")) {
+                    if (parsed.symbol && !root.quotes[sym]) {
                         var nextQuotes = Object.assign({}, root.quotes);
                         nextQuotes[sym] = parsed;
                         root.quotes = nextQuotes;
