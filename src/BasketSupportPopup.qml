@@ -258,7 +258,7 @@ Item {
                 }
 
                 Text {
-                    visible: root.supportData && root.supportData.peerInForce && root.supportData.peerInForce !== "-"
+                    visible: Boolean(root.supportData && root.supportData.peerInForce && root.supportData.peerInForce !== "-")
                     textFormat: Text.PlainText
                     text: "· " + (root.supportData ? root.supportData.peerInForce : "")
                     color: root.dim

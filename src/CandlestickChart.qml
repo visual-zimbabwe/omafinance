@@ -1642,7 +1642,7 @@ Item {
         anchors.fill: parent
 
         ShapePath {
-            strokeColor: root.hoveringScale ? root.foreground : root.crosshairColor
+            strokeColor: root.hoveringScale ? Color.foreground : root.crosshairColor
             strokeWidth: 1
             strokeStyle: ShapePath.DashLine
             dashPattern: [2, 3]
@@ -1678,7 +1678,7 @@ Item {
         height: Style.space(16)
         color: Color.popups.background
         border.width: 1
-        border.color: root.hoveringScale ? root.foreground : root.crosshairColor
+        border.color: root.hoveringScale ? Color.foreground : root.crosshairColor
         z: 15
 
         Text {

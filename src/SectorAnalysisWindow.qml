@@ -318,6 +318,17 @@ FloatingWindow {
         onTriggered: root.refreshBatchQuotes()
     }
 
+    property int chartFailureCount: 0
+    readonly property int chartRefreshMs: Model.backoffDelay(20000, chartFailureCount, 120000)
+
+    Timer {
+        id: chartLiveTimer
+        interval: root.chartRefreshMs
+        running: root.visible
+        repeat: true
+        onTriggered: root.refreshVisibleCharts(true)
+    }
+
     // Chart Fetch Engine (Multi-Worker Parallel Fetching)
     function cacheKey(sym, tf) {
         return sym + ":" + tf;
@@ -373,10 +384,16 @@ FloatingWindow {
                         nextQuotes[sym] = parsed;
                         root.quotes = nextQuotes;
                     }
+                    root.chartFailureCount = 0;
+                } else {
+                    root.chartFailureCount = Math.min(10, root.chartFailureCount + 1);
                 }
             } catch (e) {
                 console.log("[SectorAnalysis] Chart parse error:", sym, tf, e);
+                root.chartFailureCount = Math.min(10, root.chartFailureCount + 1);
             }
+        } else {
+            root.chartFailureCount = Math.min(10, root.chartFailureCount + 1);
         }
         Qt.callLater(root.triggerWorkers);
     }
@@ -495,15 +512,23 @@ FloatingWindow {
         for (var i = 0; i < syms.length; i++) {
             queueFetch(syms[i], root.timeframe, force);
         }
-        // 2. Priority 2: 1D and 60m for breadth calculations
+        // 2. Drill-down multi-timeframes if drill-down is active
+        if (root.inDrillDown && root.drillDownSymbol) {
+            queueFetch(root.drillDownSymbol, "30", force);
+            queueFetch(root.drillDownSymbol, "60", force);
+            queueFetch(root.drillDownSymbol, "1D", force);
+            queueFetch(root.drillDownSymbol, "1W", force);
+            queueFetch(root.drillDownSymbol, "1M", force);
+        }
+        // 3. Priority 2: 1D and 60m for breadth calculations (cached after initial fetch)
         if (root.timeframe !== "1D") {
             for (var j = 0; j < syms.length; j++) {
-                queueFetch(syms[j], "1D", force);
+                queueFetch(syms[j], "1D", false);
             }
         }
         if (root.timeframe !== "60") {
             for (var k = 0; k < syms.length; k++) {
-                queueFetch(syms[k], "60", force);
+                queueFetch(syms[k], "60", false);
             }
         }
     }

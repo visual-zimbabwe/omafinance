@@ -7336,6 +7336,42 @@ function sortSectorHoldings(holdings, sortField, sortDirection, quotesMap) {
   return list;
 }
 
+function mergeLiveCandle(candles, liveQuote, rangeKey) {
+  if (!Array.isArray(candles) || candles.length === 0) return candles || [];
+  var livePx = stratLivePrice(liveQuote);
+  if (livePx === null || !isFinite(livePx)) return candles;
+  var n = candles.length;
+  var cLast = candles[n - 1];
+  if (!cLast) return candles;
+
+  var rk = String(rangeKey || "1D");
+  var isDaily = (rk === "1D" || rk === "D" || rk === "day" || rk === "1d");
+  var dHigh = isDaily && liveQuote ? finiteOrNull(liveQuote.regularMarketDayHigh !== undefined ? liveQuote.regularMarketDayHigh : liveQuote.dayHigh) : null;
+  var dLow = isDaily && liveQuote ? finiteOrNull(liveQuote.regularMarketDayLow !== undefined ? liveQuote.regularMarketDayLow : liveQuote.dayLow) : null;
+
+  var newHigh = cLast.high !== null ? Math.max(cLast.high, livePx) : livePx;
+  if (dHigh !== null) newHigh = Math.max(newHigh, dHigh);
+
+  var newLow = cLast.low !== null ? Math.min(cLast.low, livePx) : livePx;
+  if (dLow !== null) newLow = Math.min(newLow, dLow);
+
+  if (cLast.close === livePx && cLast.high === newHigh && cLast.low === newLow) {
+    return candles;
+  }
+
+  var out = candles.slice();
+  var updated = Object.assign({}, cLast, {
+    close: livePx,
+    high: newHigh,
+    low: newLow
+  });
+  if (updated.open === null || updated.open === undefined) {
+    updated.open = livePx;
+  }
+  out[n - 1] = updated;
+  return out;
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -7489,7 +7525,8 @@ if (typeof module !== "undefined") {
     parseScenarioQuery: parseScenarioQuery,
     matchesScenarioTokens: matchesScenarioTokens,
     matchesScenarioQuery: matchesScenarioQuery,
-    sortSectorHoldings: sortSectorHoldings
+    sortSectorHoldings: sortSectorHoldings,
+    mergeLiveCandle: mergeLiveCandle
   }
 }
 
