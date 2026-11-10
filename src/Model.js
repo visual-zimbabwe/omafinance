@@ -3540,8 +3540,12 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
   var tf = timeframe || "1D"
   var list = Array.isArray(holdings) ? holdings : []
   var total = 0
+  var count1 = 0
   var count2u = 0
   var count2d = 0
+  var count3 = 0
+  var countF2u = 0
+  var countF2d = 0
   var countAttack2u = 0
   var countAttack2d = 0
 
@@ -3569,8 +3573,16 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     var isGreen = Number(cLast.close) >= Number(cLast.open)
     var isRed = Number(cLast.close) <= Number(cLast.open)
 
-    if (s0 === "2u" && isGreen) count2u++
-    if (s0 === "2d" && isRed) count2d++
+    if (s0 === "1") count1++
+    if (s0 === "2u") {
+      if (isGreen) count2u++
+      else countF2u++
+    }
+    if (s0 === "2d") {
+      if (isRed) count2d++
+      else countF2d++
+    }
+    if (s0 === "3") count3++
 
     if (attack.direction === "bullish") {
       countAttack2u++
@@ -3579,8 +3591,12 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     }
   }
 
+  var pct1 = total > 0 ? (count1 / total) * 100 : 0
   var pct2u = total > 0 ? (count2u / total) * 100 : 0
   var pct2d = total > 0 ? (count2d / total) * 100 : 0
+  var pct3 = total > 0 ? (count3 / total) * 100 : 0
+  var pctF2u = total > 0 ? (countF2u / total) * 100 : 0
+  var pctF2d = total > 0 ? (countF2d / total) * 100 : 0
   var pctAttack2u = total > 0 ? (countAttack2u / total) * 100 : 0
   var pctAttack2d = total > 0 ? (countAttack2d / total) * 100 : 0
   var netAttackDelta = pctAttack2u - pctAttack2d
@@ -3606,10 +3622,22 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     category: category || "Sector",
     timeframe: tf,
     totalHoldings: total,
+    count1: count1,
+    pct1: pct1,
     count2u: count2u,
     count2d: count2d,
     pct2u: pct2u,
     pct2d: pct2d,
+    count3: count3,
+    pct3: pct3,
+    countF2u: countF2u,
+    pctF2u: pctF2u,
+    countF2d: countF2d,
+    pctF2d: pctF2d,
+    countFailed2u: countF2u,
+    pctFailed2u: pctF2u,
+    countFailed2d: countF2d,
+    pctFailed2d: pctF2d,
     countAttack2u: countAttack2u,
     countAttack2d: countAttack2d,
     pctAttack2u: pctAttack2u,
