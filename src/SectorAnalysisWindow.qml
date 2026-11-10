@@ -701,7 +701,7 @@ FloatingWindow {
         Rectangle {
             id: masterHeader
             width: parent.width
-            height: Style.space(64)
+            height: Style.space(96)
             color: Color.background
             z: 10
 
@@ -710,16 +710,17 @@ FloatingWindow {
                 anchors.leftMargin: Style.space(12)
                 anchors.rightMargin: Style.space(12)
                 anchors.topMargin: Style.space(6)
+                anchors.bottomMargin: Style.space(6)
                 spacing: Style.space(4)
 
-                // Top Controls Row
-                Row {
+                // ROW 1: Sector & BF Toggle
+                Item {
                     width: parent.width
                     height: Style.space(28)
-                    spacing: Style.space(16)
 
-                    // GROUP 1: Target & Context
+                    // Sector Ticker & Name
                     Row {
+                        anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: Style.space(8)
 
@@ -833,26 +834,50 @@ FloatingWindow {
                             width: Math.min(implicitWidth, Style.space(260))
                             anchors.verticalCenter: parent.verticalCenter
                         }
+                    }
+
+                    // Global Broadening Formations Toggle (far right on row 1)
+                    Rectangle {
+                        id: bfBtn
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        height: Style.space(24)
+                        implicitWidth: bfText.implicitWidth + Style.space(14)
+                        radius: Style.space(4)
+                        color: root.showBroadening ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.18) : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+                        border.color: root.showBroadening ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
+                        border.width: 1
 
                         Text {
+                            id: bfText
+                            anchors.centerIn: parent
                             textFormat: Text.PlainText
-                            text: "·"
-                            color: root.dim
-                            visible: root.sectorFullName.length > 0
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        // Timeframe Selector
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "TIMEFRAME:"
-                            color: root.dim
+                            text: "BF: " + (root.showBroadening ? "ON" : "OFF")
+                            color: root.showBroadening ? Color.accent : root.dim
                             font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
+                            font.pixelSize: Style.font.caption
                             font.bold: true
-                            anchors.verticalCenter: parent.verticalCenter
                         }
 
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.showBroadening = !root.showBroadening
+                        }
+                    }
+                }
+
+                // ROW 2: Timeframe, Sort, Scenario, Lock, and Bars (far right)
+                Item {
+                    width: parent.width
+                    height: Style.space(28)
+
+                    Row {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Style.space(12)
+
+                        // Timeframe Buttons (without "TIMEFRAME:" text)
                         Row {
                             spacing: Style.space(4)
                             anchors.verticalCenter: parent.verticalCenter
@@ -886,165 +911,117 @@ FloatingWindow {
                             }
                         }
 
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "·"
-                            color: root.dim
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        // Bar Count Selector
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "BARS:"
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: true
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
+                        // Sort Selector Button
                         Rectangle {
-                            id: barsBox
-                            width: Style.space(48)
                             height: Style.space(24)
+                            implicitWidth: sortText.implicitWidth + Style.space(16)
                             radius: Style.space(4)
                             color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                            border.color: barsInput.activeFocus ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
+                            border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
                             border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
 
-                            TextInput {
-                                id: barsInput
-                                anchors.fill: parent
-                                anchors.leftMargin: Style.space(4)
-                                anchors.rightMargin: Style.space(4)
-                                horizontalAlignment: TextInput.AlignHCenter
-                                verticalAlignment: TextInput.AlignVCenter
-                                text: "" + root.globalBarCount
+                            Text {
+                                id: sortText
+                                anchors.centerIn: parent
+                                textFormat: Text.PlainText
+                                text: "SORT: " + root.sortField.toUpperCase() + (root.sortAscending ? " ↑" : " ↓")
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.caption
-                                selectByMouse: true
-                                inputMethodHints: Qt.ImhDigitsOnly
-                                validator: RegularExpressionValidator { regularExpression: /[0-9]*/ }
-
-                                onTextChanged: {
-                                    if (activeFocus) {
-                                        barDebounceTimer.restart();
-                                    }
-                                }
-
-                                onActiveFocusChanged: {
-                                    if (activeFocus) {
-                                        selectAll();
-                                    } else {
-                                        barsInput.text = "" + root.globalBarCount;
-                                    }
-                                }
-
-                                Keys.onPressed: function (ev) {
-                                    if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter || ev.key === Qt.Key_Escape) {
-                                        keyboardListener.forceActiveFocus();
-                                        ev.accepted = true;
-                                    }
-                                }
-                            }
-
-                            Binding {
-                                target: barsInput
-                                property: "text"
-                                value: "" + root.globalBarCount
-                                when: !barsInput.activeFocus
+                                font.bold: true
                             }
 
                             MouseArea {
                                 anchors.fill: parent
-                                cursorShape: Qt.IBeamCursor
-                                enabled: !barsInput.activeFocus
-                                onClicked: {
-                                    barsInput.forceActiveFocus();
-                                    barsInput.selectAll();
-                                }
-                            }
-                        }
-                    }
-
-                    // GROUP 2: Strat Filtering & Controls
-                    Row {
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: Style.space(8)
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "SCENARIO:"
-                            color: root.dim
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: true
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        // Scenario Filter Input (/ shortcut)
-                        Rectangle {
-                            width: Style.space(200)
-                            height: Style.space(24)
-                            radius: Style.space(4)
-                            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                            border.color: scenarioField.activeFocus ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
-                            border.width: 1
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            TextInput {
-                                id: scenarioField
-                                anchors.fill: parent
-                                anchors.leftMargin: Style.space(6)
-                                anchors.rightMargin: Style.space(20)
-                                verticalAlignment: TextInput.AlignVCenter
-                                text: root.scenarioFilter
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                selectByMouse: true
-
-                                onTextChanged: {
-                                    filterDebounceTimer.restart();
-                                }
-                                Keys.onPressed: function (ev) {
-                                    if (ev.key === Qt.Key_Down || ev.key === Qt.Key_Tab) {
-                                        keyboardListener.forceActiveFocus();
-                                        ev.accepted = true;
+                                cursorShape: Qt.PointingHandCursor
+                                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                onClicked: function (mouse) {
+                                    if (mouse.button === Qt.RightButton) {
+                                        root.cycleSortField();
+                                    } else {
+                                        root.toggleSortDirection();
                                     }
                                 }
                             }
+                        }
+
+                        // Scenario Filter
+                        Row {
+                            spacing: Style.space(8)
+                            anchors.verticalCenter: parent.verticalCenter
 
                             Text {
-                                visible: root.scenarioFilter.length === 0 && !scenarioField.activeFocus
-                                text: "1, hammer, 2dg... (/)"
-                                color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.5)
+                                textFormat: Text.PlainText
+                                text: "SCENARIO:"
+                                color: root.dim
                                 font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                anchors.left: parent.left
-                                anchors.leftMargin: Style.space(6)
+                                font.pixelSize: Style.font.bodySmall
+                                font.bold: true
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
-                            Text {
-                                visible: root.scenarioFilter.length > 0
-                                text: "✕"
-                                color: root.dim
-                                font.pixelSize: Style.font.caption
-                                anchors.right: parent.right
-                                anchors.rightMargin: Style.space(6)
+                            // Scenario Filter Input (/ shortcut)
+                            Rectangle {
+                                width: Style.space(200)
+                                height: Style.space(24)
+                                radius: Style.space(4)
+                                color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+                                border.color: scenarioField.activeFocus ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
+                                border.width: 1
                                 anchors.verticalCenter: parent.verticalCenter
 
-                                MouseArea {
+                                TextInput {
+                                    id: scenarioField
                                     anchors.fill: parent
-                                    anchors.margins: -Style.space(4)
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        scenarioField.text = "";
-                                        root.scenarioFilter = "";
+                                    anchors.leftMargin: Style.space(6)
+                                    anchors.rightMargin: Style.space(20)
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    text: root.scenarioFilter
+                                    color: root.foreground
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.caption
+                                    selectByMouse: true
+
+                                    onTextChanged: {
+                                        filterDebounceTimer.restart();
+                                    }
+                                    Keys.onPressed: function (ev) {
+                                        if (ev.key === Qt.Key_Down || ev.key === Qt.Key_Tab) {
+                                            keyboardListener.forceActiveFocus();
+                                            ev.accepted = true;
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    visible: root.scenarioFilter.length === 0 && !scenarioField.activeFocus
+                                    text: "1, hammer, 2dg... (/)"
+                                    color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.5)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.caption
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: Style.space(6)
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Text {
+                                    visible: root.scenarioFilter.length > 0
+                                    text: "✕"
+                                    color: root.dim
+                                    font.pixelSize: Style.font.caption
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: Style.space(6)
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        anchors.margins: -Style.space(4)
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            scenarioField.text = "";
+                                            root.scenarioFilter = "";
+                                        }
                                     }
                                 }
                             }
@@ -1198,80 +1175,100 @@ FloatingWindow {
                                 onClicked: root.pushLockTier()
                             }
                         }
+                    }
 
-                        // Sort Selector Button
+                    // Bar Count Selector (far right on row 2)
+                    Row {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Style.space(6)
+
+                        Text {
+                            textFormat: Text.PlainText
+                            text: "BARS:"
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: true
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
                         Rectangle {
+                            id: barsBox
+                            width: Style.space(48)
                             height: Style.space(24)
-                            implicitWidth: sortText.implicitWidth + Style.space(16)
                             radius: Style.space(4)
                             color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                            border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
+                            border.color: barsInput.activeFocus ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
                             border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
 
-                            Text {
-                                id: sortText
-                                anchors.centerIn: parent
-                                textFormat: Text.PlainText
-                                text: "SORT: " + root.sortField.toUpperCase() + (root.sortAscending ? " ↑" : " ↓")
+                            TextInput {
+                                id: barsInput
+                                anchors.fill: parent
+                                anchors.leftMargin: Style.space(4)
+                                anchors.rightMargin: Style.space(4)
+                                horizontalAlignment: TextInput.AlignHCenter
+                                verticalAlignment: TextInput.AlignVCenter
+                                text: "" + root.globalBarCount
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.caption
-                                font.bold: true
-                            }
+                                selectByMouse: true
+                                inputMethodHints: Qt.ImhDigitsOnly
+                                validator: RegularExpressionValidator { regularExpression: /[0-9]*/ }
 
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                onClicked: function (mouse) {
-                                    if (mouse.button === Qt.RightButton) {
-                                        root.cycleSortField();
+                                onTextChanged: {
+                                    if (activeFocus) {
+                                        barDebounceTimer.restart();
+                                    }
+                                }
+
+                                onActiveFocusChanged: {
+                                    if (activeFocus) {
+                                        selectAll();
                                     } else {
-                                        root.toggleSortDirection();
+                                        barsInput.text = "" + root.globalBarCount;
+                                    }
+                                }
+
+                                Keys.onPressed: function (ev) {
+                                    if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter || ev.key === Qt.Key_Escape) {
+                                        keyboardListener.forceActiveFocus();
+                                        ev.accepted = true;
                                     }
                                 }
                             }
-                        }
 
-                        // Global Broadening Formations Toggle
-                        Rectangle {
-                            height: Style.space(24)
-                            implicitWidth: bfText.implicitWidth + Style.space(14)
-                            radius: Style.space(4)
-                            color: root.showBroadening ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.18) : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                            border.color: root.showBroadening ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
-                            border.width: 1
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Text {
-                                id: bfText
-                                anchors.centerIn: parent
-                                textFormat: Text.PlainText
-                                text: "BF: " + (root.showBroadening ? "ON" : "OFF")
-                                color: root.showBroadening ? Color.accent : root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                font.bold: true
+                            Binding {
+                                target: barsInput
+                                property: "text"
+                                value: "" + root.globalBarCount
+                                when: !barsInput.activeFocus
                             }
 
                             MouseArea {
                                 anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.showBroadening = !root.showBroadening
+                                cursorShape: Qt.IBeamCursor
+                                enabled: !barsInput.activeFocus
+                                onClicked: {
+                                    barsInput.forceActiveFocus();
+                                    barsInput.selectAll();
+                                }
                             }
                         }
                     }
                 }
 
-                // GROUP 3: Breadth HUD & Showing Counter
-                Row {
+                // ROW 3: Breadth HUD & Showing Counter
+                Item {
                     width: parent.width
                     height: Style.space(20)
 
                     Row {
-                        spacing: Style.space(8)
+                        anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
+                        spacing: Style.space(8)
 
                         Text {
                             textFormat: Text.PlainText
@@ -1337,20 +1334,17 @@ FloatingWindow {
                         }
                     }
 
-                    Item {
-                        width: Math.max(0, parent.width - parent.children[0].implicitWidth - showingTextItem.implicitWidth)
-                        height: 1
-                    }
-
-                    // Showing Count
+                    // Showing Count (far right on row 3)
                     Item {
                         id: showingTextItem
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
                         implicitWidth: showingText.implicitWidth
                         implicitHeight: showingText.implicitHeight
-                        anchors.verticalCenter: parent.verticalCenter
 
                         Text {
                             id: showingText
+                            anchors.centerIn: parent
                             textFormat: Text.PlainText
                             text: root.lockStack.length > 0 ? ("Showing: " + root.matchingHoldingsCount + "/" + root.activeLockedHoldingsCount + " (Locked)") : ("Showing: " + root.matchingHoldingsCount + "/" + root.totalHoldingsCount)
                             color: root.lockStack.length > 0 ? Color.accent : root.dim
