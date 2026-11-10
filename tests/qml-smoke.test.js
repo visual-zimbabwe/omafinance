@@ -651,6 +651,8 @@ test("sector analysis window supports multi-tier recursive locking, 4-worker cha
   assert.match(win, /font\.capitalization:\s*Font\.AllUppercase/)
   assert.match(win, /id:\s*sectorBox[\s\S]*?clip:\s*true/)
   assert.match(win, /onTextEdited:[\s\S]*?text\.toUpperCase\(\)/)
+  assert.match(win, /"1:\s*"\s*\+\s*Math\.round\(root\.breadthMetrics\.pct1/)
+  assert.match(win, /"3:\s*"\s*\+\s*Math\.round\(root\.breadthMetrics\.pct3/)
 })
 
 
