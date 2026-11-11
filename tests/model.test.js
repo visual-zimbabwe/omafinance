@@ -4064,3 +4064,100 @@ test("Contradiction 4: Momentum vs. Retracement (The One-Bar Test)", () => {
   const res8 = Model.classifyMomentumOrRetracement(candlesFlat, true, false)
   assert.equal(res8.style, "MOMENTUM") // defaults to Green -> matches Long
 })
+
+test("Contradiction 6: 2-1-2 Reversal Magnitude Target (Canonical p2 extreme as T1)", () => {
+  // Test 1: 60m 2d-1-2u Bullish Reversal targets 60m Motherbar High (p2) before Daily High
+  const daily1 = [
+    { timestamp: 100, open: 490, high: 520, low: 500, close: 510 },
+    { timestamp: 200, open: 510, high: 515, low: 495, close: 498 }, // 1D High = 515, Low = 495 (2D bar breaking 500)
+    { timestamp: 300, open: 498, high: 508, low: 494, close: 504 } // curPrice: 502.5 (2d bar, Green)
+  ]
+  const hourly1 = [
+    { timestamp: 1000, open: 508, high: 510, low: 500, close: 502 },
+    { timestamp: 2000, open: 502, high: 505, low: 497, close: 499 }, // p2: 2d (high: 505)
+    { timestamp: 3000, open: 499, high: 502, low: 498, close: 501 }, // p1: 1 (inside 505 - 497, trigger: 502)
+    { timestamp: 4000, open: 501, high: 503, low: 500.5, close: 502.5 } // cur: 2u triggered at 502.5
+  ]
+  const res1 = Model.evaluateStratChecklist("SPY", hourly1, daily1, { regularMarketPrice: 502.5 })
+  assert.equal(res1.direction, "LONG")
+  assert.equal(res1.isTradeable, true)
+  assert.equal(res1.triggerPrice, 502)
+  // T1 must be 505 (60m Motherbar High), NOT overshooting to 515 (1D High)!
+  assert.equal(res1.targetPrice, 505)
+  assert.match(res1.targetName, /Motherbar High/)
+  assert.equal(res1.targets[0].price, 505)
+  assert.equal(res1.targets[1].price, 515)
+  assert.equal(res1.targets[1].name, "1D High")
+  // Domino cascade points to T2 (1D High 515) which triggers Daily 2d-2u Bullish Reversal
+  assert.ok(res1.domino)
+  assert.equal(res1.domino.hasDomino, true)
+  assert.equal(res1.domino.targetPrice, 515)
+  assert.equal(res1.domino.triggeredSignal, "Daily 2d-2u Bullish Reversal")
+  assert.equal(res1.domino.isT1Domino, false)
+
+  // Test 2: 60m 2u-1-2d Bearish Reversal targets 60m Motherbar Low (p2) before Daily Low
+  const daily2 = [
+    { timestamp: 100, open: 520, high: 505, low: 480, close: 490 },
+    { timestamp: 200, open: 490, high: 512, low: 485, close: 508 }, // 1D Low = 485, High = 512 (2U bar breaking 505)
+    { timestamp: 300, open: 505, high: 515, low: 492, close: 496 } // curPrice: 497.5 (2u bar, Red)
+  ]
+  const hourly2 = [
+    { timestamp: 1000, open: 492, high: 495, low: 488, close: 494 },
+    { timestamp: 2000, open: 494, high: 503, low: 495, close: 501 }, // p2: 2u (low: 495)
+    { timestamp: 3000, open: 501, high: 502, low: 498, close: 499 }, // p1: 1 (inside 503 - 495, trigger: 498)
+    { timestamp: 4000, open: 499, high: 499.5, low: 497, close: 497.5 } // cur: 2d triggered at 497.5
+  ]
+  const res2 = Model.evaluateStratChecklist("QQQ", hourly2, daily2, { regularMarketPrice: 497.5 })
+  assert.equal(res2.direction, "SHORT")
+  assert.equal(res2.isTradeable, true)
+  assert.equal(res2.triggerPrice, 498)
+  // T1 must be 495 (60m Motherbar Low), NOT overshooting to 485 (1D Low)!
+  assert.equal(res2.targetPrice, 495)
+  assert.match(res2.targetName, /Motherbar Low/)
+  assert.equal(res2.targets[0].price, 495)
+  assert.equal(res2.targets[1].price, 485)
+  assert.equal(res2.targets[1].name, "1D Low")
+  assert.ok(res2.domino)
+  assert.equal(res2.domino.hasDomino, true)
+  assert.equal(res2.domino.targetPrice, 485)
+  assert.equal(res2.domino.triggeredSignal, "Daily 2u-2d Bearish Reversal")
+
+  // Test 3: Confluent collision between p2 extreme and Daily High deduplicates while preserving Domino
+  const tD1 = 86400 * 100
+  const tD2 = 86400 * 101
+  const tD3 = 86400 * 102
+  const daily3 = [
+    { timestamp: tD1, open: 490, high: 510, low: 500, close: 505 },
+    { timestamp: tD2, open: 505, high: 505, low: 490, close: 492 }, // 1D High = 505, Low = 490 (2D bar breaking 500)
+    { timestamp: tD3, open: 495, high: 503, low: 488, close: 502 } // curPrice: 502 (2d bar, Green)
+  ]
+  const hourly3 = [
+    { timestamp: tD2 + 3600 * 4, open: 496, high: 502, low: 495, close: 498 },
+    { timestamp: tD2 + 3600 * 5, open: 498, high: 505, low: 496, close: 497 }, // p2: 2d on Day 2 (high: 505)
+    { timestamp: tD3 + 3600 * 1, open: 497, high: 501, low: 496.5, close: 500 }, // p1: 1 on Day 3 (trigger: 501)
+    { timestamp: tD3 + 3600 * 2, open: 500, high: 502.5, low: 499.5, close: 502 } // cur: 2u triggered at 501
+  ]
+  const res3 = Model.evaluateStratChecklist("SPY", hourly3, daily3, { regularMarketPrice: 502 })
+  assert.equal(res3.targetPrice, 505)
+  // Only 1 target at 505 (deduplicated)
+  const at505 = res3.targets.filter(t => Math.abs(t.price - 505) < 0.01)
+  assert.equal(at505.length, 1)
+  // Merged target retains Domino metadata
+  assert.equal(at505[0].dominoSignal, "Daily 2d-2u Bullish Reversal")
+  assert.ok(res3.domino)
+  assert.equal(res3.domino.targetPrice, 505)
+  assert.equal(res3.domino.isT1Domino, true)
+
+  // Test 4: Gapped past p2 (p2 already tagged at entry inception) naturally promotes Daily High to T1
+  const hourly4 = [
+    { timestamp: 1000, open: 502, high: 504, low: 500, close: 502 },
+    { timestamp: 2000, open: 502, high: 505, low: 497, close: 499 }, // p2: 2d (high: 505)
+    { timestamp: 3000, open: 499, high: 502, low: 498, close: 501 }, // p1: 1 (trigger: 502)
+    { timestamp: 4000, open: 506, high: 508, low: 505.5, close: 507 } // Gapped open at 506 (above p2 505!)
+  ]
+  const res4 = Model.evaluateStratChecklist("SPY", hourly4, daily1, { regularMarketPrice: 507 })
+  assert.equal(res4.isTradeable, true)
+  // 505 was already breached at open (entryBaseline = 506), so T1 is cleanly promoted to 515 (1D High)
+  assert.equal(res4.targetPrice, 515)
+  assert.equal(res4.targetName, "1D High")
+})
