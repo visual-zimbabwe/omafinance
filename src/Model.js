@@ -3989,7 +3989,7 @@ function resolveUntaggedHtfTargets(isLong, setupTf, daily, weekly, monthly, entr
   var raw = []
 
   // 1. Primary immediate period boundaries (1D, 1W, 1M) if untagged
-  if (setupTf === "60" && p1D) {
+  if ((setupTf === "60" || setupTf === "30") && p1D) {
     var p1DVal = isLong ? Number(p1D.high) : Number(p1D.low)
     if (isFinite(p1DVal) && (isLong ? p1DVal > bound : p1DVal < bound)) {
       var dDom = resolveDominoHtfSignal("Daily", isLong, dList)
@@ -4443,6 +4443,49 @@ function classifyTimeframeContinuity(col1M, col1W, col1D, colSetup, bar1D) {
 
   // 3. Conflict (Option B)
   return { direction: "CONFLICT", continuity: "CONFLICT", isFTFC: false, isOverride: false, isConflict: true, r1Pass: false, macroBias: macroBias }
+}
+
+function sortAndDeduplicateTargets(rawTargets, isLong, entryBaseline, maxCount) {
+  if (!Array.isArray(rawTargets) || rawTargets.length === 0) return []
+  var base = finiteOrNull(entryBaseline)
+  var valid = []
+  for (var i = 0; i < rawTargets.length; i++) {
+    var t = rawTargets[i]
+    if (!t || !isFinite(t.price)) continue
+    if (base !== null && (isLong ? t.price <= base : t.price >= base)) continue
+    valid.push(t)
+  }
+
+  valid.sort(function (a, b) {
+    var diff = isLong ? (a.price - b.price) : (b.price - a.price)
+    if (Math.abs(diff) >= 0.005) return diff
+    return (a.priority || 99) - (b.priority || 99)
+  })
+
+  var deduped = []
+  var limit = (maxCount !== undefined && isFinite(maxCount) && maxCount > 0) ? maxCount : 4
+  for (var j = 0; j < valid.length && deduped.length < limit; j++) {
+    var cur = valid[j]
+    var isDup = false
+    for (var k = 0; k < deduped.length; k++) {
+      if (Math.abs(deduped[k].price - cur.price) < 0.01) {
+        isDup = true
+        if (!deduped[k].dominoSignal && cur.dominoSignal) {
+          deduped[k].dominoSignal = cur.dominoSignal
+          deduped[k].dominoScenario = cur.dominoScenario
+          deduped[k].isReversal = cur.isReversal
+          if (!deduped[k].name.includes(cur.timeframe || "")) {
+            deduped[k].name = deduped[k].name + " / " + cur.name
+          }
+        }
+        break
+      }
+    }
+    if (!isDup) {
+      deduped.push(cur)
+    }
+  }
+  return deduped
 }
 
 function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, nowDate, options) {
@@ -4899,39 +4942,47 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     r2Detail += " [Signal + BF]"
   }
 
-  if (setupTf === "30" && entryBaseline !== null) {
-    if (p60) {
-      var p60Val = isLong ? Number(p60.high) : Number(p60.low)
-      if (isFinite(p60Val) && (isLong ? p60Val > entryBaseline : p60Val < entryBaseline)) {
-        var dom60 = resolveDominoHtfSignal("60m", isLong, hourly)
-        targets.push({
-          name: isLong ? "60m High" : "60m Low",
-          price: p60Val,
-          timeframe: "60",
-          dominoSignal: dom60 ? dom60.signalName : null,
-          dominoScenario: dom60 ? dom60.scenarioTriggered : null,
-          isReversal: dom60 ? dom60.isReversal : false
-        })
+  var rawTargets = targets.slice()
+
+  // 1. Setup timeframe pattern magnitude (T1)
+  if (!isFailed2 && patternMag && isFinite(patternMag.targetPrice) && (entryBaseline === null || (isLong ? patternMag.targetPrice > entryBaseline : patternMag.targetPrice < entryBaseline))) {
+    // If it's a continuation where p2 extreme has already been breached by the current bar into fresh highs, patternMag has completed
+    var isContinuationCleared = false
+    if (sc_signal === "1" && p2_setup && ((isLong && sc_p2_setup === "2u") || (!isLong && sc_p2_setup === "2d"))) {
+      var p2Ext = isLong ? Number(p2_setup.high) : Number(p2_setup.low)
+      if (isFinite(p2Ext) && (isLong ? (currentPrice >= p2Ext || (cSetup && Number(cSetup.high) >= p2Ext)) : (currentPrice <= p2Ext || (cSetup && Number(cSetup.low) <= p2Ext)))) {
+        isContinuationCleared = true
       }
     }
-    if (patternMag && isFinite(patternMag.targetPrice) && (isLong ? patternMag.targetPrice > entryBaseline : patternMag.targetPrice < entryBaseline)) {
-      var alreadyHas60 = targets.length > 0 && Math.abs(targets[0].price - patternMag.targetPrice) < 0.005
-      if (!alreadyHas60) {
-        targets.push({
-          name: patternMag.targetName,
-          price: patternMag.targetPrice,
-          timeframe: "30",
-          dominoSignal: null,
-          dominoScenario: null,
-          isReversal: false
-        })
-        targets.sort(function (a, b) {
-          return isLong ? (a.price - b.price) : (b.price - a.price)
-        })
-      }
+    if (!isContinuationCleared) {
+      rawTargets.push({
+        name: patternMag.targetName,
+        price: patternMag.targetPrice,
+        timeframe: setupTf,
+        dominoSignal: null,
+        dominoScenario: null,
+        isReversal: false
+      })
     }
   }
 
+  // 2. Intermediate 60m pivot (when setup is on 30m)
+  if (setupTf === "30" && entryBaseline !== null && p60) {
+    var p60Val = isLong ? Number(p60.high) : Number(p60.low)
+    if (isFinite(p60Val) && (entryBaseline === null || (isLong ? p60Val > entryBaseline : p60Val < entryBaseline))) {
+      var dom60 = resolveDominoHtfSignal("60m", isLong, hourly)
+      rawTargets.push({
+        name: isLong ? "60m High" : "60m Low",
+        price: p60Val,
+        timeframe: "60",
+        dominoSignal: dom60 ? dom60.signalName : null,
+        dominoScenario: dom60 ? dom60.scenarioTriggered : null,
+        isReversal: dom60 ? dom60.isReversal : false
+      })
+    }
+  }
+
+  // 3. Intraday prior-session extreme tracking for 60m
   var priorTodayExtreme = null
   if (setupTf === "60" && c60 && c1D && isFinite(c60.timestamp) && isFinite(c1D.timestamp)) {
     var c60DayStart = periodStartUtc(c60.timestamp, "1D")
@@ -4949,26 +5000,23 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
   }
 
+  // 4. Higher Timeframe pivots (1D, 1W, 1M)
   if (entryBaseline !== null) {
     var htfTargets = resolveUntaggedHtfTargets(isLong, setupTf, daily, weekly, monthly, entryBaseline, priorTodayExtreme)
-    for (var hti = 0; hti < htfTargets.length && targets.length < 4; hti++) {
-      targets.push(htfTargets[hti])
+    for (var hti = 0; hti < htfTargets.length; hti++) {
+      rawTargets.push(htfTargets[hti])
     }
   }
 
-  if (broadeningTarget && targets.length < 4) {
-    var hasDupBf = false
-    for (var bfi = 0; bfi < targets.length; bfi++) {
-      if (Math.abs(targets[bfi].price - broadeningTarget.price) < 0.01) {
-        hasDupBf = true
-        break
-      }
-    }
-    if (!hasDupBf) {
-      targets.push(broadeningTarget)
-    }
+  // 5. Broadening Formation target
+  if (broadeningTarget) {
+    rawTargets.push(broadeningTarget)
   }
 
+  // 6. Deduplicate and Sort in trade direction
+  targets = sortAndDeduplicateTargets(rawTargets, isLong, entryBaseline, 4)
+
+  // 7. Fallback to Measured Move or Price Exhaustion if targets is empty
   var isExhaustionByPrice = false
   if (targets.length === 0) {
     if (tradeStyleInfo.style === "MOMENTUM" && measuredMoveTarget && isFinite(measuredMoveTarget.price) && (entryBaseline === null || (isLong ? measuredMoveTarget.price > entryBaseline : measuredMoveTarget.price < entryBaseline))) {
@@ -5015,20 +5063,28 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   }
 
   var domino = null
-  if (targets.length > 0 && targets[0].dominoSignal) {
-    var t1 = targets[0]
-    var t2 = targets.length > 1 ? targets[1] : null
+  var dominoItem = null
+  for (var di = 0; di < targets.length; di++) {
+    if (targets[di].dominoSignal) {
+      dominoItem = targets[di]
+      break
+    }
+  }
+  if (dominoItem) {
+    var isT1Domino = (targets.length > 0 && Math.abs(targets[0].price - dominoItem.price) < 0.005)
+    var nextT = isT1Domino ? (targets.length > 1 ? targets[1] : null) : dominoItem
     domino = {
       hasDomino: true,
-      targetName: t1.name,
-      targetPrice: t1.price,
-      triggeredTimeframe: t1.timeframe || "1D",
-      triggeredSignal: t1.dominoSignal,
-      triggeredScenario: t1.dominoScenario,
-      isReversal: Boolean(t1.isReversal),
-      nextTargetName: t2 ? t2.name : null,
-      nextTargetPrice: (t2 && t2.price != null) ? t2.price : null,
-      summary: t1.name + " ($" + t1.price.toFixed(2) + ") ➔ Triggers " + t1.dominoSignal + (t2 ? (" ➔ Next Target: " + t2.name + " ($" + Number(t2.price).toFixed(2) + ")") : "")
+      isT1Domino: isT1Domino,
+      targetName: dominoItem.name,
+      targetPrice: dominoItem.price,
+      triggeredTimeframe: dominoItem.timeframe || "1D",
+      triggeredSignal: dominoItem.dominoSignal,
+      triggeredScenario: dominoItem.dominoScenario,
+      isReversal: Boolean(dominoItem.isReversal),
+      nextTargetName: nextT ? nextT.name : null,
+      nextTargetPrice: (nextT && nextT.price != null) ? nextT.price : null,
+      summary: dominoItem.name + " ($" + dominoItem.price.toFixed(2) + ") ➔ Triggers " + dominoItem.dominoSignal + (nextT ? (" ➔ Next Target: " + nextT.name + " ($" + Number(nextT.price).toFixed(2) + ")") : "")
     }
   }
 
@@ -5066,7 +5122,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     r4Detail = "Exhaustion by price: into fresh extremes with no overhead pivots"
   } else if (isTargetHit) {
     r4Pass = false
-    if (domino && domino.hasDomino) {
+    if (domino && domino.hasDomino && domino.isT1Domino) {
       r4Detail = "Target reached (" + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + ") — Triggered " + domino.triggeredSignal + "! Exhaustion risk on " + setupTf + "."
     } else {
       r4Detail = "Target reached (" + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + ") — exhaustion risk"
@@ -5089,7 +5145,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     : "No untagged HTF target found"
   if (isTargetHit) {
     r7Pass = false
-    if (domino && domino.hasDomino) {
+    if (domino && domino.hasDomino && domino.isT1Domino) {
       r7Detail = "Target reached: " + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + " ➔ " + domino.triggeredSignal + " (Exhausted on " + setupTf + ")"
     } else {
       r7Detail = "Target reached: " + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + " (Exhausted)"
@@ -5100,15 +5156,23 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
       ? (" (Room: $" + room.toFixed(2) + " / +" + roomPct.toFixed(2) + "%)")
       : ""
     if (domino && domino.hasDomino) {
-      var nextStr = domino.nextTargetName ? (" ➔ T2: " + domino.nextTargetName + " $" + Number(domino.nextTargetPrice).toFixed(2)) : ""
-      r7Detail = "T1: " + targetName + " $" + targetPrice.toFixed(2) + " [Triggers " + domino.triggeredSignal + "]" + nextStr + roomStr
+      if (domino.isT1Domino) {
+        var nextStr = domino.nextTargetName ? (" ➔ T2: " + domino.nextTargetName + " $" + Number(domino.nextTargetPrice).toFixed(2)) : ""
+        r7Detail = "T1: " + targetName + " $" + targetPrice.toFixed(2) + " [Triggers " + domino.triggeredSignal + "]" + nextStr + roomStr
+      } else {
+        r7Detail = "T1: " + targetName + " $" + targetPrice.toFixed(2) + " ➔ " + domino.targetName + " $" + Number(domino.targetPrice).toFixed(2) + " [Triggers " + domino.triggeredSignal + "]" + roomStr
+      }
     } else {
       r7Detail = "Target: " + targetName + " $" + targetPrice.toFixed(2) + roomStr
     }
   } else if (targetPrice !== null) {
     r7Pass = true
     if (domino && domino.hasDomino) {
-      r7Detail = "T1: " + targetName + " $" + targetPrice.toFixed(2) + " [Triggers " + domino.triggeredSignal + "]"
+      if (domino.isT1Domino) {
+        r7Detail = "T1: " + targetName + " $" + targetPrice.toFixed(2) + " [Triggers " + domino.triggeredSignal + "]"
+      } else {
+        r7Detail = "T1: " + targetName + " $" + targetPrice.toFixed(2) + " ➔ " + domino.targetName + " $" + Number(domino.targetPrice).toFixed(2) + " [Triggers " + domino.triggeredSignal + "]"
+      }
     } else {
       r7Detail = "Target: " + targetName + " $" + targetPrice.toFixed(2)
     }
@@ -5143,7 +5207,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var r9Pass = r7Pass
   var r9Detail = "Opposing pivot blocks path or target untagged"
   if (r9Pass) {
-    if (domino && domino.hasDomino) {
+    if (domino && domino.hasDomino && domino.isT1Domino) {
       r9Detail = "Runway clear toward " + targetName + " (Catalyst for " + domino.triggeredSignal + ")"
     } else {
       r9Detail = "Runway clear toward " + targetName
@@ -5414,12 +5478,17 @@ function discordAlertPayload(chk, eventType) {
 
     // Domino Cascade Section
     if (chk.domino && chk.domino.hasDomino) {
-      var dLines = [
-        "Target 1 (Intraday): `" + targetStr + "`",
-        "↳ Catalyst: Triggers **" + chk.domino.triggeredSignal + "**"
-      ]
-      if (chk.domino.nextTargetName && chk.domino.nextTargetPrice != null) {
-        dLines.push("↳ Macro Target 2: `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "` (HTF Magnitude)")
+      var dLines = []
+      if (chk.domino.isT1Domino) {
+        dLines.push("Target 1 (Intraday): `" + targetStr + "`")
+        dLines.push("↳ Catalyst: Triggers **" + chk.domino.triggeredSignal + "**")
+        if (chk.domino.nextTargetName && chk.domino.nextTargetPrice != null) {
+          dLines.push("↳ Macro Target 2: `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "` (HTF Magnitude)")
+        }
+      } else {
+        dLines.push("Target 1 (Pattern T1): `" + targetStr + "`")
+        dLines.push("↳ Macro Target 2 (Domino): `" + chk.domino.targetName + " $" + Number(chk.domino.targetPrice).toFixed(2) + "`")
+        dLines.push("↳ Catalyst: Triggers **" + chk.domino.triggeredSignal + "**")
       }
       fields.push({
         name: "The Domino Cascade (LTF -> HTF)",
@@ -5465,7 +5534,7 @@ function discordAlertPayload(chk, eventType) {
     content = "@everyone **The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]**"
     title = "The Strat Target Hit: " + chk.symbol + " [" + chk.direction + "]"
 
-    if (chk.domino && chk.domino.hasDomino) {
+    if (chk.domino && chk.domino.hasDomino && chk.domino.isT1Domino) {
       desc = "**Target Reached (" + (chk.targetName || "T1") + ")** on `" + tf + "` setup. Exhaustion risk — take profit / trail stop.\n\n" +
              "DOMINO TRIGGER ACTIVATED: Breaching this level puts **" + chk.domino.triggeredSignal + "** in-force!" +
              (chk.domino.nextTargetName ? ("\nMacro Target 2: `" + chk.domino.nextTargetName + " $" + Number(chk.domino.nextTargetPrice).toFixed(2) + "`") : "") +
@@ -5902,7 +5971,7 @@ function evaluateStratAlertTransition(chk, quote, signalStates, priceMemory, opt
     title = "The Strat Target Hit: " + sym + " [" + chk.direction + "]"
     var tName = chk.targetName || "Target 1"
     var tPriceStr = chk.targetPrice != null ? (" $" + Number(chk.targetPrice).toFixed(2)) : ""
-    if (chk.domino && chk.domino.hasDomino) {
+    if (chk.domino && chk.domino.hasDomino && chk.domino.isT1Domino) {
       body = tName + tPriceStr + " reached!\nDomino Triggered: " + chk.domino.triggeredSignal + "\nMove stop to B/E & trail for " + (chk.domino.nextTargetName || "T2") + "."
     } else {
       body = tName + tPriceStr + " reached on " + chk.setupTimeframe + " setup.\nExhaustion risk — take profit / trail stops."
@@ -7513,6 +7582,7 @@ if (typeof module !== "undefined") {
     classifyMomentumOrRetracement: classifyMomentumOrRetracement,
     resolvePatternMagnitude: resolvePatternMagnitude,
     resolveMeasuredMoveTarget: resolveMeasuredMoveTarget,
+    sortAndDeduplicateTargets: sortAndDeduplicateTargets,
     stratInForce: stratInForce,
     computeStratDetails: computeStratDetails,
     computeHoldingStratMatrix: computeHoldingStratMatrix,
