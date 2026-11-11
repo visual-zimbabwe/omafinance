@@ -4092,7 +4092,7 @@ function stratRuleRationales() {
     4: "Time and Run Exhaustion: Entering late in a candle\x27s period or after 3+ consecutive uncorrected 2-bars carries high risk of instant reversal when the next period opens.",
     5: "Trigger Execution: Orders must execute strictly when price breaks the signal candle extreme, mechanically turning the current bar into a live Scenario 2 or 3 in your favor.",
     6: "Chop Avoidance: Scenario 1 represents indecision and range contraction. Trading inside an unresolved inside bar leads to whipsaws and theta decay.",
-    7: "Untagged Macro Targets: Strat targets are previous pivot highs/lows and broadening boundaries. Target must be untagged with at least 1:2 Risk-to-Reward remaining.",
+    7: "Untagged Macro Targets: Strat targets are previous pivot highs/lows and broadening boundaries. Target must be untagged with open room/magnitude before encountering opposing structural resistance or exhaustion.",
     8: "Structural Invalidation Stop: Non-negotiable stop placed at the opposite extreme of the signal candle. Breaching this level invalidates the trade hypothesis.",
     9: "Runway Quality: Major 1W/1M previous extremes act as heavy supply/demand zones. There must be no opposing HTF wall blocking the path to target."
   }
@@ -5246,6 +5246,16 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
   }
 
+  var room = (targetPrice !== null && isFinite(targetPrice) && currentPrice !== null && isFinite(currentPrice))
+    ? Math.abs(targetPrice - currentPrice)
+    : null
+  var roomPct = (room !== null && currentPrice > 0)
+    ? ((room / currentPrice) * 100)
+    : null
+  var defense = (stopPrice !== null && isFinite(stopPrice) && currentPrice !== null && isFinite(currentPrice))
+    ? Math.abs(currentPrice - stopPrice)
+    : null
+
   var r7Pass = false
   var r7Detail = isExhaustionByPrice
     ? "Exhaustion by price: no untagged HTF pivot or measured move"
@@ -5258,15 +5268,15 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
       r7Detail = "Target reached: " + targetName + " $" + (targetPrice != null ? targetPrice.toFixed(2) : "") + " (Exhausted)"
     }
   } else if (targetPrice !== null && stopPrice !== null && currentPrice !== null) {
-    var reward = Math.abs(targetPrice - currentPrice)
-    var risk = Math.abs(currentPrice - stopPrice)
-    var rr = risk > 0 ? (reward / risk) : 0
-    r7Pass = (reward > 0)
+    r7Pass = (room > 0)
+    var roomStr = (room !== null && roomPct !== null)
+      ? (" (Room: $" + room.toFixed(2) + " / +" + roomPct.toFixed(2) + "%)")
+      : ""
     if (domino && domino.hasDomino) {
       var nextStr = domino.nextTargetName ? (" ➔ T2: " + domino.nextTargetName + " $" + Number(domino.nextTargetPrice).toFixed(2)) : ""
-      r7Detail = "T1: " + targetName + " $" + targetPrice.toFixed(2) + " [Triggers " + domino.triggeredSignal + "]" + nextStr + " (Room: $" + reward.toFixed(2) + ", R:R 1:" + rr.toFixed(1) + ")"
+      r7Detail = "T1: " + targetName + " $" + targetPrice.toFixed(2) + " [Triggers " + domino.triggeredSignal + "]" + nextStr + roomStr
     } else {
-      r7Detail = "Target: " + targetName + " $" + targetPrice.toFixed(2) + " (Room: $" + reward.toFixed(2) + ", R:R 1:" + rr.toFixed(1) + ")"
+      r7Detail = "Target: " + targetName + " $" + targetPrice.toFixed(2) + roomStr
     }
   } else if (targetPrice !== null) {
     r7Pass = true
@@ -5436,6 +5446,9 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     domino: domino,
     stopPrice: isFinite(stopPrice) ? stopPrice : null,
     stopLevels: stopLevels,
+    room: room,
+    roomPct: roomPct,
+    defense: defense,
     patternMagnitude: patternMag,
     measuredMoveTarget: measuredMoveTarget,
     broadeningTarget: broadeningTarget,
@@ -5512,15 +5525,14 @@ function discordAlertPayload(chk, eventType) {
   var desc = ""
   var fields = []
 
-  // Risk / Reward Ratio Calculation
-  var rrStr = "N/A"
+  // Magnitude & Defense Calculation
+  var magDefStr = "N/A"
   if (chk.triggerPrice != null && chk.stopPrice != null && chk.targetPrice != null && isFinite(chk.triggerPrice) && isFinite(chk.stopPrice) && isFinite(chk.targetPrice)) {
-    var risk = Math.abs(chk.triggerPrice - chk.stopPrice)
-    var reward = Math.abs(chk.targetPrice - chk.triggerPrice)
-    if (risk > 0.0001) {
-      var ratio = reward / risk
-      rrStr = "1 : " + ratio.toFixed(1) + " (Risk: $" + risk.toFixed(2) + " | T1: $" + reward.toFixed(2) + ")"
-    }
+    var defense = Math.abs(chk.triggerPrice - chk.stopPrice)
+    var room = Math.abs(chk.targetPrice - chk.triggerPrice)
+    var basePrice = chk.triggerPrice > 0 ? chk.triggerPrice : (chk.currentPrice || 1)
+    var roomPct = basePrice > 0 ? ((room / basePrice) * 100) : 0
+    magDefStr = "T1 Room: $" + room.toFixed(2) + " (+" + roomPct.toFixed(2) + "%) | Defense: $" + defense.toFixed(2)
   }
 
   // 0. ARMED / STALKING ALERT
@@ -5531,8 +5543,8 @@ function discordAlertPayload(chk, eventType) {
 
     fields.push({ name: "Entry Trigger", value: "`" + triggerStr + "`", inline: true })
     fields.push({ name: "Structural Stop", value: "`" + stopStr + "`", inline: true })
-    if (rrStr !== "N/A") {
-      fields.push({ name: "Risk : Reward", value: "`" + rrStr + "`", inline: true })
+    if (magDefStr !== "N/A") {
+      fields.push({ name: "Magnitude & Defense", value: "`" + magDefStr + "`", inline: true })
     }
     fields.push({ name: "Target", value: "`" + targetStr + "`", inline: false })
 
@@ -5554,8 +5566,8 @@ function discordAlertPayload(chk, eventType) {
 
     fields.push({ name: "Entry Trigger", value: "`" + triggerStr + "`", inline: true })
     fields.push({ name: "Structural Stop", value: "`" + stopStr + "`", inline: true })
-    if (rrStr !== "N/A") {
-      fields.push({ name: "Risk : Reward", value: "`" + rrStr + "`", inline: true })
+    if (magDefStr !== "N/A") {
+      fields.push({ name: "Magnitude & Defense", value: "`" + magDefStr + "`", inline: true })
     }
 
     if (chk.entryState && chk.entryState.state === "FAILED_2_REVERSAL") {

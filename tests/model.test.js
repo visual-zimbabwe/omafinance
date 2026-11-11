@@ -3688,3 +3688,50 @@ test("Contradiction 5: Canonical 33% Hammer/Shooter detection, DRY scanner, and 
   const r8Shooter = shooterRes.rules.find(r => r.id === 8)
   assert.match(r8Shooter.detail, /Entry High \+ \$0\.01 \(Shooter Stop\)/)
 })
+
+test("Contradiction 9: Eliminates refuted Risk/Reward ratio in favor of canonical Magnitude (Room %) and Defense", () => {
+  // 1. Rationale 7 alignment: no 'Risk-to-Reward' or 'R:R'
+  const rationales = Model.stratRuleRationales()
+  assert.ok(!rationales[7].includes("Risk-to-Reward"))
+  assert.ok(!rationales[7].includes("1:2"))
+  assert.match(rationales[7], /open room\/magnitude/i)
+
+  // 2. evaluateStratChecklist produces Room with positive 2-decimal percentage and no R:R
+  const daily = [
+    { timestamp: 100, open: 100, high: 110, low: 95, close: 105 },
+    { timestamp: 200, open: 105, high: 120, low: 102, close: 115 },
+    { timestamp: 300, open: 115, high: 118, low: 112, close: 116 }
+  ]
+  const hourly = [
+    { timestamp: 1000, open: 112, high: 114, low: 110, close: 113 },
+    { timestamp: 2000, open: 113, high: 114, low: 112, close: 113 }, // Inside bar
+    { timestamp: 3000, open: 113.5, high: 115, low: 113, close: 114.5 } // 2u trigger
+  ]
+  const quote = { regularMarketPrice: 114.5 }
+  const res = Model.evaluateStratChecklist("AAPL", hourly, daily, quote)
+  assert.ok(res.room !== null)
+  assert.ok(res.roomPct !== null)
+  assert.ok(res.defense !== null)
+  assert.equal(typeof res.room, "number")
+  assert.equal(typeof res.roomPct, "number")
+  assert.equal(typeof res.defense, "number")
+
+  const r7 = res.rules.find(r => r.id === 7)
+  assert.ok(r7.passed)
+  // Ensure no R:R appears in r7.detail
+  assert.ok(!r7.detail.includes("R:R"))
+  assert.ok(!r7.detail.includes("Risk:Reward"))
+  // Ensure positive percentage with 2 decimal places is formatted
+  assert.match(r7.detail, /\(Room: \$\d+\.\d{2} \/ \+\d+\.\d{2}%\)/)
+
+  // 3. discordAlertPayload replaces 'Risk : Reward' with 'Magnitude & Defense'
+  const alertStr = Model.discordAlertPayload(res, "TRIGGERED")
+  const alertJson = JSON.parse(alertStr)
+  const fields = alertJson.embeds[0].fields
+
+  assert.ok(!fields.some(f => f.name.includes("Risk : Reward")))
+  assert.ok(!fields.some(f => f.name.includes("Risk/Reward")))
+  const magDefField = fields.find(f => f.name === "Magnitude & Defense")
+  assert.ok(magDefField, "Must include Magnitude & Defense field")
+  assert.match(magDefField.value, /`T1 Room: \$\d+\.\d{2} \(\+\d+\.\d{2}%\) \| Defense: \$\d+\.\d{2}`/)
+})
