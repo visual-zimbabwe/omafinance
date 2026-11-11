@@ -4287,27 +4287,41 @@ function detectMotherbarProblem(candles, isLong, triggerPrice, livePrice) {
 }
 
 function classifyMomentumOrRetracement(candles, isLong, isFailed2) {
-  if (isFailed2) {
-    return { style: "RETRACEMENT", label: "Retracement (Failed 2 Reversal)" }
-  }
   if (!Array.isArray(candles) || candles.length < 3) {
-    return { style: "MOMENTUM", label: "Momentum" }
+    return { style: "MOMENTUM", label: "Momentum (Continuation)" }
   }
   var n = candles.length
   var p1 = candles[n - 2]
   var p2 = candles[n - 3]
-  var p3 = n >= 4 ? candles[n - 4] : null
-  var sc_p1 = stratScenario(p1, p2)
-  var sc_p2 = (p2 && p3) ? stratScenario(p2, p3) : "-"
 
-  if ((isLong && sc_p1 === "2d") || (!isLong && sc_p1 === "2u")) {
-    return { style: "RETRACEMENT", label: "Retracement (Pullback Reversal)" }
+  var sc_p1 = stratScenario(p1, p2)
+  var decidingBar = null
+  var isContinuation = false
+
+  if (isFailed2) {
+    decidingBar = p1
+    isContinuation = false
+  } else if (sc_p1 === "1") {
+    var motherIdx = n - 3
+    while (motherIdx > 0 && stratScenario(candles[motherIdx], candles[motherIdx - 1]) === "1") {
+      motherIdx--
+    }
+    decidingBar = candles[motherIdx]
+    var sc_mother = (motherIdx > 0) ? stratScenario(candles[motherIdx], candles[motherIdx - 1]) : "-"
+    isContinuation = isLong ? (sc_mother === "2u") : (sc_mother === "2d")
+  } else {
+    decidingBar = p1
+    isContinuation = isLong ? (sc_p1 === "2u") : (sc_p1 === "2d")
   }
-  var p2OpposingColor = p2 ? (isLong ? Number(p2.close) < Number(p2.open) : Number(p2.close) > Number(p2.open)) : false
-  if (sc_p1 === "1" && ((isLong && (sc_p2 === "2d" || sc_p2 === "3")) || (!isLong && (sc_p2 === "2u" || sc_p2 === "3")) || (sc_p2 === "-" && p2OpposingColor))) {
-    return { style: "RETRACEMENT", label: "Retracement (Inside Reversal)" }
-  }
-  return { style: "MOMENTUM", label: "Momentum (Continuation)" }
+
+  var isBarGreen = decidingBar ? (Number(decidingBar.close) >= Number(decidingBar.open)) : true
+  var isSameColor = isLong ? isBarGreen : !isBarGreen
+
+  var style = isSameColor ? "MOMENTUM" : "RETRACEMENT"
+  var subType = isContinuation ? "Continuation" : "Reversal"
+  var label = (style === "MOMENTUM" ? "Momentum" : "Retracement") + " (" + subType + ")"
+
+  return { style: style, label: label }
 }
 
 function resolvePatternMagnitude(setupTf, candles, isLong, entryBaseline) {
