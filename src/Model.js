@@ -2106,8 +2106,11 @@ function detectCandleShape(candle, prevCandle) {
   var bodyRatio = body / range
   var upperRatio = upperWick / range
   var lowerRatio = lowerWick / range
-  var isHammer = (lowerRatio >= 0.55 && upperRatio <= 0.25 && bodyRatio <= 0.40)
-  var isShooter = (upperRatio >= 0.55 && lowerRatio <= 0.25 && bodyRatio <= 0.40)
+  // Canonical TheStrat 33% Range Rule (thestrat.ai/docs/hammer & shooter):
+  // Hammer: body in top 33% of range (lower wick >= 66.7%), opposing upper wick <= 10%
+  // Shooter: body in bottom 33% of range (upper wick >= 66.7%), opposing lower wick <= 10%
+  var isHammer = (bodyBot >= (l + (range * (2 / 3)) - 1e-9)) && (upperRatio <= 0.10)
+  var isShooter = (bodyTop <= (l + (range / 3) + 1e-9)) && (lowerRatio <= 0.10)
   var isDoji = (!isHammer && !isShooter && bodyRatio <= 0.20 && upperRatio >= 0.25 && lowerRatio >= 0.25)
   var isEngulfing = false
   if (prevCandle && isFinite(Number(prevCandle.open)) && isFinite(Number(prevCandle.close)) && isFinite(Number(prevCandle.high)) && isFinite(Number(prevCandle.low))) {
@@ -4916,6 +4919,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var stopPrice = null
   var stopLevels = { tightest: null, tight: null, fiftyPct: null, entryExtreme: null, structural: null }
   var signalCandleTimestamp = (signalCandle && signalCandle.timestamp != null) ? signalCandle.timestamp : null
+  var isHammerStop = Boolean(sc_signal !== "3" && isLong && signalShapeInfo && signalShapeInfo.isHammer)
+  var isShooterStop = Boolean(sc_signal !== "3" && !isLong && signalShapeInfo && signalShapeInfo.isShooter)
 
   if (cSetup && isFinite(Number(cSetup.open)) && isFinite(Number(cSetup.high)) && isFinite(Number(cSetup.low))) {
     stopLevels.tight = Number(cSetup.open)
@@ -4933,8 +4938,19 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   } else if (signalCandle) {
     triggerPrice = isLong ? Number(signalCandle.high) : Number(signalCandle.low)
     stopPrice = isLong ? Number(signalCandle.low) : Number(signalCandle.high)
-    // Per thestrat.ai/docs/1-3-2 & stop-losses: on a Scenario 3 signal bar, cap stop to entry candle opposite extreme
-    if (sc_signal === "3" && stopLevels.entryExtreme !== null && isFinite(stopLevels.entryExtreme)) {
+    // Per thestrat.ai/docs/hammer & shooter: anchor stop to entry bar extreme +/- $0.01, NEVER the hammer/shooter wick
+    if (isHammerStop) {
+      var entryLow = (stopLevels.entryExtreme !== null && isFinite(stopLevels.entryExtreme))
+        ? stopLevels.entryExtreme
+        : (cSetup && isFinite(Number(cSetup.low)) ? Number(cSetup.low) : (cSetup && isFinite(Number(cSetup.open)) ? Number(cSetup.open) : Number(signalCandle.high)))
+      stopPrice = Number((entryLow - 0.01).toFixed(2))
+    } else if (isShooterStop) {
+      var entryHigh = (stopLevels.entryExtreme !== null && isFinite(stopLevels.entryExtreme))
+        ? stopLevels.entryExtreme
+        : (cSetup && isFinite(Number(cSetup.high)) ? Number(cSetup.high) : (cSetup && isFinite(Number(cSetup.open)) ? Number(cSetup.open) : Number(signalCandle.low)))
+      stopPrice = Number((entryHigh + 0.01).toFixed(2))
+    } else if (sc_signal === "3" && stopLevels.entryExtreme !== null && isFinite(stopLevels.entryExtreme)) {
+      // Per thestrat.ai/docs/1-3-2 & stop-losses: on a Scenario 3 signal bar, cap stop to entry candle opposite extreme
       var validEntryStop = isLong ? (stopLevels.entryExtreme < triggerPrice && stopLevels.entryExtreme > stopPrice) : (stopLevels.entryExtreme > triggerPrice && stopLevels.entryExtreme < stopPrice)
       if (validEntryStop) {
         stopPrice = stopLevels.entryExtreme
@@ -5205,7 +5221,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
   }
 
-  var isEntryBarStop = isFailed2 || (sc_signal === "3" && stopPrice === stopLevels.entryExtreme)
+  var isEntryBarStop = isFailed2 || isHammerStop || isShooterStop || (sc_signal === "3" && stopPrice === stopLevels.entryExtreme)
   var isStoppedOut = false
   if (stopPrice !== null && currentPrice !== null) {
     if (isLong) {
@@ -5271,7 +5287,11 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     r8Pass = isLong ? (currentPrice > stopPrice) : (currentPrice < stopPrice)
     var stopAnchorName = isFailed2
       ? ("Failed " + (isLong ? "2d Low" : "2u High"))
-      : (sc_signal === "3" ? (setupTf + " Entry " + (isLong ? "Low" : "High") + " (3-Bar Capped)") : (setupTf + " Signal " + (isLong ? "Low" : "High")))
+      : (isHammerStop
+        ? (setupTf + " Entry Low - $0.01 (Hammer Stop)")
+        : (isShooterStop
+          ? (setupTf + " Entry High + $0.01 (Shooter Stop)")
+          : (sc_signal === "3" && stopPrice === stopLevels.entryExtreme ? (setupTf + " Entry " + (isLong ? "Low" : "High") + " (3-Bar Capped)") : (setupTf + " Signal " + (isLong ? "Low" : "High")))))
     var tierExtras = []
     if (stopLevels.tight !== null && isFinite(stopLevels.tight)) {
       tierExtras.push("Tight (Open): $" + stopLevels.tight.toFixed(2))
@@ -7309,18 +7329,9 @@ function matchesScenarioTokens(candles, quote, tokens) {
   if (sc === "2u" && close >= prevHigh) inForce = true;
   if (sc === "2d" && close <= prevLow) inForce = true;
 
-  var isHammer = false;
-  var isShooter = false;
-  if (range > 0) {
-    var upperWick = high - Math.max(open, close);
-    var lowerWick = Math.min(open, close) - low;
-    if (lowerWick >= (range * 0.45) && upperWick <= (range * 0.30)) {
-      isHammer = true;
-    }
-    if (upperWick >= (range * 0.45) && lowerWick <= (range * 0.30)) {
-      isShooter = true;
-    }
-  }
+  var shapeInfo = detectCandleShape(cLast, cPrev);
+  var isHammer = shapeInfo.isHammer;
+  var isShooter = shapeInfo.isShooter;
 
   for (var i = 0; i < tokens.length; i++) {
     var t = tokens[i];
