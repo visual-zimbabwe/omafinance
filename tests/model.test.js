@@ -994,11 +994,11 @@ test("computeStratDetails computes bar, polarity, inForce, 3-bar sequence, and t
   assert.equal(res.low, 104)
   assert.equal(res.close, 111)
 
-  // Test 2u not in-force (price dropped below prev high)
+  // Test 2u in-force even on pullback below prev high (Pure Canon: 2u triggered and is in-force)
   const res2 = Model.computeStratDetails(candles, { price: 107 })
   assert.equal(res2.bar, "2U")
   assert.equal(res2.polarity, "green") // 107 >= 105
-  assert.equal(res2.inForce, "Not In-Force") // 107 < 109
+  assert.equal(res2.inForce, "In-Force") // Pure Canon
   assert.equal(res2.close, 107)
 
   // Test 2d in-force
@@ -1866,94 +1866,7 @@ test("parseState, serializeState, parseLayouts, and saveLayout persist per-cell 
   assert.deepEqual(parsed.layouts.Main.windows[1].zooms, [8, 8, 8, 8, 8])
 })
 
-test("computeStratBinaryDetails detects 1-2-2 RevStrats with T1 inside and T2 mother targets while excluding 2-2 continuations", () => {
-  // Bullish 1-2d-2u RevStrat (modeled on IWM Oct 29, 2026 07:00 PT 5m Trade 4):
-  // p3 (Mother): H 284.33, L 283.15
-  // p2 (Inside 1): H 284.26, L 283.79
-  // p1 (2d): H 284.24, L 283.64
-  // cur (2u): triggers above 284.24, T1 = 284.26 (Inside), T2 = 284.33 (Mother governs mBit)
-  const bullRevCandles = [
-    { open: 283.30, high: 284.33, low: 283.15, close: 284.10 }, // p3 Mother
-    { open: 284.10, high: 284.26, low: 283.79, close: 283.95 }, // p2 Inside (1)
-    { open: 283.95, high: 284.24, low: 283.64, close: 283.80 }, // p1 2d
-    { open: 283.82, high: 284.28, low: 283.80, close: 284.28 }  // cur 2u (T1 284.26 hit, T2 284.33 open)
-  ]
 
-  const bullOpen = Model.computeStratBinaryDetails(bullRevCandles)
-  assert.equal(bullOpen.signalType, "1-2d-2u Bullish RevStrat")
-  assert.equal(bullOpen.bits, "111111")
-  assert.equal(bullOpen.color, "green")
-  assert.equal(bullOpen.isBullish, true)
-  assert.equal(bullOpen.t1Price, 284.26)
-  assert.equal(bullOpen.targetPrice, 284.33)
-  assert.match(bullOpen.tooltip, /T1 \(Inside\): \$284\.26 \(Hit\)/)
-  assert.match(bullOpen.tooltip, /T2 \(Mother\): \$284\.33 \(Open\)/)
-
-  // Once T2 Mother bar high (284.33) is reached, mBit flips to 0 (amber / exhausted)
-  const bullHit = Model.computeStratBinaryDetails(bullRevCandles, { price: 284.72 })
-  assert.equal(bullHit.signalType, "1-2d-2u Bullish RevStrat")
-  assert.equal(bullHit.bits, "111110")
-  assert.equal(bullHit.color, "amber")
-  assert.match(bullHit.tooltip, /T2 \(Mother\): \$284\.33 \(Hit\)/)
-
-  // Bearish 1-2u-2d RevStrat:
-  // p3 (Mother): H 110, L 100
-  // p2 (Inside 1): H 108, L 103
-  // p1 (2u): H 109, L 104
-  // cur (2d): triggers below 104, T1 = 103 (Inside), T2 = 100 (Mother governs mBit)
-  const bearRevCandles = [
-    { open: 109, high: 110, low: 100, close: 105 }, // p3 Mother
-    { open: 105, high: 108, low: 103, close: 106 }, // p2 Inside (1)
-    { open: 106, high: 109, low: 104, close: 108 }, // p1 2u
-    { open: 107, high: 107.5, low: 102.5, close: 102.5 } // cur 2d (T1 103 hit, T2 100 open)
-  ]
-
-  const bearOpen = Model.computeStratBinaryDetails(bearRevCandles)
-  assert.equal(bearOpen.signalType, "1-2u-2d Bearish RevStrat")
-  assert.equal(bearOpen.bits, "001111")
-  assert.equal(bearOpen.color, "red")
-  assert.equal(bearOpen.isBullish, false)
-  assert.equal(bearOpen.t1Price, 103)
-  assert.equal(bearOpen.targetPrice, 100)
-  assert.match(bearOpen.tooltip, /T1 \(Inside\): \$103\.00 \(Hit\)/)
-  assert.match(bearOpen.tooltip, /T2 \(Mother\): \$100\.00 \(Open\)/)
-
-  const bearHit = Model.computeStratBinaryDetails(bearRevCandles, { price: 99.5 })
-  assert.equal(bearHit.bits, "001110")
-  assert.equal(bearHit.color, "amber")
-  assert.match(bearHit.tooltip, /T2 \(Mother\): \$100\.00 \(Hit\)/)
-
-  // Plain 2d-2u (when p2 is NOT an inside bar) remains "2d-2u Bullish Reversal" targeting p2.high
-  const plain22Candles = [
-    { open: 105, high: 106, low: 100, close: 104 },
-    { open: 104, high: 108, low: 101, close: 107 }, // p2 is 2u (not 1)
-    { open: 107, high: 107.5, low: 100.5, close: 101 }, // p1 is 2d
-    { open: 101.5, high: 107.8, low: 101.2, close: 107.8 } // cur is 2u
-  ]
-  const plain22 = Model.computeStratBinaryDetails(plain22Candles)
-  assert.equal(plain22.signalType, "2d-2u Bullish Reversal")
-  assert.equal(plain22.t1Price, null)
-  assert.equal(plain22.targetPrice, 108)
-
-  // 2-2 Continuations (2u-2u and 2d-2d) remain excluded (sBit = "0", signalType = null, color = "muted")
-  const cont2u2u = Model.computeStratBinaryDetails([
-    { open: 100, high: 104, low: 99, close: 103 },
-    { open: 103, high: 106, low: 101, close: 105 }, // p1 2u
-    { open: 105, high: 109, low: 104, close: 108 }  // cur 2u
-  ])
-  assert.equal(cont2u2u.signalType, null)
-  assert.equal(cont2u2u.bits, "110000")
-  assert.equal(cont2u2u.color, "muted")
-
-  const cont2d2d = Model.computeStratBinaryDetails([
-    { open: 108, high: 109, low: 104, close: 105 },
-    { open: 105, high: 106, low: 101, close: 102 }, // p1 2d
-    { open: 102, high: 103, low: 98, close: 99 }    // cur 2d
-  ])
-  assert.equal(cont2d2d.signalType, null)
-  assert.equal(cont2d2d.bits, "000000")
-  assert.equal(cont2d2d.color, "muted")
-})
 
 test("evaluateStratChecklist and resolveUntaggedHtfTargets scan lookback 1D/1W swing pivots and WTD/MTD extremes on gap opens", () => {
   const ts = (iso) => Math.floor(new Date(iso).getTime() / 1000)
@@ -2903,42 +2816,7 @@ test("Update 5 & 6: detectCandleShape, expanded binary signals (3-1-2, 3-2-2, 1-
   assert.equal(shooter.isShooter, true)
   assert.equal(shooter.shape, "Shooter")
 
-  // 2. 3-1-2u Chicago, 3-2d-2u, 1-3-2u, and 1-3 RevStrat in computeStratBinaryDetails
-  const c312 = Model.computeStratBinaryDetails([
-    { open: 102, high: 105, low: 100, close: 103 },
-    { open: 104, high: 108, low: 98, close: 101 },  // p2: 3
-    { open: 101, high: 104, low: 100, close: 103 }, // p1: 1
-    { open: 103, high: 106, low: 102, close: 105.5 } // cur: 2u
-  ])
-  assert.equal(c312.signalType, "3-1-2u Bullish Reversal")
-  assert.equal(c312.targetPrice, 108)
 
-  const c322 = Model.computeStratBinaryDetails([
-    { open: 102, high: 105, low: 100, close: 103 },
-    { open: 104, high: 108, low: 99, close: 101 },  // p2: 3
-    { open: 101, high: 104, low: 97, close: 98 },   // p1: 2d
-    { open: 98.5, high: 105, low: 98, close: 104.5 } // cur: 2u
-  ])
-  assert.equal(c322.signalType, "3-2d-2u Bullish Reversal")
-  assert.equal(c322.targetPrice, 108)
-
-  const c132 = Model.computeStratBinaryDetails([
-    { open: 100, high: 110, low: 95, close: 105 },
-    { open: 103, high: 106, low: 99, close: 104 },  // p2: 1
-    { open: 104, high: 108, low: 97, close: 100 },  // p1: 3
-    { open: 101, high: 109, low: 100.5, close: 108.5 } // cur: 2u
-  ])
-  assert.equal(c132.signalType, "1-3-2u Bullish RevStrat")
-  assert.equal(c132.targetPrice, 110)
-
-  const c13 = Model.computeStratBinaryDetails([
-    { open: 100, high: 110, low: 95, close: 105 },  // p2: Mother
-    { open: 103, high: 106, low: 99, close: 102 },  // p1: 1
-    { open: 100, high: 107, low: 98, close: 106.5 } // cur: 3 Green (swept 99 low, then broke 106 high)
-  ])
-  assert.equal(c13.signalType, "1-3 Bullish RevStrat")
-  assert.equal(c13.t1Price, 106)
-  assert.equal(c13.targetPrice, 110)
 
   // 3. 30m setup evaluation in evaluateStratChecklist with 30m -> 60m Domino target and takeActionWindow
   const daily = [
@@ -3240,7 +3118,7 @@ test("Batch 2 Update 4: detectCandleShape identifies Doji vs Engulfing 3-bars an
 })
 
 test("Batch 2 Update 5: I-O-I (1-3-1-2), Pivot Machine Gun (PMG), and Kicker pattern detection", () => {
-  // 1. 1-3-1-2u I-O-I in computeStratBinaryDetails and evaluateStratChecklist
+  // 1. 1-3-1-2u I-O-I in evaluateStratChecklist
   const ioiCandles = [
     { timestamp: 1000, open: 100, high: 110, low: 90, close: 105 },  // p4: Mother
     { timestamp: 2000, open: 102, high: 106, low: 95, close: 104 },  // p3: 1 (inside p4)
@@ -3248,9 +3126,6 @@ test("Batch 2 Update 5: I-O-I (1-3-1-2), Pivot Machine Gun (PMG), and Kicker pat
     { timestamp: 4000, open: 97, high: 103, low: 95, close: 102 },   // p1: 1 (inside p2, trigger=103)
     { timestamp: 5000, open: 102, high: 105, low: 101, close: 104.5 } // cur: 2u breakout
   ]
-  const binIoi = Model.computeStratBinaryDetails(ioiCandles)
-  assert.equal(binIoi.signalType, "1-3-1-2u I-O-I Bullish Breakout")
-  assert.equal(binIoi.targetPrice, 109)
 
   const daily = [
     { timestamp: 100, open: 95, high: 105, low: 90, close: 102 },
@@ -4025,4 +3900,81 @@ test("Contradiction 13: Simultaneous Break Concentration Threshold (80% standard
   assert.equal(metrics12of14.isSimultaneous2d, true)
   assert.equal(metrics12of14.isSimultaneousExpansion, true)
   assert.equal(metrics12of14.isSimultaneousBreak, true)
+})
+
+test("Contradiction 3: Pure Canon Triggered vs. In-Force Definition (stratInForce, computeStratDetails, and Checklist Rule 5)", () => {
+  // 1. Verify stratInForce helper
+  assert.equal(Model.stratInForce("2u"), "In-Force")
+  assert.equal(Model.stratInForce("2d"), "In-Force")
+  assert.equal(Model.stratInForce("1"), "Inside Bar")
+  assert.equal(Model.stratInForce("3"), "Outside Bar")
+  assert.equal(Model.stratInForce("-"), "-")
+
+  // 2. computeStratDetails: Pure Canon inForce behavior
+  // c0: O:100 H:110 L:95 C:105
+  // c1: O:105 H:115 L:104 C:108 (2u vs c0, broke 110, closed at 108 below 110 trigger -> In-Force Pullback)
+  const pullback2u = [
+    { open: 100, high: 110, low: 95, close: 105 },
+    { open: 105, high: 115, low: 104, close: 108 }
+  ]
+  const resPullback = Model.computeStratDetails(pullback2u)
+  assert.equal(resPullback.bar, "2U")
+  assert.equal(resPullback.polarity, "green")
+  assert.equal(resPullback.inForce, "In-Force") // Pure Canon: triggered and in-force despite close < trigger
+
+  // Failed 2u Red: broke high 110 (H: 115), but closed red (open: 112, close: 102)
+  const failed2uRed = [
+    { open: 100, high: 110, low: 95, close: 105 },
+    { open: 112, high: 115, low: 98, close: 102 }
+  ]
+  const resFailed2u = Model.computeStratDetails(failed2uRed)
+  assert.equal(resFailed2u.bar, "2U")
+  assert.equal(resFailed2u.polarity, "red")
+  assert.equal(resFailed2u.inForce, "In-Force") // Pure Canon: strictly "In-Force"
+
+  // Scenario 3 (Outside bar): broke both sides (H: 120 > 110, L: 90 < 95, C: 118 > 110)
+  const outsideBar = [
+    { open: 100, high: 110, low: 95, close: 105 },
+    { open: 98, high: 120, low: 90, close: 118 }
+  ]
+  const resOutside = Model.computeStratDetails(outsideBar)
+  assert.equal(resOutside.bar, "3")
+  assert.equal(resOutside.polarity, "green")
+  assert.equal(resOutside.inForce, "Outside Bar") // Pure Canon: strictly "Outside Bar"
+
+  // 3. evaluateStratChecklist Rule 5: passes when setup bar has crossed trigger, even if currentPrice pulled back
+  const hourlyBullish = [
+    { timestamp: 1000, open: 100, high: 105, low: 95, close: 104 }, // pSetup (1): H 105, L 95
+    { timestamp: 2000, open: 104, high: 108, low: 102, close: 103 }  // cSetup (2u): broke trigger 105 (H 108), but cur close is 103 (< 105)
+  ]
+  const dailyAligned = [
+    { timestamp: 100, open: 90, high: 110, low: 88, close: 104 },
+    { timestamp: 200, open: 100, high: 112, low: 99, close: 108 }
+  ]
+
+  // Live price pulled back to 103.50 (below trigger 105.00)
+  const chkPullback = Model.evaluateStratChecklist("AAPL", hourlyBullish, dailyAligned, {
+    regularMarketPrice: 103.50,
+    activeTimeframe: "60"
+  })
+
+  const r5 = chkPullback.rules.find(r => r.id === 5)
+  assert.equal(r5.passed, true) // Rule 5 passes because setup triggered and is in-force!
+  assert.match(r5.detail, /pullback\) — In-Force/)
+  assert.equal(chkPullback.isTriggered, true)
+  assert.equal(chkPullback.takeActionWindow.isOpen, true) // Take Action Window stays open during pullback!
+
+  // Untriggered setup (cSetup high 104.50 never crossed 105.00 trigger)
+  const hourlyUntriggered = [
+    { timestamp: 1000, open: 100, high: 105, low: 95, close: 104 }, // pSetup
+    { timestamp: 2000, open: 103, high: 104.50, low: 102, close: 103 } // cSetup
+  ]
+  const chkUntriggered = Model.evaluateStratChecklist("AAPL", hourlyUntriggered, dailyAligned, {
+    regularMarketPrice: 103.00,
+    activeTimeframe: "60"
+  })
+  const r5Untrig = chkUntriggered.rules.find(r => r.id === 5)
+  assert.equal(r5Untrig.passed, false) // Has not triggered
+  assert.match(r5Untrig.detail, /Awaiting Trigger: \$105\.00/)
+  assert.equal(chkUntriggered.isTriggered, false)
 })

@@ -169,11 +169,7 @@ async function run() {
         const pPrev = peerCandles[peerCandles.length - 2];
         const sc = Model.stratScenario(pLast, pPrev);
         const col = Number(pLast.close) >= Number(pLast.open) ? "G" : "R";
-        let inf = "-";
-        if (sc === "2u") inf = Number(pLast.close) >= Number(pPrev.high) ? "In-Force" : "Triggered";
-        else if (sc === "2d") inf = Number(pLast.close) <= Number(pPrev.low) ? "In-Force" : "Triggered";
-        else if (sc === "1") inf = "Inside Bar";
-        else if (sc === "3") inf = "Outside Bar";
+        const inf = Model.stratInForce(sc);
         peerInfo = {
           symbol: pair.peer,
           scenario: sc,
