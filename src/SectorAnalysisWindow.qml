@@ -47,6 +47,7 @@ FloatingWindow {
     property var chartCache: ({})
     property var symbolLevels: ({})
     property var pendingFetches: []
+    property var pendingQuoteChunks: []
     property bool fetching: false
 
     property string discordWebhook: ""
@@ -56,6 +57,8 @@ FloatingWindow {
     signal alertDispatchRequested(var alert)
     signal alertsMuteToggleRequested
     signal symbolLevelsChangedExternally(string sym, var nextLevels)
+    signal quotesReceived(var incomingQuotes)
+    signal chartDataReceived(string key, var candles, var quoteEnriched)
 
     title: {
         var t = root.sectorTickers;
@@ -80,7 +83,13 @@ FloatingWindow {
             refreshVisibleCharts(false);
         } else {
             var s = (root.sectorTickers.length === 1) ? root.sectorTickers[0] : root.sectorSymbol;
-            loadHoldingsForSector(s);
+            if (Model.isBasketSector(s)) {
+                loadHoldingsForSector(s);
+            } else {
+                root.holdings = [];
+                refreshBatchQuotes();
+                refreshVisibleCharts(false);
+            }
         }
     }
 
@@ -92,7 +101,13 @@ FloatingWindow {
             refreshVisibleCharts(false);
         } else {
             var s = (root.sectorTickers.length === 1) ? root.sectorTickers[0] : root.sectorSymbol;
-            loadHoldingsForSector(s);
+            if (Model.isBasketSector(s)) {
+                loadHoldingsForSector(s);
+            } else {
+                root.holdings = [];
+                refreshBatchQuotes();
+                refreshVisibleCharts(false);
+            }
         }
     }
 
@@ -365,26 +380,37 @@ FloatingWindow {
         return count;
     }
 
-    // Live Batch Quotes (2-second interval)
+    // Live Batch Quotes (15-second interval)
     function getAllSymbols() {
         if (root.isMultiTicker) {
             return root.sectorTickers;
         }
         var singleSym = (root.sectorTickers.length === 1) ? root.sectorTickers[0] : root.sectorSymbol;
         var syms = singleSym ? [singleSym] : [];
-        for (var i = 0; i < root.holdings.length; i++) {
-            var h = root.holdings[i];
-            if (h && h.symbol && syms.indexOf(h.symbol) === -1)
-                syms.push(h.symbol);
+        if (Model.isBasketSector(singleSym)) {
+            for (var i = 0; i < root.holdings.length; i++) {
+                var h = root.holdings[i];
+                if (h && h.symbol && syms.indexOf(h.symbol) === -1)
+                    syms.push(h.symbol);
+            }
         }
         return syms;
     }
 
     function refreshBatchQuotes() {
         var syms = getAllSymbols();
-        if (syms.length === 0 || quoteProc.running)
+        if (syms.length === 0)
             return;
-        quoteProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.sparkUrl(syms)];
+        root.pendingQuoteChunks = Model.chunkSymbols(syms, 20);
+        if (!quoteProc.running)
+            processNextQuoteChunk();
+    }
+
+    function processNextQuoteChunk() {
+        if (root.pendingQuoteChunks.length === 0)
+            return;
+        var nextChunk = root.pendingQuoteChunks.shift();
+        quoteProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.sparkUrl(nextChunk)];
         quoteProc.running = true;
     }
 
@@ -396,11 +422,35 @@ FloatingWindow {
                 try {
                     var parsed = Model.parseSpark(raw);
                     if (parsed && typeof parsed === "object") {
-                        root.quotes = Object.assign({}, root.quotes, parsed);
+                        root.quotes = Model.mergeQuotes(root.quotes, parsed);
+                        root.quotesReceived(parsed);
+                        var nextCache = Object.assign({}, root.chartCache);
+                        var keys = Object.keys(parsed);
+                        var nowDate = new Date();
+                        for (var ki = 0; ki < keys.length; ki++) {
+                            var s = keys[ki];
+                            var q = parsed[s];
+                            var kActive = root.cacheKey(s, root.timeframe);
+                            if (nextCache[kActive] && nextCache[kActive].length > 0) {
+                                nextCache[kActive] = Model.updateDevelopingCandle(nextCache[kActive], q, root.timeframe, nowDate);
+                            }
+                            var k1D = root.cacheKey(s, "1D");
+                            if (root.timeframe !== "1D" && nextCache[k1D] && nextCache[k1D].length > 0) {
+                                nextCache[k1D] = Model.updateDevelopingCandle(nextCache[k1D], q, "1D", nowDate);
+                            }
+                            var k60 = root.cacheKey(s, "60");
+                            if (root.timeframe !== "60" && nextCache[k60] && nextCache[k60].length > 0) {
+                                nextCache[k60] = Model.updateDevelopingCandle(nextCache[k60], q, "60", nowDate);
+                            }
+                        }
+                        root.chartCache = nextCache;
                     }
                 } catch (e) {
                     console.log("[SectorAnalysis] Error parsing spark quotes:", e);
                 }
+            }
+            if (root.pendingQuoteChunks.length > 0) {
+                Qt.callLater(root.processNextQuoteChunk);
             }
         }
         stdout: StdioCollector {
@@ -411,15 +461,24 @@ FloatingWindow {
 
     Timer {
         id: quoteRefreshTimer
-        interval: 2000
+        interval: 15000
         running: root.visible
         repeat: true
-        onTriggered: root.refreshBatchQuotes()
+        onTriggered: {
+            root.refreshBatchQuotes();
+            if (root.inDrillDown && root.drillDownSymbol) {
+                root.queueFetch(root.drillDownSymbol, "30", true);
+                root.queueFetch(root.drillDownSymbol, "60", true);
+                root.queueFetch(root.drillDownSymbol, "1D", true);
+                root.queueFetch(root.drillDownSymbol, "1W", true);
+                root.queueFetch(root.drillDownSymbol, "1M", true);
+            }
+        }
     }
 
     // Chart Fetch Engine (Multi-Worker Parallel Fetching)
     function cacheKey(sym, tf) {
-        return sym + ":" + tf;
+        return Model.cacheKey(sym, tf);
     }
 
     function getCandles(sym, tf) {
@@ -466,11 +525,15 @@ FloatingWindow {
                     var nextCache = Object.assign({}, root.chartCache);
                     nextCache[k] = parsed.candles;
                     root.chartCache = nextCache;
+                    root.chartDataReceived(k, parsed.candles, parsed.symbol ? parsed : null);
 
                     if (parsed.symbol && !root.quotes[sym]) {
                         var nextQuotes = Object.assign({}, root.quotes);
                         nextQuotes[sym] = parsed;
                         root.quotes = nextQuotes;
+                        var singleMap = ({});
+                        singleMap[sym] = parsed;
+                        root.quotesReceived(singleMap);
                     }
                 }
             } catch (e) {
@@ -701,7 +764,7 @@ FloatingWindow {
         Rectangle {
             id: masterHeader
             width: parent.width
-            height: Style.space(96)
+            height: Model.isBasketSector(root.sectorSymbol) ? Style.space(96) : Style.space(68)
             color: Color.background
             z: 10
 
@@ -1264,6 +1327,7 @@ FloatingWindow {
                 Item {
                     width: parent.width
                     height: Style.space(20)
+                    visible: Model.isBasketSector(root.sectorSymbol)
 
                     Row {
                         anchors.left: parent.left
