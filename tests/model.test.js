@@ -3612,3 +3612,79 @@ test("shared model helpers: cacheKey, isBasketSector, chunkSymbols, and updateDe
   assert.equal(rolled[1].high, 112)
   assert.equal(rolled[1].low, 109)
 })
+
+test("Contradiction 5: Canonical 33% Hammer/Shooter detection, DRY scanner, and entry bar +/- $0.01 stop placement", () => {
+  // 1. Canonical Hammer Detection (top 33% of range, upper wick <= 10%)
+  const validHammer = Model.detectCandleShape({ open: 108, high: 109, low: 100, close: 108.8 })
+  assert.equal(validHammer.isHammer, true)
+  assert.equal(validHammer.shape, "Hammer")
+
+  // Invalid: body in middle 50% of range (not top 33%)
+  const midCandle = Model.detectCandleShape({ open: 104, high: 109, low: 100, close: 105 })
+  assert.equal(midCandle.isHammer, false)
+
+  // Invalid: body in top 33% but upper wick is too large (> 10% of range, e.g. 16.7%)
+  const bigHeadCandle = Model.detectCandleShape({ open: 106.5, high: 109, low: 100, close: 107.5 })
+  assert.equal(bigHeadCandle.isHammer, false)
+
+  // 2. Canonical Shooter Detection (bottom 33% of range, lower wick <= 10%)
+  const validShooter = Model.detectCandleShape({ open: 101.5, high: 110, low: 100, close: 100.8 })
+  assert.equal(validShooter.isShooter, true)
+  assert.equal(validShooter.shape, "Shooter")
+
+  // Invalid: lower wick too large (> 10%)
+  const bigTailShooter = Model.detectCandleShape({ open: 102.5, high: 110, low: 100, close: 101.8 })
+  assert.equal(bigTailShooter.isShooter, false)
+
+  // 3. DRY Scanner matchesScenarioTokens uses canonical detectCandleShape
+  const candlesHammer = [
+    { open: 105, high: 107, low: 104, close: 106 },
+    { open: 108, high: 109, low: 100, close: 108.8 } // Hammer
+  ]
+  assert.equal(Model.matchesScenarioTokens(candlesHammer, null, ["hammer"]), true)
+  assert.equal(Model.matchesScenarioTokens(candlesHammer, null, ["shooter"]), false)
+
+  // 4. evaluateStratChecklist: Hammer stop placed on entry low - $0.01, NOT hammer wick
+  const dailyBull = [
+    { timestamp: 100, open: 100, high: 110, low: 95, close: 108 },
+    { timestamp: 200, open: 108, high: 130, low: 105, close: 125 },
+    { timestamp: 300, open: 125, high: 135, low: 120, close: 132 }
+  ]
+  // Hourly: p2 is 116-122, p1 is 2d Hammer (high 120, low 105, open 118, close 119.5 - wick down to 105!),
+  // c0 is Entry bar (open 119, low 118.20, high 123, close 122)
+  const hourlyHammer = [
+    { timestamp: 1000, open: 116, high: 122, low: 115, close: 121 },
+    { timestamp: 2000, open: 118, high: 120, low: 105, close: 119.5 }, // 2d Hammer (range 15, low 105, top33 = 115, body 118-119.5, upper wick 0.5 = 3.3%)
+    { timestamp: 3000, open: 119, high: 123, low: 118.20, close: 122 } // Entry bar: low is 118.20
+  ]
+  const hammerRes = Model.evaluateStratChecklist("AAPL", hourlyHammer, dailyBull, { regularMarketPrice: 122 })
+  assert.ok(hammerRes.stopLevels)
+  assert.equal(hammerRes.stopLevels.structural, 105) // Hammer wick recorded as structural reference
+  assert.equal(hammerRes.stopLevels.entryExtreme, 118.20)
+  // Stop price is entry low - $0.01 = 118.19 (NEVER under the hammer wick of 105!)
+  assert.equal(hammerRes.stopPrice, 118.19)
+  const r8Hammer = hammerRes.rules.find(r => r.id === 8)
+  assert.match(r8Hammer.detail, /Entry Low - \$0\.01 \(Hammer Stop\)/)
+
+  // 5. evaluateStratChecklist: Shooter stop placed on entry high + $0.01, NOT shooter wick
+  const dailyBear = [
+    { timestamp: 100, open: 130, high: 135, low: 120, close: 122 },
+    { timestamp: 200, open: 122, high: 125, low: 100, close: 105 },
+    { timestamp: 300, open: 105, high: 110, low: 90, close: 95 }
+  ]
+  // Hourly: p2 is 108-110, p1 is 2u Shooter (high 125, low 106, open 108, close 107 - wick up to 125!),
+  // c0 is Entry bar (open 107.5, high 108.50, low 102, close 103)
+  const hourlyShooter = [
+    { timestamp: 1000, open: 108, high: 110, low: 105, close: 106 },
+    { timestamp: 2000, open: 108, high: 125, low: 106, close: 107 }, // 2u Shooter (range 19, low 106, bot33 = 112.33, body 107-108, lower wick 1 = 5.2%)
+    { timestamp: 3000, open: 107.5, high: 108.50, low: 102, close: 103 } // Entry bar: high is 108.50
+  ]
+  const shooterRes = Model.evaluateStratChecklist("TSLA", hourlyShooter, dailyBear, { regularMarketPrice: 103 })
+  assert.ok(shooterRes.stopLevels)
+  assert.equal(shooterRes.stopLevels.structural, 125) // Shooter wick recorded as structural reference
+  assert.equal(shooterRes.stopLevels.entryExtreme, 108.50)
+  // Stop price is entry high + $0.01 = 108.51 (NEVER above the shooter wick of 125!)
+  assert.equal(shooterRes.stopPrice, 108.51)
+  const r8Shooter = shooterRes.rules.find(r => r.id === 8)
+  assert.match(r8Shooter.detail, /Entry High \+ \$0\.01 \(Shooter Stop\)/)
+})
