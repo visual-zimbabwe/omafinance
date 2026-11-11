@@ -1400,14 +1400,14 @@ FloatingWindow {
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
-                        // F2u Metric (Failed 2u Reversal)
+                        // 2u Red Metric (Failed 2u Reversal / Bearish Evidence)
                         Row {
                             spacing: Style.space(3)
                             anchors.verticalCenter: parent.verticalCenter
 
                             Text {
                                 textFormat: Text.PlainText
-                                text: "F2u: " + Math.round(root.breadthMetrics.pctF2u || 0) + "%"
+                                text: "2u Red: " + Math.round(root.breadthMetrics.pctF2u || 0) + "%"
                                 color: (root.breadthMetrics.pctF2u || 0) >= 20 ? root.downColor : root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.caption
@@ -1430,14 +1430,14 @@ FloatingWindow {
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
-                        // F2d Metric (Failed 2d Reversal)
+                        // 2d Green Metric (Failed 2d Reversal / Bullish Evidence)
                         Row {
                             spacing: Style.space(3)
                             anchors.verticalCenter: parent.verticalCenter
 
                             Text {
                                 textFormat: Text.PlainText
-                                text: "F2d: " + Math.round(root.breadthMetrics.pctF2d || 0) + "%"
+                                text: "2d Green: " + Math.round(root.breadthMetrics.pctF2d || 0) + "%"
                                 color: (root.breadthMetrics.pctF2d || 0) >= 20 ? root.upColor : root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.caption

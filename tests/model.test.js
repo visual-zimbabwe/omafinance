@@ -1299,7 +1299,8 @@ test("stratBarState and stratEntryState classify bar states, failed 2 reversals,
   assert.equal(barFailed2u.scenario, "2u")
   assert.equal(barFailed2u.color, "R")
   assert.equal(barFailed2u.failed2u, true)
-  assert.equal(barFailed2u.code, "F2u")
+  assert.equal(barFailed2u.code, "2u")
+  assert.equal(barFailed2u.failedCode, "F2u")
   const entryFailed2uShort = Model.stratEntryState(barFailed2u, false)
   assert.equal(entryFailed2uShort.state, "FAILED_2_REVERSAL")
   assert.equal(entryFailed2uShort.passes, true)
@@ -2806,7 +2807,7 @@ test("Update 2: detectMotherbarProblem and Rule 6 block Compound 1 Motherbar tra
   assert.equal(mbCleared.isMotherbarProblem, false)
 })
 
-test("Update 3: computeBasketAttackMetrics excludes failed red 2u bars and computeFocusBasketSupport enforces 80% simultaneous break", () => {
+test("Update 3: computeBasketAttackMetrics classifies all 2u bars under Truth #1 while distinguishing green vs failed red 2u bars", () => {
   const holdings = [
     { symbol: "AAA", name: "Alpha", pctVal: 50 },
     { symbol: "BBB", name: "Beta", pctVal: 50 }
@@ -2824,8 +2825,10 @@ test("Update 3: computeBasketAttackMetrics excludes failed red 2u bars and compu
     ]
   }
   const metrics = Model.computeBasketAttackMetrics("SMH", "Semis", "Sector", holdings, candlesMap, null, "60")
-  assert.equal(metrics.count2u, 1) // Only AAA counted; failed red 2u BBB excluded
-  assert.equal(metrics.pct2u, 50)
+  assert.equal(metrics.count2u, 2) // Both AAA and BBB took out prior high -> Truth #1 Scenario 2u
+  assert.equal(metrics.pct2u, 100)
+  assert.equal(metrics.count2uGreen, 1)
+  assert.equal(metrics.pct2uGreen, 50)
   assert.equal(metrics.countF2u, 1)
   assert.equal(metrics.pctF2u, 50)
   assert.equal(metrics.countF2d, 0)
