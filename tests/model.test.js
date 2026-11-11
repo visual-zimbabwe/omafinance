@@ -1470,18 +1470,19 @@ test("evaluateStratChecklist prioritizes Macro Consensus (Month + Week) over opp
   const quote = { regularMarketPrice: 184 }
 
   const res = Model.evaluateStratChecklist("AAPL", hourly, daily, quote)
-  // Macro Consensus (Month=R, Week=R) overrides Day=G, locking direction to SHORT
-  assert.equal(res.direction, "SHORT")
+  // Macro Consensus (Month=R, Week=R) with Day=G inside -> CONFLICT
+  assert.equal(res.direction, "CONFLICT")
   assert.equal(res.ftfcSummary.m, "R")
   assert.equal(res.ftfcSummary.w, "R")
   assert.equal(res.ftfcSummary.d, "G")
   assert.equal(res.ftfcSummary.h60, "G")
   assert.equal(res.ftfcSummary.isFTFC, false)
+  assert.equal(res.ftfcSummary.isConflict, true)
 
   // Status reflects armed macro trend with pullback in force
   assert.equal(res.isTradeable, false)
   assert.equal(res.isArmed, true)
-  assert.equal(res.statusTag, "ARMED - Macro Trend SHORT (Day/60m Pullback)")
+  assert.equal(res.statusTag, "ARMED - Macro Trend SHORT (Day Inside Pullback)")
   assert.equal(res.badgeText, "ARMED")
   assert.equal(res.badgeTone, "amber")
 })
@@ -3045,12 +3046,16 @@ test("Batch 2 Update 1: evaluateStratChecklist supports Macro + Intraday Flip ne
     { timestamp: t3, open: 208, high: 210.5, low: 207.8, close: 210 }       // 60m 2u Green flip!
   ]
   const resFlip = Model.evaluateStratChecklist("AAPL", hourlyFlip, dailyMacroFlip, { regularMarketPrice: 210 })
-  assert.equal(resFlip.direction, "LONG")
-  assert.equal(resFlip.ftfcSummary.isMacroFlip, true)
+  assert.equal(resFlip.direction, "CONFLICT")
+  assert.equal(resFlip.ftfcSummary.isConflict, true)
+  assert.equal(resFlip.ftfcSummary.isFTFC, false)
+  assert.equal(resFlip.ftfcSummary.isOverride, false)
   const r1Flip = resFlip.rules.find(r => r.id === 1)
-  assert.equal(r1Flip.passed, true)
-  assert.match(r1Flip.detail, /Macro \+ 60m Flip \(Negating 1D\)/)
-  assert.equal(resFlip.isTradeable, true)
+  assert.equal(r1Flip.passed, false)
+  assert.match(r1Flip.detail, /Conflict:.*Awaiting 1D Open Reclaim/)
+  assert.equal(resFlip.isTradeable, false)
+  assert.equal(resFlip.isArmed, true)
+  assert.match(resFlip.statusTag, /ARMED - Macro Trend LONG \(Awaiting 1D Open Reclaim/)
 
   // Case B: 30-60 Gapper (1M=R, 1W=R, 1D gaps down below prior day low 180 to 176, then reclaims 1D open 177 -> 1D failed2d Green + 60m 2u Green)
   const dailyGapper = [
@@ -3536,9 +3541,10 @@ test("Contradiction 2: Scenario 3 outside bars classified as broadening chop, ha
     { timestamp: t3, open: 190.5, high: 193, low: 190, close: 192 }
   ]
   const resChop = Model.evaluateStratChecklist("NVDA", hourly, dailyChop, { regularMarketPrice: 192 })
-  // Should NOT trigger LONG override; Month and Week are Red, Day 3 is outside expansion chop
-  assert.equal(resChop.direction, "SHORT")
+  // Should NOT trigger LONG override; Month and Week are Red, Day 3 is outside expansion chop -> CONFLICT
+  assert.equal(resChop.direction, "CONFLICT")
   assert.equal(resChop.ftfcSummary.isOverride, false)
+  assert.equal(resChop.ftfcSummary.isConflict, true)
 
   // 7. evaluateStratChecklist: Live developing 1-3 RevStrat recognizes pattern in Rule 2 but gates in Rule 6
   // Setup TF: p60 is Scenario 1 inside bar (range 189 - 191). c60 takes both sides (187 and 193) -> Scenario 3 live
@@ -3734,4 +3740,82 @@ test("Contradiction 9: Eliminates refuted Risk/Reward ratio in favor of canonica
   const magDefField = fields.find(f => f.name === "Magnitude & Defense")
   assert.ok(magDefField, "Must include Magnitude & Defense field")
   assert.match(magDefField.value, /`T1 Room: \$\d+\.\d{2} \(\+\d+\.\d{2}%\) \| Defense: \$\d+\.\d{2}`/)
+})
+
+test("Contradiction 11: Override & Conflict Permissiveness (Day+60m agree, eliminate pseudo-macro-flip, conflict Option B)", () => {
+  // 1. classifyTimeframeContinuity: Full Bullish and Bearish FTFC
+  const cBullFTFC = Model.classifyTimeframeContinuity("G", "G", "G", "G", { scenario: "2u" })
+  assert.equal(cBullFTFC.direction, "LONG")
+  assert.equal(cBullFTFC.isFTFC, true)
+  assert.equal(cBullFTFC.isOverride, false)
+  assert.equal(cBullFTFC.r1Pass, true)
+
+  const cBearFTFC = Model.classifyTimeframeContinuity("R", "R", "R", "R", { scenario: "2d" })
+  assert.equal(cBearFTFC.direction, "SHORT")
+  assert.equal(cBearFTFC.isFTFC, true)
+  assert.equal(cBearFTFC.isOverride, false)
+  assert.equal(cBearFTFC.r1Pass, true)
+
+  // 2. classifyTimeframeContinuity: Valid 1D+60m Override (color only, non-inside/non-3 Day break against opposing macro)
+  const cBullOverride = Model.classifyTimeframeContinuity("R", "R", "G", "G", { scenario: "2u" })
+  assert.equal(cBullOverride.direction, "LONG")
+  assert.equal(cBullOverride.isFTFC, false)
+  assert.equal(cBullOverride.isOverride, true)
+  assert.equal(cBullOverride.r1Pass, true)
+
+  const cBearOverride = Model.classifyTimeframeContinuity("G", "G", "R", "R", { scenario: "2d" })
+  assert.equal(cBearOverride.direction, "SHORT")
+  assert.equal(cBearOverride.isFTFC, false)
+  assert.equal(cBearOverride.isOverride, true)
+  assert.equal(cBearOverride.r1Pass, true)
+
+  // 3. classifyTimeframeContinuity: Blocked override when Day is inside bar (1) opposing macro trend -> CONFLICT
+  const cInsideDayPullback = Model.classifyTimeframeContinuity("R", "R", "G", "G", { scenario: "1" })
+  assert.equal(cInsideDayPullback.direction, "CONFLICT")
+  assert.equal(cInsideDayPullback.isOverride, false)
+  assert.equal(cInsideDayPullback.isConflict, true)
+  assert.equal(cInsideDayPullback.macroBias, "SHORT")
+
+  // 4. classifyTimeframeContinuity: Blocked override when Day is Scenario 3 outside bar -> CONFLICT
+  const cOutsideDayChop = Model.classifyTimeframeContinuity("R", "R", "G", "G", { scenario: "3" })
+  assert.equal(cOutsideDayChop.direction, "CONFLICT")
+  assert.equal(cOutsideDayChop.isOverride, false)
+  assert.equal(cOutsideDayChop.isConflict, true)
+
+  // 5. classifyTimeframeContinuity: 60m flip against Red Day (Macro=G, Day=R, 60m=G) -> CONFLICT (no premature override!)
+  const cAwaitingReclaim = Model.classifyTimeframeContinuity("G", "G", "R", "G", { scenario: "2u" })
+  assert.equal(cAwaitingReclaim.direction, "CONFLICT")
+  assert.equal(cAwaitingReclaim.isFTFC, false)
+  assert.equal(cAwaitingReclaim.isOverride, false)
+  assert.equal(cAwaitingReclaim.isConflict, true)
+  assert.equal(cAwaitingReclaim.macroBias, "LONG")
+
+  // 6. classifyTimeframeContinuity: 50/50 mixed timeframes without macro consensus -> CONFLICT with null macroBias
+  const cPureChop = Model.classifyTimeframeContinuity("G", "R", "G", "R", { scenario: "2u" })
+  assert.equal(cPureChop.direction, "CONFLICT")
+  assert.equal(cPureChop.macroBias, null)
+  assert.equal(cPureChop.isConflict, true)
+
+  // 7. evaluateStratChecklist: Awaiting 1D Open Reclaim formatted in Rule 1 detail and Armed status
+  const t1 = Math.floor(new Date("2026-09-01T14:30:00Z").getTime() / 1000)
+  const t2 = Math.floor(new Date("2026-09-07T14:30:00Z").getTime() / 1000)
+  const t3 = Math.floor(new Date("2026-09-08T14:30:00Z").getTime() / 1000)
+  const dailyConflict = [
+    { timestamp: t1, open: 190, high: 215, low: 188, close: 205 }, // 1M open 190 -> price 210 is Green
+    { timestamp: t2, open: 202, high: 215, low: 200, close: 208 }, // 1W open 202 -> price 210 is Green
+    { timestamp: t3, open: 212, high: 213, low: 207, close: 210 }  // 1D open 212 -> price 210 is RED!
+  ]
+  const hourlyConflict = [
+    { timestamp: t3 - 7200, open: 212, high: 213, low: 208, close: 209 },
+    { timestamp: t3 - 3600, open: 209, high: 209.5, low: 207, close: 208 },
+    { timestamp: t3, open: 208, high: 210.5, low: 207.8, close: 210 } // 60m 2u Green flip!
+  ]
+  const res = Model.evaluateStratChecklist("TSLA", hourlyConflict, dailyConflict, { regularMarketPrice: 210 })
+  assert.equal(res.direction, "CONFLICT")
+  assert.equal(res.isTradeable, false)
+  assert.equal(res.isArmed, true)
+  assert.match(res.statusTag, /ARMED - Macro Trend LONG \(Awaiting 1D Open Reclaim at \$212\.00\)/)
+  const r1 = res.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, false)
+  assert.match(r1.detail, /Conflict:.*Awaiting 1D Open Reclaim \(\$212\.00\)/)
 })

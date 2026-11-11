@@ -87,6 +87,8 @@ Item {
                             return (Color.accent !== undefined) ? Color.accent : Qt.rgba(0.92, 0.65, 0.15, 1);
                         if (!root.checklistData.isTradeable)
                             return root.dim;
+                        if (root.checklistData.direction === "CONFLICT")
+                            return root.dim;
                         return root.checklistData.direction === "SHORT" ? root.downColor : root.upColor;
                     }
                     font.family: root.fontFamily
@@ -120,6 +122,8 @@ Item {
                     if (root.checklistData.isArmed)
                         return (Color.accent !== undefined) ? Color.accent : Qt.rgba(0.92, 0.65, 0.15, 1);
                     if (!root.checklistData.isTradeable)
+                        return root.dim;
+                    if (root.checklistData.direction === "CONFLICT")
                         return root.dim;
                     return root.checklistData.direction === "SHORT" ? root.downColor : root.upColor;
                 }
