@@ -4701,7 +4701,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var p1M = monthly.length > 1 ? monthly[monthly.length - 2] : null
 
   var nowSec = (nowDate instanceof Date) ? Math.floor(nowDate.getTime() / 1000) : null
-  var bar60 = stratBarState(c60, p60, currentPrice, nowSec, 3600)
+  var bar60Duration = candleDurationSec(c60, "60", symbol, nowDate, liveQuote)
+  var bar60 = stratBarState(c60, p60, currentPrice, nowSec, bar60Duration)
 
   var opts = (options && typeof options === "object") ? options : ({})
   var use30m = (String(opts.activeTimeframe || "") === "30" && Array.isArray(opts.activeCandles) && opts.activeCandles.length >= 3)
@@ -4710,7 +4711,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var setupLabel = use30m ? "30m" : "60m"
   var cSetup = setupCandles.length > 0 ? setupCandles[setupCandles.length - 1] : null
   var pSetup = setupCandles.length > 1 ? setupCandles[setupCandles.length - 2] : null
-  var barSetup = use30m ? stratBarState(cSetup, pSetup, currentPrice, nowSec, 1800) : bar60
+  var barSetupDuration = use30m ? 1800 : bar60Duration
+  var barSetup = use30m ? stratBarState(cSetup, pSetup, currentPrice, nowSec, barSetupDuration) : bar60
 
   // Synthesize current day / week if liveQuote has dayHigh / dayLow
   var c1D_synth = c1D
@@ -4912,18 +4914,33 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   if (runCount >= 3) {
     r4Pass = false
     r4Detail = "Run exhaustion: " + runCount + " consecutive " + (isLong ? "2u" : "2d") + " bars without consolidation"
-  } else if (!exemptTimeExhaustion && nowSec !== null) {
-    if (setupTf === "30" && cSetup && cSetup.timestamp) {
-      var elapsed30 = nowSec - cSetup.timestamp
-      if (elapsed30 >= 1500 && elapsed30 < 1800) {
+  } else if (nowSec !== null) {
+    var sym = normalizeSymbol(symbol)
+    var isCrypto = isCryptoSymbol(sym)
+    var sched = (nowSec >= 946684800 && !isCrypto) ? getUsSessionSchedule(nowDate, liveQuote) : null
+
+    if (sched) {
+      if (!sched.isSessionOpen) {
         r4Pass = false
-        r4Detail = "Time exhaustion: <5m remaining in 30m candle (" + Math.floor((1800 - elapsed30) / 60) + "m left)"
+        r4Detail = "Market session closed"
+      } else if (sched.mins >= sched.finalBarMins) {
+        var minsCloseLeft = Math.max(1, sched.closeMins - sched.mins)
+        r4Pass = false
+        r4Detail = "Time exhaustion: <30m remaining before market close (" + minsCloseLeft + "m left)"
       }
-    } else if (c60 && c60.timestamp) {
-      var elapsedSec = nowSec - c60.timestamp
-      if (elapsedSec >= 3300 && elapsedSec < 3600) {
-        r4Pass = false
-        r4Detail = "Time exhaustion: <5m remaining in 60m candle (" + Math.floor((3600 - elapsedSec) / 60) + "m left)"
+    }
+
+    if (r4Pass && !exemptTimeExhaustion) {
+      var activeCandle = (setupTf === "30" && cSetup) ? cSetup : c60
+      if (activeCandle && isFinite(activeCandle.timestamp)) {
+        var duration = candleDurationSec(activeCandle, setupTf, sym, nowDate, liveQuote)
+        var elapsed = nowSec - Number(activeCandle.timestamp)
+        var remainingSec = duration - elapsed
+        if (remainingSec > 0 && remainingSec <= 300) {
+          var minsCandleLeft = Math.max(1, Math.floor(remainingSec / 60))
+          r4Pass = false
+          r4Detail = "Time exhaustion: <5m remaining in " + setupLabel + " candle (" + minsCandleLeft + "m left)"
+        }
       }
     }
   }
@@ -5723,20 +5740,98 @@ function isUsDstUtc(utcMs) {
   return utcMs >= dstStartUtc && utcMs < dstEndUtc
 }
 
-function isUsMarketOpen(nowDate, allowExtended) {
+function getUsSessionSchedule(nowDate, quote) {
   var d = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate : new Date()
   var utcMs = d.getTime()
   var offsetHours = isUsDstUtc(utcMs) ? -4 : -5
   var etDate = new Date(utcMs + offsetHours * 3600000)
   var day = etDate.getUTCDay()
-  if (day === 0 || day === 6) return false
+  var isWeekend = (day === 0 || day === 6)
   var mins = etDate.getUTCHours() * 60 + etDate.getUTCMinutes()
+
+  var isEarlyClose = false
+
+  var regPeriod = quote && quote.meta && quote.meta.currentTradingPeriod && quote.meta.currentTradingPeriod.regular
+  if (regPeriod && isFinite(regPeriod.end) && isFinite(regPeriod.start)) {
+    var regEndEt = new Date(Number(regPeriod.end) * 1000 + offsetHours * 3600000)
+    var regCloseMins = regEndEt.getUTCHours() * 60 + regEndEt.getUTCMinutes()
+    if (regCloseMins <= 840) {
+      isEarlyClose = true
+    }
+  }
+
+  if (!isEarlyClose && !isWeekend) {
+    var month = etDate.getUTCMonth()
+    var date = etDate.getUTCDate()
+    // Black Friday: Friday after 4th Thursday of November (dates 23-29)
+    if (month === 10 && day === 5 && date >= 23 && date <= 29) {
+      isEarlyClose = true
+    }
+    // Christmas Eve: Dec 24 on Mon-Thu
+    else if (month === 11 && date === 24 && day >= 1 && day <= 4) {
+      isEarlyClose = true
+    }
+    // Day before July 4th: July 3 on Mon-Thu
+    else if (month === 6 && date === 3 && day >= 1 && day <= 4) {
+      isEarlyClose = true
+    }
+  }
+
+  var openMins = 570 // 09:30 ET
+  var closeMins = isEarlyClose ? 780 : 960 // 13:00 ET or 16:00 ET
+  var finalBarMins = closeMins - 30 // 12:30 ET or 15:30 ET
+  var isSessionOpen = !isWeekend && (mins >= openMins && mins < closeMins)
+
+  return {
+    etDate: etDate,
+    mins: mins,
+    isWeekend: isWeekend,
+    isEarlyClose: isEarlyClose,
+    openMins: openMins,
+    closeMins: closeMins,
+    finalBarMins: finalBarMins,
+    isSessionOpen: isSessionOpen
+  }
+}
+
+function candleDurationSec(candle, tf, symbol, nowDate, quote) {
+  var tfStr = String(tf || "60")
+  if (tfStr === "30") return 1800
+  if (tfStr !== "60") return 3600
+
+  var sym = normalizeSymbol(symbol)
+  if (isCryptoSymbol(sym)) return 3600
+
+  if (sym.indexOf(".") !== -1) {
+    var parts = sym.split(".")
+    var sfx = parts[parts.length - 1].toUpperCase()
+    if (sfx !== "TO" && sfx !== "V") return 3600
+  }
+
+  var cTs = candle && isFinite(candle.timestamp) ? Number(candle.timestamp) : null
+  if (cTs === null) return 3600
+
+  var utcMs = cTs * 1000
+  var offsetHours = isUsDstUtc(utcMs) ? -4 : -5
+  var candleEt = new Date(utcMs + offsetHours * 3600000)
+  var sched = getUsSessionSchedule(candleEt, quote)
+  var candleMins = candleEt.getUTCHours() * 60 + candleEt.getUTCMinutes()
+
+  if (candleMins >= sched.finalBarMins && candleMins < sched.closeMins) {
+    return 1800
+  }
+  return 3600
+}
+
+function isUsMarketOpen(nowDate, allowExtended) {
+  var sched = getUsSessionSchedule(nowDate)
+  if (sched.isWeekend) return false
   if (allowExtended === true) {
     // 04:00 ET (240) to 20:00 ET (1200)
-    return mins >= 240 && mins < 1200
+    return sched.mins >= 240 && sched.mins < 1200
   }
-  // Regular Trading Hours: 09:30 ET (570) to 16:00 ET (960)
-  return mins >= 570 && mins < 960
+  // Regular Trading Hours: 09:30 ET (570) to 16:00 ET (960) (or 13:00 ET on early close)
+  return sched.isSessionOpen
 }
 
 // ---------------------------------------------------------------------------
@@ -7697,6 +7792,8 @@ if (typeof module !== "undefined") {
     normalizeAlertLog: normalizeAlertLog,
     appendAlertLog: appendAlertLog,
     isUsDstUtc: isUsDstUtc,
+    getUsSessionSchedule: getUsSessionSchedule,
+    candleDurationSec: candleDurationSec,
     isUsMarketOpen: isUsMarketOpen,
     isAlertSessionOpen: isAlertSessionOpen,
     evaluateStratAlertTransition: evaluateStratAlertTransition,
