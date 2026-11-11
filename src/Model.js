@@ -1822,7 +1822,8 @@ function stratBarState(current, prev, livePrice, nowSec, periodSec) {
 
   state.failed2u = state.scenario === "2u" && state.color === "R"
   state.failed2d = state.scenario === "2d" && state.color === "G"
-  state.code = state.failed2u ? "F2u" : (state.failed2d ? "F2d" : state.scenario)
+  state.code = state.scenario
+  state.failedCode = state.failed2u ? "F2u" : (state.failed2d ? "F2d" : state.scenario)
   if (state.scenario !== "-") {
     var colorWord = state.color === "G" ? " GREEN" : (state.color === "R" ? " RED" : "")
     state.label = state.scenario.toUpperCase() + colorWord
@@ -1877,12 +1878,20 @@ function stratEntryState(bar, isLong) {
   return unknown
 }
 
-// Compact 60m bar state (e.g. "2d", "1", "F2u") for the FTFC row.
+// Compact 60m bar state (e.g. "2d", "1", "2u") for the FTFC row.
 function extractBar60(hourlyCandles, price) {
   var n = Array.isArray(hourlyCandles) ? hourlyCandles.length : 0
   if (!n) return null
   var bar = stratBarState(hourlyCandles[n - 1], n > 1 ? hourlyCandles[n - 2] : null, price, null, 3600)
-  return { scenario: bar.scenario, color: bar.color, code: bar.code, label: bar.label }
+  return {
+    scenario: bar.scenario,
+    color: bar.color,
+    code: bar.code,
+    label: bar.label,
+    failed2u: bar.failed2u,
+    failed2d: bar.failed2d,
+    failedCode: bar.failedCode
+  }
 }
 
 // HTF setup quality & scenario alignment relative to trade direction.
@@ -2055,7 +2064,7 @@ function stratHtfQuality(bar1M, bar1W, bar1D, isLong) {
       status: "OUTSIDE_EXPANSION",
       label: "Grade B (" + outTf + " Scenario 3 Outside)",
       details: outTf + " outside bar; range expanded in both directions",
-      isTrending: true,
+      isTrending: false,
       inForceCount: inForceCount,
       insideCount: insideCount,
       hasHtfFailed2: false
@@ -3497,9 +3506,10 @@ function detectStratAttack(candles, liveQuote) {
   if (s1 === "2u" && color1 === "G") {
     var hasBrokenHigh = Number(c0.high) > Number(c1.high)
     var isGreenToday = color0 === "G"
-    var inForce = livePx !== null ? (livePx > Number(c1.high) && livePx >= Number(c0.open)) : (hasBrokenHigh && isGreenToday)
+    var isScenario2u = s0 === "2u"
+    var inForce = livePx !== null ? (livePx > Number(c1.high) && livePx >= Number(c0.open) && isScenario2u) : (hasBrokenHigh && isGreenToday && isScenario2u)
 
-    if (hasBrokenHigh && isGreenToday) {
+    if (hasBrokenHigh && isGreenToday && isScenario2u) {
       var isTriple = (s2 === "2u" && color2 === "G")
       var attackType = isTriple ? "2u-2u-2u" : "2u-2u"
       return {
@@ -3517,9 +3527,10 @@ function detectStratAttack(candles, liveQuote) {
   if (s1 === "2d" && color1 === "R") {
     var hasBrokenLow = Number(c0.low) < Number(c1.low)
     var isRedToday = color0 === "R"
-    var inForceDown = livePx !== null ? (livePx < Number(c1.low) && livePx < Number(c0.open)) : (hasBrokenLow && isRedToday)
+    var isScenario2d = s0 === "2d"
+    var inForceDown = livePx !== null ? (livePx < Number(c1.low) && livePx < Number(c0.open) && isScenario2d) : (hasBrokenLow && isRedToday && isScenario2d)
 
-    if (hasBrokenLow && isRedToday) {
+    if (hasBrokenLow && isRedToday && isScenario2d) {
       var isTripleDown = (s2 === "2d" && color2 === "R")
       var attackTypeDown = isTripleDown ? "2d-2d-2d" : "2d-2d"
       return {
@@ -3544,6 +3555,8 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
   var count2u = 0
   var count2d = 0
   var count3 = 0
+  var count2uGreen = 0
+  var count2dRed = 0
   var countF2u = 0
   var countF2d = 0
   var countAttack2u = 0
@@ -3575,11 +3588,13 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
 
     if (s0 === "1") count1++
     if (s0 === "2u") {
-      if (isGreen) count2u++
+      count2u++
+      if (isGreen) count2uGreen++
       else countF2u++
     }
     if (s0 === "2d") {
-      if (isRed) count2d++
+      count2d++
+      if (isRed) count2dRed++
       else countF2d++
     }
     if (s0 === "3") count3++
@@ -3595,23 +3610,30 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
   var pct2u = total > 0 ? (count2u / total) * 100 : 0
   var pct2d = total > 0 ? (count2d / total) * 100 : 0
   var pct3 = total > 0 ? (count3 / total) * 100 : 0
+  var pct2uGreen = total > 0 ? (count2uGreen / total) * 100 : 0
+  var pct2dRed = total > 0 ? (count2dRed / total) * 100 : 0
   var pctF2u = total > 0 ? (countF2u / total) * 100 : 0
   var pctF2d = total > 0 ? (countF2d / total) * 100 : 0
   var pctAttack2u = total > 0 ? (countAttack2u / total) * 100 : 0
   var pctAttack2d = total > 0 ? (countAttack2d / total) * 100 : 0
   var netAttackDelta = pctAttack2u - pctAttack2d
 
+  var evidenceBullishCount = count2uGreen + countF2d
+  var evidenceBearishCount = count2dRed + countF2u
+  var evidenceBullishPct = total > 0 ? (evidenceBullishCount / total) * 100 : 0
+  var evidenceBearishPct = total > 0 ? (evidenceBearishCount / total) * 100 : 0
+
   var status = "NEUTRAL"
-  if (pct2u > pct2d) {
-    if ((pct2u >= 70 && pctAttack2u >= 15) || pctAttack2u >= 25 || (pctAttack2u >= 15 && pctAttack2u > pctAttack2d * 1.5)) {
+  if (pct2uGreen > pct2dRed) {
+    if ((pct2uGreen >= 70 && pctAttack2u >= 15) || pctAttack2u >= 25 || (pctAttack2u >= 15 && pctAttack2u > pctAttack2d * 1.5)) {
       status = "BULLISH ATTACK"
-    } else if (pct2u >= 60 || pctAttack2u >= 10) {
+    } else if (pct2uGreen >= 60 || pctAttack2u >= 10) {
       status = "DEVELOPING BUY"
     }
-  } else if (pct2d > pct2u) {
-    if ((pct2d >= 70 && pctAttack2d >= 15) || pctAttack2d >= 25 || (pctAttack2d >= 15 && pctAttack2d > pctAttack2u * 1.5)) {
+  } else if (pct2dRed > pct2uGreen) {
+    if ((pct2dRed >= 70 && pctAttack2d >= 15) || pctAttack2d >= 25 || (pctAttack2d >= 15 && pctAttack2d > pctAttack2u * 1.5)) {
       status = "BEARISH ATTACK"
-    } else if (pct2d >= 60 || pctAttack2d >= 10) {
+    } else if (pct2dRed >= 60 || pctAttack2d >= 10) {
       status = "DEVELOPING SELL"
     }
   }
@@ -3628,6 +3650,10 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     count2d: count2d,
     pct2u: pct2u,
     pct2d: pct2d,
+    count2uGreen: count2uGreen,
+    pct2uGreen: pct2uGreen,
+    count2dRed: count2dRed,
+    pct2dRed: pct2dRed,
     count3: count3,
     pct3: pct3,
     countF2u: countF2u,
@@ -3638,12 +3664,17 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     pctFailed2u: pctF2u,
     countFailed2d: countF2d,
     pctFailed2d: pctF2d,
+    evidenceBullishCount: evidenceBullishCount,
+    evidenceBullishPct: evidenceBullishPct,
+    evidenceBearishCount: evidenceBearishCount,
+    evidenceBearishPct: evidenceBearishPct,
     countAttack2u: countAttack2u,
     countAttack2d: countAttack2d,
     pctAttack2u: pctAttack2u,
     pctAttack2d: pctAttack2d,
     netAttackDelta: netAttackDelta,
-    isSimultaneousBreak: (pct2u >= 80 || pct2d >= 80),
+    isSimultaneousBreak: (pct2uGreen >= 80 || pct2dRed >= 80),
+    isSimultaneousExpansion: (pct2u >= 80 || pct2d >= 80),
     status: status
   }
 }
@@ -3879,8 +3910,8 @@ function computeFocusBasketSupport(symbol, timeframe, candles, quote, dailyCandl
   }
 
   var isLong = direction === "bullish"
-  var supportPct = isLong ? Number(tfData.pct2u || 0) : Number(tfData.pct2d || 0)
-  var opposePct = isLong ? Number(tfData.pct2d || 0) : Number(tfData.pct2u || 0)
+  var supportPct = isLong ? Number(tfData.pct2uGreen !== undefined ? tfData.pct2uGreen : tfData.pct2u || 0) : Number(tfData.pct2dRed !== undefined ? tfData.pct2dRed : tfData.pct2d || 0)
+  var opposePct = isLong ? Number(tfData.pct2dRed !== undefined ? tfData.pct2dRed : tfData.pct2d || 0) : Number(tfData.pct2uGreen !== undefined ? tfData.pct2uGreen : tfData.pct2u || 0)
   var attackPct = isLong ? Number(tfData.pctAttack2u || 0) : Number(tfData.pctAttack2d || 0)
   var opposeAttackPct = isLong ? Number(tfData.pctAttack2d || 0) : Number(tfData.pctAttack2u || 0)
 
@@ -3936,8 +3967,8 @@ function computeFocusBasketSupport(symbol, timeframe, candles, quote, dailyCandl
   var tf1D = (focusData && focusData.timeframes && focusData.timeframes["1D"]) ? focusData.timeframes["1D"] : null
   var dailyMost2s = null
   if (tf1D) {
-    var dPct2u = Number(tf1D.pct2u || 0)
-    var dPct2d = Number(tf1D.pct2d || 0)
+    var dPct2u = Number(tf1D.pct2uGreen !== undefined ? tf1D.pct2uGreen : tf1D.pct2u || 0)
+    var dPct2d = Number(tf1D.pct2dRed !== undefined ? tf1D.pct2dRed : tf1D.pct2d || 0)
     var dSupportPct = isLong ? dPct2u : dPct2d
     var dOpposePct = isLong ? dPct2d : dPct2u
     dailyMost2s = {
