@@ -3978,3 +3978,89 @@ test("Contradiction 3: Pure Canon Triggered vs. In-Force Definition (stratInForc
   assert.match(r5Untrig.detail, /Awaiting Trigger: \$105\.00/)
   assert.equal(chkUntriggered.isTriggered, false)
 })
+
+test("Contradiction 4: Momentum vs. Retracement (The One-Bar Test)", () => {
+  // 1. 2-1-2 Continuation off Green 2u -> Momentum (Continuation)
+  const candles212GreenCont = [
+    { open: 100, high: 105, low: 98, close: 102 }, // p3
+    { open: 102, high: 110, low: 101, close: 108 }, // p2: Green 2u
+    { open: 106, high: 107, low: 104, close: 105 }, // p1: 1 (Inside)
+    { open: 105, high: 109, low: 104, close: 108 }  // cur: 2u Long
+  ]
+  const res1 = Model.classifyMomentumOrRetracement(candles212GreenCont, true, false)
+  assert.equal(res1.style, "MOMENTUM")
+  assert.equal(res1.label, "Momentum (Continuation)")
+
+  // 2. 2-1-2 Continuation off Red 2u -> Retracement (Continuation) [Rob Smith Canon]
+  const candles212RedCont = [
+    { open: 100, high: 105, low: 98, close: 102 }, // p3
+    { open: 110, high: 112, low: 101, close: 104 }, // p2: Red 2u (open 110 > close 104)
+    { open: 106, high: 107, low: 104, close: 105 }, // p1: 1 (Inside)
+    { open: 105, high: 109, low: 104, close: 108 }  // cur: 2u Long
+  ]
+  const res2 = Model.classifyMomentumOrRetracement(candles212RedCont, true, false)
+  assert.equal(res2.style, "RETRACEMENT")
+  assert.equal(res2.label, "Retracement (Continuation)")
+
+  // 3. 2-1-2 Reversal off Red 2u breaking Down (Short) -> Momentum (Reversal) [Rob Smith Canon]
+  // In a reversal off a 2u breaking down, trade direction is Short, and prior bar was Red
+  const res3 = Model.classifyMomentumOrRetracement(candles212RedCont, false, false)
+  assert.equal(res3.style, "MOMENTUM")
+  assert.equal(res3.label, "Momentum (Reversal)")
+
+  // 4. 2-1-2 Reversal off Red 2d breaking Up (Long) -> Retracement (Reversal)
+  const candles212RedRev = [
+    { open: 105, high: 110, low: 103, close: 106 }, // p3
+    { open: 106, high: 107, low: 98, close: 100 },  // p2: Red 2d
+    { open: 101, high: 103, low: 99, close: 102 },  // p1: 1 (Inside)
+    { open: 102, high: 105, low: 101, close: 104 }  // cur: 2u Long
+  ]
+  const res4 = Model.classifyMomentumOrRetracement(candles212RedRev, true, false)
+  assert.equal(res4.style, "RETRACEMENT")
+  assert.equal(res4.label, "Retracement (Reversal)")
+
+  // 5. Compound Inside Bars (1-1-2) with Motherbar Lookback
+  // p4: Green 2u -> p3: Inside 1 -> p2: Inside 1 -> p1: Inside 1 -> cur: Long
+  const candlesCompound1 = [
+    { open: 100, high: 105, low: 98, close: 102 }, // p5
+    { open: 102, high: 120, low: 101, close: 118 }, // p4: Motherbar (Green 2u)
+    { open: 115, high: 118, low: 110, close: 112 }, // p3: Inside 1 (Red)
+    { open: 112, high: 116, low: 111, close: 114 }, // p2: Inside 1 (Green)
+    { open: 113, high: 115, low: 112, close: 114 }, // p1: Inside 1
+    { open: 114, high: 117, low: 113, close: 116 }  // cur: Long trigger
+  ]
+  const res5 = Model.classifyMomentumOrRetracement(candlesCompound1, true, false)
+  // Walkback skips p2 and p3 (inside bars), tests motherbar p4 (Green 2u). Same color as Long -> Momentum (Continuation)
+  assert.equal(res5.style, "MOMENTUM")
+  assert.equal(res5.label, "Momentum (Continuation)")
+
+  // 6. Developing Failed 2 Reversal (isFailed2 = true): tests completed bar before it (p1)
+  const candlesFailed2 = [
+    { open: 100, high: 108, low: 98, close: 104 }, // p2
+    { open: 106, high: 107, low: 96, close: 98 },  // p1: Red 2d
+    { open: 98, high: 105, low: 95, close: 103 }   // cur: went 2d (< 96) then reversed Green (> 98)
+  ]
+  // Long trade with p1 being Red -> opposite color -> Retracement (Reversal)
+  const res6 = Model.classifyMomentumOrRetracement(candlesFailed2, true, true)
+  assert.equal(res6.style, "RETRACEMENT")
+  assert.equal(res6.label, "Retracement (Reversal)")
+
+  // 7. 2-2 Direct Trigger: Green 2u -> 2u Continuation
+  const candles22Cont = [
+    { open: 100, high: 105, low: 98, close: 102 }, // p2
+    { open: 102, high: 110, low: 101, close: 108 }, // p1: Green 2u
+    { open: 108, high: 112, low: 107, close: 111 }  // cur: 2u Long
+  ]
+  const res7 = Model.classifyMomentumOrRetracement(candles22Cont, true, false)
+  assert.equal(res7.style, "MOMENTUM")
+  assert.equal(res7.label, "Momentum (Continuation)")
+
+  // 8. Flat bar (close === open) defaults to Green
+  const candlesFlat = [
+    { open: 100, high: 105, low: 98, close: 102 },
+    { open: 105, high: 110, low: 100, close: 105 }, // p1: open 105 === close 105 (Flat)
+    { open: 105, high: 112, low: 104, close: 110 }
+  ]
+  const res8 = Model.classifyMomentumOrRetracement(candlesFlat, true, false)
+  assert.equal(res8.style, "MOMENTUM") // defaults to Green -> matches Long
+})
