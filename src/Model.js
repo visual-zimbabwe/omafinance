@@ -4642,6 +4642,39 @@ function resolveMeasuredMoveTarget(setupTf, candles, isLong, triggerPrice) {
   }
 }
 
+function classifyTimeframeContinuity(col1M, col1W, col1D, colSetup, bar1D) {
+  var macroBias = (col1M === "G" && col1W === "G") ? "LONG" : ((col1M === "R" && col1W === "R") ? "SHORT" : null)
+
+  // 1. Full Timeframe Continuity (FTFC: all 4 share same color)
+  var isBullishFTFC = (col1M === "G" && col1W === "G" && col1D === "G" && colSetup === "G")
+  var isBearishFTFC = (col1M === "R" && col1W === "R" && col1D === "R" && colSetup === "R")
+  if (isBullishFTFC) {
+    return { direction: "LONG", continuity: "FTFC", isFTFC: true, isOverride: false, isConflict: false, r1Pass: true, macroBias: macroBias }
+  }
+  if (isBearishFTFC) {
+    return { direction: "SHORT", continuity: "FTFC", isFTFC: true, isOverride: false, isConflict: false, r1Pass: true, macroBias: macroBias }
+  }
+
+  // 2. 1D + Setup TF (60m) Override (Color Only, Excluding 3-Chop & Inside Day opposing Macro)
+  var isBullColor = (col1D === "G" && colSetup === "G")
+  var isBearColor = (col1D === "R" && colSetup === "R")
+  var isDay3Chop = Boolean(bar1D && bar1D.scenario === "3")
+  var isDayInsideOpposingMacro = Boolean(bar1D && bar1D.scenario === "1" && (
+    (macroBias === "SHORT" && isBullColor) ||
+    (macroBias === "LONG" && isBearColor)
+  ))
+
+  if (isBullColor && !isDay3Chop && !isDayInsideOpposingMacro) {
+    return { direction: "LONG", continuity: "OVERRIDE", isFTFC: false, isOverride: true, isConflict: false, r1Pass: true, macroBias: macroBias }
+  }
+  if (isBearColor && !isDay3Chop && !isDayInsideOpposingMacro) {
+    return { direction: "SHORT", continuity: "OVERRIDE", isFTFC: false, isOverride: true, isConflict: false, r1Pass: true, macroBias: macroBias }
+  }
+
+  // 3. Conflict (Option B)
+  return { direction: "CONFLICT", continuity: "CONFLICT", isFTFC: false, isOverride: false, isConflict: true, r1Pass: false, macroBias: macroBias }
+}
+
 function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, nowDate, options) {
   var sym = normalizeSymbol(symbol)
   var hourly = Array.isArray(hourlyCandles) ? hourlyCandles : []
@@ -4730,58 +4763,39 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var col1W = bar1W.color !== "-" ? bar1W.color : ((c1W && price1W !== null) ? (price1W >= Number(c1W.open) ? "G" : "R") : "-")
   var col1M = bar1M.color !== "-" ? bar1M.color : ((c1M && price1M !== null) ? (price1M >= Number(c1M.open) ? "G" : "R") : "-")
 
-  var isBullishFTFC = (colSetup === "G" && col1D === "G" && col1W === "G" && col1M === "G")
-  var isBearishFTFC = (colSetup === "R" && col1D === "R" && col1W === "R" && col1M === "R")
+  var continuityInfo = classifyTimeframeContinuity(col1M, col1W, col1D, colSetup, bar1D)
+  var direction = continuityInfo.direction
+  var macroBias = continuityInfo.macroBias
+  var isFTFC = continuityInfo.isFTFC
+  var isOverride = continuityInfo.isOverride
+  var isConflict = continuityInfo.isConflict
+  var r1Pass = continuityInfo.r1Pass
 
-  // Macro HTF Consensus vs 1D + Intraday Override (per thestrat.ai/docs/override & thestrat.ai/docs/the-flip)
-  var isMacroBullish = (col1M === "G" && col1W === "G")
-  var isMacroBearish = (col1M === "R" && col1W === "R")
-  var isSetupActiveBull = (colSetup === "G" && (barSetup.scenario === "2u" || barSetup.failed2d))
-  var isSetupActiveBear = (colSetup === "R" && (barSetup.scenario === "2d" || barSetup.failed2u))
-  var is1D60mActiveBull = (col1D === "G" && (bar1D.scenario === "2u" || bar1D.failed2d) && isSetupActiveBull)
-  var is1D60mActiveBear = (col1D === "R" && (bar1D.scenario === "2d" || bar1D.failed2u) && isSetupActiveBear)
-  var is1D60mOverride = is1D60mActiveBull || is1D60mActiveBear || (!isMacroBullish && !isMacroBearish && col1D === colSetup && (col1D === "G" || col1D === "R"))
-  var isMacroFlipBull = (isMacroBullish && col1D !== "G" && isSetupActiveBull)
-  var isMacroFlipBear = (isMacroBearish && col1D !== "R" && isSetupActiveBear)
-  var isMacroFlipOverride = isMacroFlipBull || isMacroFlipBear
-
-  var direction = "CONFLICT"
-  if (isBullishFTFC) {
-    direction = "LONG"
-  } else if (isBearishFTFC) {
-    direction = "SHORT"
-  } else if (is1D60mActiveBull) {
-    direction = "LONG"
-  } else if (is1D60mActiveBear) {
-    direction = "SHORT"
-  } else if (isMacroBullish) {
-    direction = "LONG"
-  } else if (isMacroBearish) {
-    direction = "SHORT"
-  } else if (col1D === "G") {
-    direction = "LONG"
-  } else if (col1D === "R") {
-    direction = "SHORT"
-  }
-
-  var isLong = (direction === "LONG")
+  var isLong = (direction === "LONG" || (direction === "CONFLICT" && macroBias === "LONG"))
   var htfQuality = stratHtfQuality(bar1M, bar1W, bar1D, isLong)
-
-  // 1. FTFC Polarity (Full Continuity, 1D+Setup Override, or Macro+Setup Flip Negating 1D)
-  var r1Pass = isBullishFTFC || isBearishFTFC || is1D60mOverride || isMacroFlipOverride
 
   function fmtHtf(code, col) {
     if (code && code !== "-") return code + " " + col
     return col
   }
 
+  var dayOpen = (c1D_synth && isFinite(c1D_synth.open)) ? Number(c1D_synth.open) : ((c1D && isFinite(c1D.open)) ? Number(c1D.open) : null)
+  var dayOpenStr = (dayOpen !== null && isFinite(dayOpen)) ? ("$" + Number(dayOpen).toFixed(2)) : null
+
+  var isAwaitingDayReclaim = Boolean(isConflict && macroBias && (
+    (macroBias === "LONG" && colSetup === "G" && col1D !== "G") ||
+    (macroBias === "SHORT" && colSetup === "R" && col1D !== "R")
+  ))
+
   var tfStr = "1M(" + fmtHtf(bar1M.code, col1M) + ") 1W(" + fmtHtf(bar1W.code, col1W) + ") 1D(" + fmtHtf(bar1D.code, col1D) + ") " + setupLabel + "(" + fmtHtf(barSetup.code, colSetup) + ")"
   var r1Detail = tfStr + (htfQuality && htfQuality.label ? (" — " + htfQuality.label) : "")
-  if (!r1Pass) {
-    r1Detail = "Conflict: " + r1Detail
-  } else if (isMacroFlipOverride) {
-    r1Detail = "Macro + " + setupLabel + " Flip (Negating 1D): " + r1Detail
-  } else if (is1D60mOverride && !(isBullishFTFC || isBearishFTFC)) {
+  if (isConflict) {
+    if (isAwaitingDayReclaim) {
+      r1Detail = "Conflict: " + r1Detail + " — Awaiting 1D Open Reclaim" + (dayOpenStr ? " (" + dayOpenStr + ")" : "")
+    } else {
+      r1Detail = "Conflict: " + r1Detail
+    }
+  } else if (isOverride) {
     r1Detail = "Partial Continuity (1D+" + setupLabel + " Override): " + r1Detail
   }
 
@@ -5383,15 +5397,22 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     statusTag = "TARGET HIT (" + (targetName || "T1") + ") - Exhaustion Risk"
   } else if (isStoppedOut) {
     statusTag = "INVALIDATED - Stop Loss Breached"
-  } else if (isHtfDominant && !isTargetHit && !isStoppedOut && direction !== "CONFLICT") {
-    var macroColor = isLong ? "G" : "R"
-    var colorWord = isLong ? "Green" : "Red"
+  } else if (isHtfDominant && !isTargetHit && !isStoppedOut) {
+    var macroDir = macroBias || (isLong ? "LONG" : "SHORT")
+    var macroColor = (macroDir === "LONG") ? "G" : "R"
+    var colorWord = (macroDir === "LONG") ? "Green" : "Red"
 
-    if (colSetup !== macroColor) {
+    if (isAwaitingDayReclaim) {
+      isArmed = true
+      statusTag = "ARMED - Macro Trend " + macroDir + " (Awaiting 1D Open Reclaim" + (dayOpenStr ? " at " + dayOpenStr : "") + ")"
+    } else if (bar1D && bar1D.scenario === "1" && col1D !== macroColor) {
+      isArmed = true
+      statusTag = "ARMED - Macro Trend " + macroDir + " (Day Inside Pullback)"
+    } else if (colSetup !== macroColor || col1D !== macroColor) {
       isArmed = true
       statusTag = isFullHtfAligned
         ? ("ARMED - Waiting on " + setupLabel + " Flip to " + colorWord)
-        : ("ARMED - Macro Trend " + direction + " (Day/" + setupLabel + " Pullback)")
+        : ("ARMED - Macro Trend " + macroDir + " (Day/" + setupLabel + " Pullback)")
     } else if (entryState && entryState.state === "WAIT_INSIDE") {
       isArmed = true
       statusTag = "ARMED - " + setupLabel + " Inside (Wait for Break)"
@@ -5404,7 +5425,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   }
 
   if (!statusTag) {
-    statusTag = "BLOCKED - " + passedCount + "/9 Rules Met"
+    statusTag = isConflict ? "BLOCKED - Multi-Timeframe Conflict" : ("BLOCKED - " + passedCount + "/9 Rules Met")
   }
 
   var badgeText = passedCount + "/9"
@@ -5493,9 +5514,9 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
       sc1D: bar1D.scenario,
       sc60: bar60.scenario,
       scSetup: barSetup.scenario,
-      isFTFC: isBullishFTFC || isBearishFTFC,
-      isOverride: is1D60mOverride || isMacroFlipOverride,
-      isMacroFlip: isMacroFlipOverride
+      isFTFC: isFTFC,
+      isOverride: isOverride,
+      isConflict: isConflict
     },
     rules: rules
   }
@@ -7640,6 +7661,7 @@ if (typeof module !== "undefined") {
     resolveDominoHtfSignal: resolveDominoHtfSignal,
     resolveUntaggedHtfTargets: resolveUntaggedHtfTargets,
     evaluateStratChecklist: evaluateStratChecklist,
+    classifyTimeframeContinuity: classifyTimeframeContinuity,
     discordAlertPayload: discordAlertPayload,
     stratLivePrice: stratLivePrice,
     stratBarState: stratBarState,
