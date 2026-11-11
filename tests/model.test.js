@@ -3474,3 +3474,96 @@ test("sector analysis: sector definitions, query parsing, scenario matching, and
   assert.equal(byPriceDesc[1].symbol, "AMD")
   assert.equal(byPriceDesc[2].symbol, "NVDA")
 })
+
+test("Contradiction 2: Scenario 3 outside bars classified as broadening chop, halting trend and override", () => {
+  // 1. stratEntryState: Live developing Scenario 3 returns passes: false
+  const prevBar = { open: 100, high: 105, low: 95, close: 102 }
+  const curOutside = { open: 101, high: 108, low: 92, close: 106 } // Took both high (108 > 105) and low (92 < 95)
+  const bar3 = Model.stratBarState(curOutside, prevBar, 106)
+  assert.equal(bar3.scenario, "3")
+  const entry3 = Model.stratEntryState(bar3, true)
+  assert.equal(entry3.state, "OUTSIDE")
+  assert.equal(entry3.passes, false)
+  assert.equal(entry3.name, "Outside - Wait")
+  assert.match(entry3.detail, /outside bar; both sides taken/)
+
+  // 2. stratHtfQuality: Daily Outside halts trend when Weekly is 2u in-force (Option A)
+  const barW_2u = { scenario: "2u", color: "G", code: "2u" }
+  const barD_3 = { scenario: "3", color: "G", code: "3" }
+  const qDailyOutside = Model.stratHtfQuality(null, barW_2u, barD_3, true)
+  assert.equal(qDailyOutside.grade, "C")
+  assert.equal(qDailyOutside.status, "OUTSIDE_EXPANSION")
+  assert.equal(qDailyOutside.label, "Grade C (Daily Broadening Formation Chop)")
+  assert.equal(qDailyOutside.isTrending, false)
+
+  // 3. stratHtfQuality: Higher timeframe priority when both Weekly and Daily are Scenario 3
+  const barW_3 = { scenario: "3", color: "R", code: "3" }
+  const qBothOutside = Model.stratHtfQuality(null, barW_3, barD_3, false)
+  assert.equal(qBothOutside.grade, "C")
+  assert.equal(qBothOutside.status, "OUTSIDE_EXPANSION")
+  assert.equal(qBothOutside.label, "Grade C (Weekly Broadening Formation Chop)")
+  assert.equal(qBothOutside.isTrending, false)
+
+  // 4. stratHtfQuality: Monthly Scenario 3 takes highest priority when single TF outside
+  const barM_3 = { scenario: "3", color: "G", code: "3" }
+  const barD_1 = { scenario: "1", color: "G", code: "1" }
+  const qMonthOutside = Model.stratHtfQuality(barM_3, barW_2u, barD_1, true)
+  assert.equal(qMonthOutside.grade, "C")
+  assert.equal(qMonthOutside.status, "OUTSIDE_EXPANSION")
+  assert.equal(qMonthOutside.label, "Grade C (Monthly Broadening Formation Chop)")
+  assert.equal(qMonthOutside.isTrending, false)
+
+  // 5. stratHtfQuality: Option A - Weekly + Daily both in-force 2s retain Grade A+ Macro Expansion over Monthly 3
+  const barD_2u = { scenario: "2u", color: "G", code: "2u" }
+  const qMacroOverMonth3 = Model.stratHtfQuality(barM_3, barW_2u, barD_2u, true)
+  assert.equal(qMacroOverMonth3.grade, "A+")
+  assert.equal(qMacroOverMonth3.status, "MACRO_EXPANSION")
+  assert.equal(qMacroOverMonth3.isTrending, true)
+
+  // 6. evaluateStratChecklist: Scenario 3 on 1D does not trigger active trend override over opposing HTF
+  const t1 = Math.floor(new Date("2026-09-01T14:30:00Z").getTime() / 1000)
+  const t2 = Math.floor(new Date("2026-09-07T14:30:00Z").getTime() / 1000)
+  const t3 = Math.floor(new Date("2026-09-08T14:30:00Z").getTime() / 1000)
+  // Month Red at 192 (open 210), Week Red at 192 (open 200). Day 3 is Scenario 3 Green (high 195 > 190, low 175 < 180)
+  const dailyChop = [
+    { timestamp: t1, open: 210, high: 212, low: 195, close: 198 },
+    { timestamp: t2, open: 200, high: 190, low: 180, close: 182 }, // Prior day range: 180 - 190
+    { timestamp: t3, open: 178, high: 195, low: 175, close: 192 }  // 1D Scenario 3 Green (took both 190 and 175)
+  ]
+  const hourly = [
+    { timestamp: t3 - 7200, open: 185, high: 190.5, low: 184, close: 190 },
+    { timestamp: t3 - 3600, open: 190, high: 191, low: 189, close: 190.5 },
+    { timestamp: t3, open: 190.5, high: 193, low: 190, close: 192 }
+  ]
+  const resChop = Model.evaluateStratChecklist("NVDA", hourly, dailyChop, { regularMarketPrice: 192 })
+  // Should NOT trigger LONG override; Month and Week are Red, Day 3 is outside expansion chop
+  assert.equal(resChop.direction, "SHORT")
+  assert.equal(resChop.ftfcSummary.isOverride, false)
+
+  // 7. evaluateStratChecklist: Live developing 1-3 RevStrat recognizes pattern in Rule 2 but gates in Rule 6
+  // Setup TF: p60 is Scenario 1 inside bar (range 189 - 191). c60 takes both sides (187 and 193) -> Scenario 3 live
+  const dailyBull = [
+    { timestamp: t1, open: 195, high: 212, low: 195, close: 205 },
+    { timestamp: t2, open: 190, high: 205, low: 185, close: 200 },
+    { timestamp: t3, open: 185, high: 202, low: 184, close: 192 }
+  ]
+  const hourly13 = [
+    { timestamp: t3 - 7200, open: 185, high: 194, low: 184, close: 190 },          // p2_60
+    { timestamp: t3 - 3600, open: 189.5, high: 191, low: 189, close: 190 },       // p60 (Scenario 1 inside bar)
+    { timestamp: t3, open: 190, high: 193, low: 187, close: 192 }                  // c60 (Scenario 3 developing)
+  ]
+  const res13 = Model.evaluateStratChecklist("NVDA", hourly13, dailyBull, { regularMarketPrice: 192 })
+  const r2 = res13.rules.find(r => r.id === 2)
+  const r6 = res13.rules.find(r => r.id === 6)
+  assert.equal(r2.passed, true)
+  assert.match(r2.detail, /1-3 RevStrat/)
+  assert.equal(r6.passed, false) // Gated by Rule 6 entryState.passes === false (Behavior 1)
+  assert.match(r6.detail, /outside bar; both sides taken/)
+  assert.equal(res13.isTradeable, false)
+
+  // 8. Rule 9 appends caution for HTF broadening formation
+  const r9 = resChop.rules.find(r => r.id === 9)
+  if (r9.passed) {
+    assert.match(r9.detail, /Caution: HTF broadening formation \/ outside bar/)
+  }
+})

@@ -1873,7 +1873,12 @@ function stratEntryState(bar, isLong) {
     }
   }
   if (s === "3") {
-    return { state: "OUTSIDE", name: "Outside", passes: true, detail: prefix + "outside bar; both sides of prior 60m taken, check extension" }
+    return {
+      state: "OUTSIDE",
+      name: "Outside - Wait",
+      passes: false,
+      detail: prefix + "outside bar; both sides taken (broadening formation chop), wait for new bar"
+    }
   }
   return unknown
 }
@@ -1986,7 +1991,22 @@ function stratHtfQuality(bar1M, bar1W, bar1D, isLong) {
     }
   }
 
-  // 4. Trending with Breakout Catalyst / Inside bar coiling
+  // 4. HTF Outside Bar (Broadening Formation Chop: halts HTF trend direction)
+  if (m.scenario === "3" || w.scenario === "3" || d.scenario === "3") {
+    var outTf = (m.scenario === "3") ? "Monthly" : ((w.scenario === "3") ? "Weekly" : "Daily")
+    return {
+      grade: "C",
+      status: "OUTSIDE_EXPANSION",
+      label: "Grade C (" + outTf + " Broadening Formation Chop)",
+      details: outTf + " outside bar; range expanded in both directions (broadening formation chop)",
+      isTrending: false,
+      inForceCount: inForceCount,
+      insideCount: insideCount,
+      hasHtfFailed2: false
+    }
+  }
+
+  // 5. Trending with Breakout Catalyst / Inside bar coiling
   if (wInForce && dInside) {
     return {
       grade: "B",
@@ -2012,7 +2032,7 @@ function stratHtfQuality(bar1M, bar1W, bar1D, isLong) {
     }
   }
 
-  // 5. Single Timeframe In-Force
+  // 6. Single Timeframe In-Force
   if (wInForce || dInForce) {
     var tfName = wInForce ? "Weekly" : "Daily"
     return {
@@ -2027,7 +2047,7 @@ function stratHtfQuality(bar1M, bar1W, bar1D, isLong) {
     }
   }
 
-  // 6. Multi-Timeframe Inside Compression (Chop / consolidation)
+  // 7. Multi-Timeframe Inside Compression (Chop / consolidation)
   if (wInside && dInside) {
     return {
       grade: "C",
@@ -2041,7 +2061,7 @@ function stratHtfQuality(bar1M, bar1W, bar1D, isLong) {
     }
   }
 
-  // 7. Single Timeframe Inside
+  // 8. Single Timeframe Inside
   if (wInside || dInside) {
     var inTf = wInside ? "Weekly" : "Daily"
     return {
@@ -2051,21 +2071,6 @@ function stratHtfQuality(bar1M, bar1W, bar1D, isLong) {
       details: inTf + " is Scenario 1 inside bar",
       isTrending: false,
       inForceCount: 0,
-      insideCount: insideCount,
-      hasHtfFailed2: false
-    }
-  }
-
-  // 8. Scenario 3 (Outside bar) or Default Continuity
-  if (w.scenario === "3" || d.scenario === "3") {
-    var outTf = (w.scenario === "3") ? "Weekly" : "Daily"
-    return {
-      grade: "B",
-      status: "OUTSIDE_EXPANSION",
-      label: "Grade B (" + outTf + " Scenario 3 Outside)",
-      details: outTf + " outside bar; range expanded in both directions",
-      isTrending: false,
-      inForceCount: inForceCount,
       insideCount: insideCount,
       hasHtfFailed2: false
     }
@@ -4728,10 +4733,10 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   // Macro HTF Consensus vs 1D + Intraday Override (per thestrat.ai/docs/override & thestrat.ai/docs/the-flip)
   var isMacroBullish = (col1M === "G" && col1W === "G")
   var isMacroBearish = (col1M === "R" && col1W === "R")
-  var isSetupActiveBull = (colSetup === "G" && (barSetup.scenario === "2u" || barSetup.scenario === "3" || barSetup.failed2d))
-  var isSetupActiveBear = (colSetup === "R" && (barSetup.scenario === "2d" || barSetup.scenario === "3" || barSetup.failed2u))
-  var is1D60mActiveBull = (col1D === "G" && (bar1D.scenario === "2u" || bar1D.scenario === "3" || bar1D.failed2d) && isSetupActiveBull)
-  var is1D60mActiveBear = (col1D === "R" && (bar1D.scenario === "2d" || bar1D.scenario === "3" || bar1D.failed2u) && isSetupActiveBear)
+  var isSetupActiveBull = (colSetup === "G" && (barSetup.scenario === "2u" || barSetup.failed2d))
+  var isSetupActiveBear = (colSetup === "R" && (barSetup.scenario === "2d" || barSetup.failed2u))
+  var is1D60mActiveBull = (col1D === "G" && (bar1D.scenario === "2u" || bar1D.failed2d) && isSetupActiveBull)
+  var is1D60mActiveBear = (col1D === "R" && (bar1D.scenario === "2d" || bar1D.failed2u) && isSetupActiveBear)
   var is1D60mOverride = is1D60mActiveBull || is1D60mActiveBear || (!isMacroBullish && !isMacroBearish && col1D === colSetup && (col1D === "G" || col1D === "R"))
   var isMacroFlipBull = (isMacroBullish && col1D !== "G" && isSetupActiveBull)
   var isMacroFlipBear = (isMacroBearish && col1D !== "R" && isSetupActiveBear)
@@ -5288,6 +5293,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
     if (htfQuality && htfQuality.status === "COMPRESSION_CHOP") {
       r9Detail += " (Caution: HTF inside compression)"
+    } else if (htfQuality && htfQuality.status === "OUTSIDE_EXPANSION") {
+      r9Detail += " (Caution: HTF broadening formation / outside bar)"
     }
     if (opts.attackScanResult) {
       var focusSup = computeFocusBasketSupport(sym, setupTf, setupCandles, liveQuote, daily, weekly, opts.attackScanResult)
