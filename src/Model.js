@@ -2226,242 +2226,11 @@ function detectKickerPattern(candles, livePrice) {
   return empty
 }
 
-function computeStratBinaryDetails(candles, liveQuote) {
-  if (!candles || candles.length < 2) {
-    return {
-      bits: "------",
-      color: "muted",
-      tooltip: "Insufficient candle data",
-      signalType: null
-    }
-  }
-  var n = candles.length
-  var cur = candles[n - 1]
-  var p1 = candles[n - 2]
-  var p2 = n >= 3 ? candles[n - 3] : null
-  var p3 = n >= 4 ? candles[n - 4] : null
-  var p4 = n >= 5 ? candles[n - 5] : null
-
-  var curOpen = Number(cur.open)
-  var curHigh = Number(cur.high)
-  var curLow = Number(cur.low)
-  var curClose = Number(cur.close)
-  if (liveQuote && isFinite(Number(liveQuote.price))) {
-    curClose = Number(liveQuote.price)
-    if (curClose > curHigh) curHigh = curClose
-    if (curClose < curLow) curLow = curClose
-    if (isFinite(Number(liveQuote.dayHigh)) && Number(liveQuote.dayHigh) > curHigh) curHigh = Number(liveQuote.dayHigh)
-    if (isFinite(Number(liveQuote.dayLow)) && Number(liveQuote.dayLow) < curLow) curLow = Number(liveQuote.dayLow)
-  }
-
-  var sc_cur = stratScenario({ high: curHigh, low: curLow }, p1)
-  var sc_p1 = p2 ? stratScenario(p1, p2) : "-"
-  var sc_p2 = (p2 && p3) ? stratScenario(p2, p3) : "-"
-  var sc_p3 = (p3 && p4) ? stratScenario(p3, p4) : "-"
-
-  // 1. Direction (2u = 1, 2d = 0, Inside/Outside = -)
-  var dBit = "-"
-  if (sc_cur === "2u") dBit = "1"
-  else if (sc_cur === "2d") dBit = "0"
-
-  // 2. Color (Green = 1, Red = 0)
-  var cBit = (isFinite(curClose) && isFinite(curOpen) && curClose >= curOpen) ? "1" : "0"
-
-  // 3. Signal
-  var sBit = "0"
-  var signalType = null
-  var t1Price = null
-  var targetPrice = null
-  var isBullish = false
-
-  if (sc_p2 === "1" && sc_p1 === "2d" && sc_cur === "2u") {
-    sBit = "1"
-    signalType = "1-2d-2u Bullish RevStrat"
-    isBullish = true
-    t1Price = p2 ? Number(p2.high) : null
-    targetPrice = p3 ? Number(p3.high) : t1Price
-  } else if (sc_p2 === "1" && sc_p1 === "2u" && sc_cur === "2d") {
-    sBit = "1"
-    signalType = "1-2u-2d Bearish RevStrat"
-    isBullish = false
-    t1Price = p2 ? Number(p2.low) : null
-    targetPrice = p3 ? Number(p3.low) : t1Price
-  } else if (sc_p1 === "2d" && sc_cur === "2u") {
-    sBit = "1"
-    signalType = "2d-2u Bullish Reversal"
-    isBullish = true
-    targetPrice = p2 ? Number(p2.high) : null
-  } else if (sc_p1 === "2u" && sc_cur === "2d") {
-    sBit = "1"
-    signalType = "2u-2d Bearish Reversal"
-    isBullish = false
-    targetPrice = p2 ? Number(p2.low) : null
-  } else if (sc_p1 === "1") {
-    if (sc_p2 === "2d" && sc_cur === "2u") {
-      sBit = "1"
-      signalType = "2d-1-2u Bullish Reversal"
-      isBullish = true
-      targetPrice = p3 ? Number(p3.high) : (p2 ? Number(p2.high) : null)
-    } else if (sc_p2 === "2u" && sc_cur === "2d") {
-      sBit = "1"
-      signalType = "2u-1-2d Bearish Reversal"
-      isBullish = false
-      targetPrice = p3 ? Number(p3.low) : (p2 ? Number(p2.low) : null)
-    } else if (sc_p2 === "2u" && sc_cur === "2u") {
-      sBit = "1"
-      signalType = "2u-1-2u Bullish Continuation"
-      isBullish = true
-      targetPrice = p3 ? Number(p3.high) : (p2 ? Number(p2.high) : null)
-    } else if (sc_p2 === "2d" && sc_cur === "2d") {
-      sBit = "1"
-      signalType = "2d-1-2d Bearish Continuation"
-      isBullish = false
-      targetPrice = p3 ? Number(p3.low) : (p2 ? Number(p3.low) : null)
-    }
-  }
-
-  if (sBit === "0") {
-    if (sc_p2 === "3" && sc_p1 === "2d" && sc_cur === "2u") {
-      sBit = "1"
-      signalType = "3-2d-2u Bullish Reversal"
-      isBullish = true
-      targetPrice = p2 ? Number(p2.high) : null
-    } else if (sc_p2 === "3" && sc_p1 === "2u" && sc_cur === "2d") {
-      sBit = "1"
-      signalType = "3-2u-2d Bearish Reversal"
-      isBullish = false
-      targetPrice = p2 ? Number(p2.low) : null
-    } else if (sc_p2 === "1" && sc_p1 === "3" && sc_cur === "2u") {
-      sBit = "1"
-      signalType = "1-3-2u Bullish RevStrat"
-      isBullish = true
-      targetPrice = p3 ? Number(p3.high) : (p1 ? Number(p1.high) : null)
-    } else if (sc_p2 === "1" && sc_p1 === "3" && sc_cur === "2d") {
-      sBit = "1"
-      signalType = "1-3-2d Bearish RevStrat"
-      isBullish = false
-      targetPrice = p3 ? Number(p3.low) : (p1 ? Number(p1.low) : null)
-    } else if (sc_p1 === "1") {
-      if (sc_p3 === "1" && sc_p2 === "3" && sc_cur === "2u") {
-        sBit = "1"
-        signalType = "1-3-1-2u I-O-I Bullish Breakout"
-        isBullish = true
-        targetPrice = p2 ? Number(p2.high) : null
-      } else if (sc_p3 === "1" && sc_p2 === "3" && sc_cur === "2d") {
-        sBit = "1"
-        signalType = "1-3-1-2d I-O-I Bearish Breakout"
-        isBullish = false
-        targetPrice = p2 ? Number(p2.low) : null
-      } else if (sc_p2 === "3" && sc_cur === "2u") {
-        sBit = "1"
-        signalType = "3-1-2u Bullish Reversal"
-        isBullish = true
-        targetPrice = p2 ? Number(p2.high) : null
-      } else if (sc_p2 === "3" && sc_cur === "2d") {
-        sBit = "1"
-        signalType = "3-1-2d Bearish Reversal"
-        isBullish = false
-        targetPrice = p2 ? Number(p2.low) : null
-      } else if (sc_cur === "3") {
-        sBit = "1"
-        isBullish = (cBit === "1")
-        signalType = isBullish ? "1-3 Bullish RevStrat" : "1-3 Bearish RevStrat"
-        t1Price = p1 ? (isBullish ? Number(p1.high) : Number(p1.low)) : null
-        targetPrice = p2 ? (isBullish ? Number(p2.high) : Number(p2.low)) : t1Price
-      }
-    }
-  }
-
-  if (sc_p2 === "3" && sc_p1 === "2d" && sc_cur === "2u") {
-    sBit = "1"
-    signalType = "3-2d-2u Bullish Reversal"
-    isBullish = true
-    targetPrice = p2 ? Number(p2.high) : null
-  } else if (sc_p2 === "3" && sc_p1 === "2u" && sc_cur === "2d") {
-    sBit = "1"
-    signalType = "3-2u-2d Bearish Reversal"
-    isBullish = false
-    targetPrice = p2 ? Number(p2.low) : null
-  }
-
-  var p1Shape = detectCandleShape(p1, p2)
-
-  // 4. Triggered, 5. In-Force, 6. Magnitude
-  var tBit = "0"
-  var iBit = "0"
-  var mBit = "0"
-  var statusDesc = "No Active Setup"
-
-  if (sBit === "1") {
-    var trigPrice = isBullish ? Number(p1.high) : Number(p1.low)
-    if (isBullish) {
-      if (curHigh >= trigPrice) tBit = "1"
-      if (tBit === "1") {
-        if (curClose >= trigPrice) iBit = "1"
-        var hitTarget = isFinite(targetPrice) && curHigh >= targetPrice
-        mBit = hitTarget ? "0" : "1"
-      }
-    } else {
-      if (curLow <= trigPrice) tBit = "1"
-      if (tBit === "1") {
-        if (curClose <= trigPrice) iBit = "1"
-        var hitTargetBear = isFinite(targetPrice) && curLow <= targetPrice
-        mBit = hitTargetBear ? "0" : "1"
-      }
-    }
-    if (tBit === "1") {
-      var pullDir = isBullish ? "Below" : "Above"
-      if (iBit === "1") {
-        statusDesc = mBit === "1" ? "Triggered & In-Force (Magnitude Open)" : "Triggered & In-Force (Target Reached / Exhausted)"
-      } else {
-        statusDesc = mBit === "1" ? ("Triggered & Pulled Back " + pullDir + " Trigger") : ("Exhausted & Pulled Back " + pullDir + " Trigger")
-      }
-    } else {
-      statusDesc = "Setup Pending Trigger"
-    }
-  }
-
-  var bits = dBit + cBit + sBit + tBit + iBit + mBit
-
-  // Determine color:
-  // "pulled back and exhausted should have same color (amber)"
-  var color = "muted"
-  if (sBit === "0") {
-    color = "muted"
-  } else if (tBit === "1" && iBit === "1" && mBit === "1") {
-    color = isBullish ? "green" : "red"
-  } else {
-    color = "amber"
-  }
-
-  var ttLines = []
-  ttLines.push("[" + bits + "] • " + (signalType || "Scenario " + sc_cur.toUpperCase()))
-  ttLines.push("• Direction: " + (sc_cur === "2u" ? "2u (Bullish Break)" : (sc_cur === "2d" ? "2d (Bearish Break)" : (sc_cur === "1" ? "Inside Bar (Consolidation)" : "Outside Bar (Expanding)"))))
-  ttLines.push("• Candle: " + (cBit === "1" ? "Green (Close >= Open)" : "Red (Close < Open)"))
-  if (signalType) {
-    ttLines.push("• Setup: " + signalType)
-    ttLines.push("• Status: " + statusDesc)
-    if (t1Price !== null && isFinite(t1Price) && isFinite(targetPrice)) {
-      var hitT1 = tBit === "1" && (isBullish ? (curHigh >= t1Price) : (curLow <= t1Price))
-      ttLines.push("• T1 (Inside): $" + t1Price.toFixed(2) + (hitT1 ? " (Hit)" : " (Open)"))
-      ttLines.push("• T2 (Mother): $" + targetPrice.toFixed(2) + (mBit === "0" && tBit === "1" ? " (Hit)" : " (Open)"))
-    } else if (isFinite(targetPrice)) {
-      ttLines.push("• Target: $" + targetPrice.toFixed(2) + (mBit === "0" && tBit === "1" ? " (Hit)" : " (Open)"))
-    }
-  }
-  var tooltip = ttLines.join("\n")
-
-  return {
-    bits: bits,
-    color: color,
-    tooltip: tooltip,
-    isBullish: isBullish,
-    signalType: signalType,
-    signalShape: p1Shape.shape,
-    statusDesc: statusDesc,
-    t1Price: (t1Price !== null && isFinite(t1Price)) ? t1Price : null,
-    targetPrice: (targetPrice !== null && isFinite(targetPrice)) ? targetPrice : null
-  }
+function stratInForce(sc) {
+  if (sc === "2u" || sc === "2d") return "In-Force"
+  if (sc === "1") return "Inside Bar"
+  if (sc === "3") return "Outside Bar"
+  return "-"
 }
 
 function computeStratDetails(candles, liveQuote) {
@@ -2485,18 +2254,20 @@ function computeStratDetails(candles, liveQuote) {
   var prev2 = n >= 3 ? candles[n - 3] : null
   var prev3 = n >= 4 ? candles[n - 4] : null
 
-  var sc = stratScenario(current, prev)
-  var bar = (sc && sc !== "-") ? sc.toUpperCase() : "-"
-
   var curOpen = Number(current.open)
   var curHigh = Number(current.high)
   var curLow = Number(current.low)
   var curClose = Number(current.close)
   if (liveQuote && isFinite(Number(liveQuote.price))) {
     curClose = Number(liveQuote.price)
+    if (curClose > curHigh) curHigh = curClose
+    if (curClose < curLow) curLow = curClose
     if (isFinite(Number(liveQuote.dayHigh)) && Number(liveQuote.dayHigh) > curHigh) curHigh = Number(liveQuote.dayHigh)
     if (isFinite(Number(liveQuote.dayLow)) && Number(liveQuote.dayLow) < curLow) curLow = Number(liveQuote.dayLow)
   }
+
+  var sc = stratScenario({ high: curHigh, low: curLow }, prev)
+  var bar = (sc && sc !== "-") ? sc.toUpperCase() : "-"
 
   var trigHigh = Number(prev.high)
   var trigLow = Number(prev.low)
@@ -2506,22 +2277,7 @@ function computeStratDetails(candles, liveQuote) {
     polarity = curClose >= curOpen ? "green" : "red"
   }
 
-  var inForce = "-"
-  if (sc === "2u") {
-    inForce = (isFinite(curClose) && isFinite(trigHigh) && curClose >= trigHigh) ? "In-Force" : "Not In-Force"
-  } else if (sc === "2d") {
-    inForce = (isFinite(curClose) && isFinite(trigLow) && curClose <= trigLow) ? "In-Force" : "Not In-Force"
-  } else if (sc === "1") {
-    inForce = "Inside Bar"
-  } else if (sc === "3") {
-    if (isFinite(curClose) && isFinite(trigHigh) && curClose >= trigHigh) {
-      inForce = "3 (In-Force Up)"
-    } else if (isFinite(curClose) && isFinite(trigLow) && curClose <= trigLow) {
-      inForce = "3 (In-Force Down)"
-    } else {
-      inForce = "3 (Inside Range)"
-    }
-  }
+  var inForce = stratInForce(sc)
 
   var seqParts = []
   if (prev3 && prev2) {
@@ -3756,11 +3512,7 @@ function computeReplayFocusPair(pair, focusCandles, focusHoldings, cutoffTs) {
       var pPrev = peerCandles[peerCandles.length - 2]
       var sc = stratScenario(pLast, pPrev)
       var col = (Number(pLast.close) >= Number(pLast.open)) ? "G" : "R"
-      var inf = "-"
-      if (sc === "2u") inf = Number(pLast.close) >= Number(pPrev.high) ? "In-Force" : "Triggered"
-      else if (sc === "2d") inf = Number(pLast.close) <= Number(pPrev.low) ? "In-Force" : "Triggered"
-      else if (sc === "1") inf = "Inside Bar"
-      else if (sc === "3") inf = "Outside Bar"
+      var inf = stratInForce(sc)
       peerInfo = {
         symbol: pair.peer,
         scenario: sc,
@@ -4999,23 +4751,49 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var r5Detail = "No trigger available"
   if (triggerPrice !== null && currentPrice !== null) {
     if (isFailed2) {
+      var setupHigh = (barSetup && barSetup.high !== null) ? barSetup.high : (cSetup ? Number(cSetup.high) : currentPrice)
+      var setupLow = (barSetup && barSetup.low !== null) ? barSetup.low : (cSetup ? Number(cSetup.low) : currentPrice)
       if (isLong) {
-        r5Pass = (currentPrice >= triggerPrice)
+        var hasTriggeredF2Long = (currentPrice >= triggerPrice) || (setupHigh >= triggerPrice)
+        r5Pass = Boolean(hasTriggeredF2Long)
         var deltaF2Long = currentPrice - triggerPrice
-        r5Detail = "Failed 2d Trigger (Reclaimed Open): $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + (deltaF2Long >= 0 ? "+$" + deltaF2Long.toFixed(2) : "-$" + Math.abs(deltaF2Long).toFixed(2)) + ")"
+        var f2SuffixLong = deltaF2Long >= 0 ? ("+$" + deltaF2Long.toFixed(2) + ") — In-Force") : ("-$" + Math.abs(deltaF2Long).toFixed(2) + " pullback) — In-Force")
+        r5Detail = r5Pass
+          ? ("Failed 2d Trigger (Reclaimed Open): $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + f2SuffixLong)
+          : ("Failed 2d Awaiting Open Reclaim: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " ($" + Math.abs(deltaF2Long).toFixed(2) + " below)")
       } else {
-        r5Pass = (currentPrice <= triggerPrice)
+        var hasTriggeredF2Short = (currentPrice <= triggerPrice) || (setupLow <= triggerPrice)
+        r5Pass = Boolean(hasTriggeredF2Short)
         var deltaF2Short = triggerPrice - currentPrice
-        r5Detail = "Failed 2u Trigger (Rejected Open): $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + (deltaF2Short >= 0 ? "-$" + deltaF2Short.toFixed(2) : "+$" + Math.abs(deltaF2Short).toFixed(2)) + ")"
+        var f2SuffixShort = deltaF2Short >= 0 ? ("-$" + deltaF2Short.toFixed(2) + ") — In-Force") : ("+$" + Math.abs(deltaF2Short).toFixed(2) + " pullback) — In-Force")
+        r5Detail = r5Pass
+          ? ("Failed 2u Trigger (Rejected Open): $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + f2SuffixShort)
+          : ("Failed 2u Awaiting Open Rejection: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " ($" + Math.abs(deltaF2Short).toFixed(2) + " above)")
       }
     } else if (isLong) {
-      r5Pass = (currentPrice >= triggerPrice)
+      var barH = (barSetup && barSetup.high !== null) ? barSetup.high : (cSetup ? Number(cSetup.high) : currentPrice)
+      var hasTriggeredLong = (barH >= triggerPrice) || (currentPrice >= triggerPrice)
+      r5Pass = Boolean(hasTriggeredLong)
       var deltaLong = currentPrice - triggerPrice
-      r5Detail = "Trig: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + (deltaLong >= 0 ? "+$" + deltaLong.toFixed(2) : "-$" + Math.abs(deltaLong).toFixed(2) + " below") + ")"
+      if (r5Pass) {
+        var sufLong = deltaLong >= 0 ? ("+$" + deltaLong.toFixed(2)) : ("-$" + Math.abs(deltaLong).toFixed(2) + " pullback")
+        r5Detail = "Trig: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + sufLong + ") — In-Force"
+      } else {
+        var distLong = triggerPrice - currentPrice
+        r5Detail = "Awaiting Trigger: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " ($" + distLong.toFixed(2) + " below)"
+      }
     } else {
-      r5Pass = (currentPrice <= triggerPrice)
+      var barL = (barSetup && barSetup.low !== null) ? barSetup.low : (cSetup ? Number(cSetup.low) : currentPrice)
+      var hasTriggeredShort = (barL <= triggerPrice) || (currentPrice <= triggerPrice)
+      r5Pass = Boolean(hasTriggeredShort)
       var deltaShort = triggerPrice - currentPrice
-      r5Detail = "Trig: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + (deltaShort >= 0 ? "-$" + deltaShort.toFixed(2) : "+$" + Math.abs(deltaShort).toFixed(2) + " above") + ")"
+      if (r5Pass) {
+        var sufShort = deltaShort >= 0 ? ("-$" + deltaShort.toFixed(2)) : ("+$" + Math.abs(deltaShort).toFixed(2) + " pullback")
+        r5Detail = "Trig: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + sufShort + ") — In-Force"
+      } else {
+        var distShort = currentPrice - triggerPrice
+        r5Detail = "Awaiting Trigger: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " ($" + distShort.toFixed(2) + " above)"
+      }
     }
   }
 
@@ -7721,7 +7499,7 @@ if (typeof module !== "undefined") {
     classifyMomentumOrRetracement: classifyMomentumOrRetracement,
     resolvePatternMagnitude: resolvePatternMagnitude,
     resolveMeasuredMoveTarget: resolveMeasuredMoveTarget,
-    computeStratBinaryDetails: computeStratBinaryDetails,
+    stratInForce: stratInForce,
     computeStratDetails: computeStratDetails,
     computeHoldingStratMatrix: computeHoldingStratMatrix,
     computeHoldingsStratMap: computeHoldingsStratMap,
