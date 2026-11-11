@@ -3555,6 +3555,8 @@ function detectStratAttack(candles, liveQuote) {
   return emptyResult
 }
 
+var SIMULTANEOUS_BREAK_THRESHOLD = 80
+
 function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings, dailyCandlesMap, liveQuotesMap, timeframe) {
   var tf = timeframe || "1D"
   var list = Array.isArray(holdings) ? holdings : []
@@ -3681,8 +3683,10 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     pctAttack2u: pctAttack2u,
     pctAttack2d: pctAttack2d,
     netAttackDelta: netAttackDelta,
-    isSimultaneousBreak: (pct2uGreen >= 80 || pct2dRed >= 80),
-    isSimultaneousExpansion: (pct2u >= 80 || pct2d >= 80),
+    isSimultaneous2u: Math.round(pct2u) >= SIMULTANEOUS_BREAK_THRESHOLD,
+    isSimultaneous2d: Math.round(pct2d) >= SIMULTANEOUS_BREAK_THRESHOLD,
+    isSimultaneousBreak: (Math.round(pct2uGreen) >= SIMULTANEOUS_BREAK_THRESHOLD || Math.round(pct2dRed) >= SIMULTANEOUS_BREAK_THRESHOLD),
+    isSimultaneousExpansion: (Math.round(pct2u) >= SIMULTANEOUS_BREAK_THRESHOLD || Math.round(pct2d) >= SIMULTANEOUS_BREAK_THRESHOLD),
     status: status
   }
 }
@@ -3993,7 +3997,7 @@ function computeFocusBasketSupport(symbol, timeframe, candles, quote, dailyCandl
   var sizingColor = "amber"
   var sizingReason = ""
 
-  if ((attackToken === "ATK" || supportPct >= 80) && peerAligned) {
+  if ((attackToken === "ATK" || Math.round(supportPct) >= SIMULTANEOUS_BREAK_THRESHOLD) && peerAligned) {
     sizingTier = "full"
     positionSizing = "FULL (1.0x)"
     sizingColor = "green"
@@ -4071,7 +4075,7 @@ function computeFocusBasketSupport(symbol, timeframe, candles, quote, dailyCandl
     supportToken: supportToken,
     supportColor: supportColor,
     supportPct: supportPct,
-    isSimultaneousBreak: supportPct >= 80,
+    isSimultaneousBreak: Math.round(supportPct) >= SIMULTANEOUS_BREAK_THRESHOLD,
     dailyMost2s: dailyMost2s,
     sizingTier: sizingTier,
     positionSizing: positionSizing,
@@ -7815,7 +7819,8 @@ if (typeof module !== "undefined") {
     cacheKey: cacheKey,
     isBasketSector: isBasketSector,
     chunkSymbols: chunkSymbols,
-    updateDevelopingCandle: updateDevelopingCandle
+    updateDevelopingCandle: updateDevelopingCandle,
+    SIMULTANEOUS_BREAK_THRESHOLD: SIMULTANEOUS_BREAK_THRESHOLD
   }
 }
 

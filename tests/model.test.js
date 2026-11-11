@@ -3939,3 +3939,90 @@ test("Contradiction 10: The Flip & 60-Minute Bar Timing (xx:30 vs xx:00 and 15:3
   assert.equal(stateStale.high, 217.5)
   assert.equal(stateStale.liveMerged, false)
 })
+
+test("Contradiction 13: Simultaneous Break Concentration Threshold (80% standard, directional flags, rounded comparison)", () => {
+  assert.equal(Model.SIMULTANEOUS_BREAK_THRESHOLD, 80)
+
+  // 10 holdings test setup
+  const holdings = []
+  const candlesMap = {}
+  for (let i = 0; i < 10; i++) {
+    const sym = "SYM" + i
+    holdings.push({ symbol: sym, name: sym })
+  }
+
+  // 7 out of 10 break 2u (70% -> false for simultaneous break)
+  for (let i = 0; i < 7; i++) {
+    const sym = "SYM" + i
+    candlesMap[sym] = [
+      { open: 100, high: 105, low: 95, close: 104 },
+      { open: 104, high: 108, low: 102, close: 107 } // 2u Green
+    ]
+  }
+  // 3 out of 10 are inside bars (1)
+  for (let i = 7; i < 10; i++) {
+    const sym = "SYM" + i
+    candlesMap[sym] = [
+      { open: 100, high: 105, low: 95, close: 104 },
+      { open: 103, high: 104, low: 101, close: 102 } // 1
+    ]
+  }
+
+  const metrics70 = Model.computeBasketAttackMetrics("XLK", "Tech", "Sector", holdings, candlesMap, null, "1D")
+  assert.equal(metrics70.count2u, 7)
+  assert.equal(metrics70.pct2u, 70)
+  assert.equal(metrics70.isSimultaneous2u, false)
+  assert.equal(metrics70.isSimultaneous2d, false)
+  assert.equal(metrics70.isSimultaneousExpansion, false)
+  assert.equal(metrics70.isSimultaneousBreak, false)
+
+  // Now make 8th holding break 2u -> 8 out of 10 (80% -> true)
+  candlesMap["SYM7"] = [
+    { open: 100, high: 105, low: 95, close: 104 },
+    { open: 104, high: 109, low: 103, close: 108 } // 2u Green
+  ]
+  const metrics80 = Model.computeBasketAttackMetrics("XLK", "Tech", "Sector", holdings, candlesMap, null, "1D")
+  assert.equal(metrics80.count2u, 8)
+  assert.equal(metrics80.pct2u, 80)
+  assert.equal(metrics80.isSimultaneous2u, true)
+  assert.equal(metrics80.isSimultaneous2d, false)
+  assert.equal(metrics80.isSimultaneousExpansion, true)
+  assert.equal(metrics80.isSimultaneousBreak, true)
+
+  // Verify rounded comparison logic (e.g., 14 holdings: 11/14 = 78.57% -> 79% does not trigger, 12/14 = 85.71% -> 86% triggers)
+  const holdings14 = []
+  const candles14 = {}
+  for (let i = 0; i < 14; i++) {
+    const sym = "H" + i
+    holdings14.push({ symbol: sym })
+    if (i < 11) {
+      // 11 / 14 = 78.57% 2d
+      candles14[sym] = [
+        { open: 100, high: 105, low: 95, close: 104 },
+        { open: 100, high: 101, low: 92, close: 93 } // 2d Red
+      ]
+    } else {
+      candles14[sym] = [
+        { open: 100, high: 105, low: 95, close: 104 },
+        { open: 100, high: 102, low: 98, close: 99 } // 1
+      ]
+    }
+  }
+  const metrics11of14 = Model.computeBasketAttackMetrics("XLE", "Energy", "Sector", holdings14, candles14, null, "1D")
+  assert.equal(metrics11of14.count2d, 11)
+  assert.equal(Math.round(metrics11of14.pct2d), 79)
+  assert.equal(metrics11of14.isSimultaneous2d, false)
+  assert.equal(metrics11of14.isSimultaneousExpansion, false)
+
+  // Add 12th 2d break -> 12 / 14 = 85.71% -> 86%
+  candles14["H11"] = [
+    { open: 100, high: 105, low: 95, close: 104 },
+    { open: 100, high: 101, low: 91, close: 92 } // 2d Red
+  ]
+  const metrics12of14 = Model.computeBasketAttackMetrics("XLE", "Energy", "Sector", holdings14, candles14, null, "1D")
+  assert.equal(metrics12of14.count2d, 12)
+  assert.equal(Math.round(metrics12of14.pct2d), 86)
+  assert.equal(metrics12of14.isSimultaneous2d, true)
+  assert.equal(metrics12of14.isSimultaneousExpansion, true)
+  assert.equal(metrics12of14.isSimultaneousBreak, true)
+})

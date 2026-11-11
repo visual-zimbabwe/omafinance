@@ -1352,7 +1352,7 @@ FloatingWindow {
                             Text {
                                 textFormat: Text.PlainText
                                 text: "2u: " + Math.round(root.breadthMetrics.pct2u) + "%"
-                                color: root.breadthMetrics.pct2u >= 60 ? root.upColor : root.foreground
+                                color: root.breadthMetrics.isSimultaneous2u ? root.upColor : root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.caption
                                 font.bold: true
@@ -1382,7 +1382,7 @@ FloatingWindow {
                             Text {
                                 textFormat: Text.PlainText
                                 text: "2d: " + Math.round(root.breadthMetrics.pct2d) + "%"
-                                color: root.breadthMetrics.pct2d >= 60 ? root.downColor : root.foreground
+                                color: root.breadthMetrics.isSimultaneous2d ? root.downColor : root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.caption
                                 font.bold: true
