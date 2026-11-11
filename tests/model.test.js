@@ -3567,3 +3567,48 @@ test("Contradiction 2: Scenario 3 outside bars classified as broadening chop, ha
     assert.match(r9.detail, /Caution: HTF broadening formation \/ outside bar/)
   }
 })
+
+test("shared model helpers: cacheKey, isBasketSector, chunkSymbols, and updateDevelopingCandle with ET rollover", () => {
+  // 1. cacheKey
+  assert.equal(Model.cacheKey("aapl", "1D"), "AAPL_1D")
+  assert.equal(Model.cacheKey("smh ", "60"), "SMH_60")
+  assert.equal(Model.cacheKey("nvda"), "NVDA_1D")
+
+  // 2. isBasketSector
+  assert.equal(Model.isBasketSector("SMH"), true)
+  assert.equal(Model.isBasketSector("smh"), true)
+  assert.equal(Model.isBasketSector("XLC"), true)
+  assert.equal(Model.isBasketSector("SPY"), false)
+  assert.equal(Model.isBasketSector("XLK"), false)
+
+  // 3. chunkSymbols
+  const symbols = ["S1", "S2", "S3", "S4", "S5"]
+  assert.deepEqual(Model.chunkSymbols(symbols, 2), [["S1", "S2"], ["S3", "S4"], ["S5"]])
+  assert.deepEqual(Model.chunkSymbols(symbols, 10), [["S1", "S2", "S3", "S4", "S5"]])
+
+  // 4. updateDevelopingCandle (same day update)
+  const baseCandles = [
+    { timestamp: 1731335400, open: 100, high: 105, low: 99, close: 102 } // e.g. 2024-11-11
+  ]
+  const quoteSame = { regularMarketPrice: 107, regularMarketDayHigh: 108, regularMarketDayLow: 98 }
+  const updated = Model.updateDevelopingCandle(baseCandles, quoteSame, "1D", new Date(1731335400 * 1000 + 3600 * 1000))
+  assert.equal(updated.length, 1)
+  assert.equal(updated[0].close, 107)
+  assert.equal(updated[0].high, 108)
+  assert.equal(updated[0].low, 98)
+
+  // 5. updateDevelopingCandle (next day rollover ET: Option A)
+  // 24 hours later (next ET market day)
+  const nextDayDate = new Date(1731335400 * 1000 + 86400 * 1000)
+  const quoteNextDay = { regularMarketPrice: 110, regularMarketDayHigh: 112, regularMarketDayLow: 109 }
+  const rolled = Model.updateDevelopingCandle(updated, quoteNextDay, "1D", nextDayDate)
+  assert.equal(rolled.length, 2)
+  // Yesterday's bar frozen
+  assert.equal(rolled[0].close, 107)
+  assert.equal(rolled[0].high, 108)
+  // Today's new developing bar
+  assert.equal(rolled[1].open, 110)
+  assert.equal(rolled[1].close, 110)
+  assert.equal(rolled[1].high, 112)
+  assert.equal(rolled[1].low, 109)
+})

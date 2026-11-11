@@ -20,6 +20,7 @@ Panel {
     property var pinned: Model.defaultPinned()
     property int pinIndex: 0
     property var quotes: ({})
+    property var chartCache: ({})
     property int selectedIndex: 0
     property bool cursorActive: false
     property string view: "list"
@@ -1400,6 +1401,52 @@ Panel {
         }
     }
 
+    FileView {
+        id: candleCacheFile
+        path: Quickshell.env("HOME") + "/.cache/omafinance/candles.json"
+        watchChanges: false
+        atomicWrites: true
+        printErrors: false
+        onLoaded: {
+            try {
+                var raw = text();
+                if (raw && raw.length > 2) {
+                    var parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed === "object") {
+                        root.chartCache = Object.assign({}, parsed, root.chartCache);
+                    }
+                }
+            } catch (e) {}
+        }
+    }
+
+    Timer {
+        id: candleCacheSaveTimer
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            try {
+                candleCacheFile.setText(JSON.stringify(root.chartCache));
+            } catch (e) {}
+        }
+    }
+
+    function updateSharedCandles(key, candles, quoteEnriched) {
+        if (!key || !candles)
+            return;
+        var nextCache = Object.assign({}, root.chartCache);
+        nextCache[key] = candles;
+        root.chartCache = nextCache;
+        if (quoteEnriched && quoteEnriched.symbol) {
+            var existing = root.quotes[quoteEnriched.symbol] || ({});
+            var enriched = Object.assign({}, existing, quoteEnriched);
+            var nextQuotes = Object.assign({}, root.quotes);
+            nextQuotes[quoteEnriched.symbol] = enriched;
+            root.quotes = nextQuotes;
+        }
+        candleCacheSaveTimer.restart();
+    }
+
     Component.onCompleted: mkdirProc.running = true
 
     Process {
@@ -2254,6 +2301,8 @@ Panel {
             mainSymbol: sym,
             watchlist: root.watchlist,
             pinned: root.pinned,
+            quotes: root.quotes,
+            chartCache: root.chartCache,
             gridMode: currentMode,
             previousGridMode: baseMode,
             syncSymbol: root.gridSync ? root.gridSync.symbol !== false : true,
@@ -2285,9 +2334,20 @@ Panel {
         GridWindow {
             id: gridWin
             visible: true
+            quotes: root.quotes
+            chartCache: root.chartCache
             discordWebhook: root.discordWebhook
             alertsMuted: root.alertsMuted
             alertsMuteStatus: root.alertsMuteStatus
+
+            onQuotesReceived: function (incoming) {
+                root.quotes = Model.mergeQuotes(root.quotes, incoming);
+                root.evaluateWatchlistPriceAlerts(incoming);
+            }
+
+            onChartDataReceived: function (key, candles, quoteEnriched) {
+                root.updateSharedCandles(key, candles, quoteEnriched);
+            }
 
             onSymbolLevelsChangedExternally: function (sym, nextLevels) {
                 if (!sym)
@@ -2398,6 +2458,8 @@ Panel {
 
         var win = sectorAnalysisComponent.createObject(root, {
             sectorSymbol: sym,
+            quotes: root.quotes,
+            chartCache: root.chartCache,
             discordWebhook: root.discordWebhook,
             alertsMuted: root.alertsMuted,
             alertsMuteStatus: root.alertsMuteStatus,
@@ -2415,9 +2477,20 @@ Panel {
         SectorAnalysisWindow {
             id: secWin
             visible: true
+            quotes: root.quotes
+            chartCache: root.chartCache
             discordWebhook: root.discordWebhook
             alertsMuted: root.alertsMuted
             alertsMuteStatus: root.alertsMuteStatus
+
+            onQuotesReceived: function (incoming) {
+                root.quotes = Model.mergeQuotes(root.quotes, incoming);
+                root.evaluateWatchlistPriceAlerts(incoming);
+            }
+
+            onChartDataReceived: function (key, candles, quoteEnriched) {
+                root.updateSharedCandles(key, candles, quoteEnriched);
+            }
 
             onSymbolLevelsChangedExternally: function (sym, nextLevels) {
                 if (!sym)

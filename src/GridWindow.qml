@@ -55,6 +55,8 @@ FloatingWindow {
     signal stateSaveRequested(string mode, var sync, var symbols, var splits)
     signal symbolLevelsChangedExternally(string sym, var nextLevels)
     signal signalStatesUpdated(var nextStates)
+    signal quotesReceived(var incomingQuotes)
+    signal chartDataReceived(string key, var candles, var quoteEnriched)
     // Delivery (notification, sound, Discord, log) is owned by Panel.dispatchAlert so mute applies everywhere.
     signal alertDispatchRequested(var alert)
     signal alertsMuteToggleRequested
@@ -185,7 +187,7 @@ FloatingWindow {
     }
 
     function cacheKey(sym, tf) {
-        return sym + "_" + tf;
+        return Model.cacheKey(sym, tf);
     }
 
     function getCandles(sym, tf) {
@@ -259,6 +261,7 @@ FloatingWindow {
                 root.quotes = Model.mergeQuotes(root.quotes, parsed);
                 root.quoteFailureCount = 0;
                 root.evaluateActivePriceLevelAlerts(parsed);
+                root.quotesReceived(parsed);
             } else {
                 root.quoteFailureCount = Math.min(10, root.quoteFailureCount + 1);
             }
@@ -288,6 +291,7 @@ FloatingWindow {
                 var nextCache = Object.assign({}, root.chartCache);
                 nextCache[key] = parsed.candles;
                 root.chartCache = nextCache;
+                root.chartDataReceived(key, parsed.candles, parsed.symbol ? parsed : null);
 
                 if (parsed.symbol) {
                     var existingQuote = root.quotes[root.currentFetchSymbol];

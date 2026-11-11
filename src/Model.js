@@ -7415,6 +7415,106 @@ function sortSectorHoldings(holdings, sortField, sortDirection, quotesMap) {
   return list;
 }
 
+function cacheKey(symbol, rangeKey) {
+  var s = String(symbol || "").trim().toUpperCase();
+  var r = String(rangeKey || "1D").trim();
+  return s + "_" + r;
+}
+
+function isBasketSector(symbol) {
+  var s = String(symbol || "").trim().toUpperCase();
+  return s === "SMH" || s === "XLC";
+}
+
+function chunkSymbols(symbols, chunkSize) {
+  var size = Math.max(1, parseInt(chunkSize, 10) || 20);
+  var list = Array.isArray(symbols) ? symbols.slice() : [];
+  var chunks = [];
+  for (var i = 0; i < list.length; i += size) {
+    chunks.push(list.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function marketDateEt(timestampSec) {
+  var d = (timestampSec != null && isFinite(timestampSec)) ? new Date(timestampSec * 1000) : new Date();
+  var s = d.toLocaleString("en-US", { timeZone: "America/New_York" });
+  var et = new Date(s);
+  var m = et.getMonth() + 1;
+  var day = et.getDate();
+  return et.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day;
+}
+
+function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
+  if (!Array.isArray(candles) || candles.length === 0) return candles || [];
+  if (!quote) return candles;
+
+  var rawPrice = quote.regularMarketPrice != null ? quote.regularMarketPrice : (quote.price != null ? quote.price : null);
+  var price = finiteOrNull(rawPrice);
+  if (price === null) return candles;
+
+  var list = candles.slice();
+  var lastIdx = list.length - 1;
+  var last = Object.assign({}, list[lastIdx]);
+  var range = String(rangeKey || "1D");
+  var now = (nowDate instanceof Date) ? nowDate : new Date();
+  var nowSec = Math.floor(now.getTime() / 1000);
+
+  if (range === "1D" || range === "D" || range === "1d" || range === "day") {
+    var curEt = marketDateEt(nowSec);
+    var lastEt = marketDateEt(last.timestamp);
+    if (curEt !== lastEt && nowSec > last.timestamp) {
+      list.push({
+        timestamp: nowSec,
+        open: price,
+        high: price,
+        low: price,
+        close: price,
+        volume: 0
+      });
+      lastIdx = list.length - 1;
+      last = Object.assign({}, list[lastIdx]);
+    }
+  } else if (range === "60" || range === "30" || range === "15" || range === "5" || range === "1") {
+    var periodSec = range === "60" ? 3600 : (range === "30" ? 1800 : (range === "15" ? 900 : (range === "5" ? 300 : 60)));
+    if (nowSec >= last.timestamp + periodSec) {
+      var alignedTs = Math.floor(nowSec / periodSec) * periodSec;
+      list.push({
+        timestamp: alignedTs,
+        open: price,
+        high: price,
+        low: price,
+        close: price,
+        volume: 0
+      });
+      lastIdx = list.length - 1;
+      last = Object.assign({}, list[lastIdx]);
+    }
+  }
+
+  last.close = price;
+  if (last.high !== null && isFinite(last.high)) {
+    last.high = Math.max(last.high, price);
+  } else {
+    last.high = price;
+  }
+  if (last.low !== null && isFinite(last.low)) {
+    last.low = Math.min(last.low, price);
+  } else {
+    last.low = price;
+  }
+
+  if (range === "1D" || range === "D" || range === "1d" || range === "day") {
+    var dHigh = finiteOrNull(quote.regularMarketDayHigh != null ? quote.regularMarketDayHigh : quote.dayHigh);
+    var dLow = finiteOrNull(quote.regularMarketDayLow != null ? quote.regularMarketDayLow : quote.dayLow);
+    if (dHigh !== null) last.high = Math.max(last.high, dHigh);
+    if (dLow !== null) last.low = Math.min(last.low, dLow);
+  }
+
+  list[lastIdx] = last;
+  return list;
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -7569,7 +7669,11 @@ if (typeof module !== "undefined") {
     parseScenarioQuery: parseScenarioQuery,
     matchesScenarioTokens: matchesScenarioTokens,
     matchesScenarioQuery: matchesScenarioQuery,
-    sortSectorHoldings: sortSectorHoldings
+    sortSectorHoldings: sortSectorHoldings,
+    cacheKey: cacheKey,
+    isBasketSector: isBasketSector,
+    chunkSymbols: chunkSymbols,
+    updateDevelopingCandle: updateDevelopingCandle
   }
 }
 
