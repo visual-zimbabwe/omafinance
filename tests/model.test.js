@@ -3819,3 +3819,123 @@ test("Contradiction 11: Override & Conflict Permissiveness (Day+60m agree, elimi
   assert.equal(r1.passed, false)
   assert.match(r1.detail, /Conflict:.*Awaiting 1D Open Reclaim \(\$212\.00\)/)
 })
+
+test("Contradiction 10: The Flip & 60-Minute Bar Timing (xx:30 vs xx:00 and 15:30 Half-Hour Close)", () => {
+  // 1. getUsSessionSchedule: regular day vs early-close holidays
+  const regDayDate = new Date("2026-07-15T15:00:00Z") // Wednesday 11:00 AM EDT
+  const regSched = Model.getUsSessionSchedule(regDayDate)
+  assert.equal(regSched.isWeekend, false)
+  assert.equal(regSched.isEarlyClose, false)
+  assert.equal(regSched.openMins, 570)       // 09:30 ET
+  assert.equal(regSched.closeMins, 960)      // 16:00 ET
+  assert.equal(regSched.finalBarMins, 930)   // 15:30 ET
+  assert.equal(regSched.isSessionOpen, true)
+
+  // Black Friday (Nov 27, 2026) -> 1:00 PM ET early close (780 mins)
+  const blackFridayDate = new Date("2026-11-27T17:00:00Z") // 12:00 PM EST
+  const bfSched = Model.getUsSessionSchedule(blackFridayDate)
+  assert.equal(bfSched.isEarlyClose, true)
+  assert.equal(bfSched.closeMins, 780)      // 13:00 ET
+  assert.equal(bfSched.finalBarMins, 750)  // 12:30 ET
+  assert.equal(bfSched.isSessionOpen, true)
+
+  // Weekend (Saturday) -> Session closed
+  const weekendDate = new Date("2026-07-18T15:00:00Z")
+  const weekendSched = Model.getUsSessionSchedule(weekendDate)
+  assert.equal(weekendSched.isWeekend, true)
+  assert.equal(weekendSched.isSessionOpen, false)
+
+  // 2. candleDurationSec: 15:30 final bar is 1800s (30m) for US equities, 3600s for crypto
+  // 10:30 AM EDT candle (630 mins)
+  const bar1030 = { timestamp: Math.floor(new Date("2026-07-15T14:30:00Z").getTime() / 1000) }
+  assert.equal(Model.candleDurationSec(bar1030, "60", "AAPL"), 3600)
+
+  // 15:30 PM EDT candle (930 mins) -> Final bar of day before 16:00 ET close
+  const bar1530 = { timestamp: Math.floor(new Date("2026-07-15T19:30:00Z").getTime() / 1000) }
+  assert.equal(Model.candleDurationSec(bar1530, "60", "AAPL"), 1800)
+
+  // Crypto at 15:30 ET is 24/7 continuous -> 3600s
+  assert.equal(Model.candleDurationSec(bar1530, "60", "BTC-USD"), 3600)
+
+  // Black Friday 12:30 PM EST candle (750 mins) -> Final bar before 13:00 ET close
+  const barBf1230 = { timestamp: Math.floor(new Date("2026-11-27T17:30:00Z").getTime() / 1000) }
+  assert.equal(Model.candleDurationSec(barBf1230, "60", "SPY"), 1800)
+
+  // 3. evaluateStratChecklist Rule 4: Final 30m bar, market closed, and intraday exhaustion
+  const tM = Math.floor(new Date("2026-07-01T13:30:00Z").getTime() / 1000)
+  const tW = Math.floor(new Date("2026-07-13T13:30:00Z").getTime() / 1000)
+  const tD = Math.floor(new Date("2026-07-15T13:30:00Z").getTime() / 1000) // 09:30 EDT Day Open
+  const daily = [
+    { timestamp: tM, open: 200, high: 220, low: 195, close: 215 },
+    { timestamp: tW, open: 210, high: 220, low: 208, close: 216 },
+    { timestamp: tD, open: 212, high: 218, low: 211, close: 216 }
+  ]
+
+  // Scenario A: Intraday fresh setup at 10:15 AM EDT (14:15 UTC) on 09:30 bar -> Fresh
+  const hourlyMorning = [
+    { timestamp: tD - 7200, open: 210, high: 214, low: 209, close: 212 },
+    { timestamp: tD - 3600, open: 212, high: 215, low: 211, close: 213 },
+    { timestamp: tD, open: 212, high: 216, low: 211.5, close: 215 } // 09:30-10:30 EDT
+  ]
+  const morningDate = new Date("2026-07-15T14:15:00Z") // 10:15 EDT -> 15m remaining in bar
+  const resMorning = Model.evaluateStratChecklist("AAPL", hourlyMorning, daily, { regularMarketPrice: 215 }, morningDate)
+  const r4Morning = resMorning.rules.find(r => r.id === 4)
+  assert.equal(r4Morning.passed, true)
+  assert.match(r4Morning.detail, /Fresh setup, no exhaustion/)
+
+  // Scenario B: Intraday time exhaustion at 10:27 AM EDT (14:27 UTC) -> <5m remaining (3m left)
+  const lateMorningDate = new Date("2026-07-15T14:27:00Z") // 10:27 EDT -> 3m left in 60m candle
+  const resLateMorning = Model.evaluateStratChecklist("AAPL", hourlyMorning, daily, { regularMarketPrice: 215 }, lateMorningDate)
+  const r4LateMorning = resLateMorning.rules.find(r => r.id === 4)
+  assert.equal(r4LateMorning.passed, false)
+  assert.match(r4LateMorning.detail, /Time exhaustion: <5m remaining in 60m candle \(3m left\)/)
+
+  // Scenario C: Final bar at 15:45 EDT (19:45 UTC) -> <30m remaining before market close (15m left)
+  // Even with 3/3 HTF In-Force, this is blocked!
+  const tFinalBar = tD + 6 * 3600 // 15:30 EDT
+  const hourlyFinal = [
+    { timestamp: tFinalBar - 7200, open: 213, high: 216, low: 212, close: 214 },
+    { timestamp: tFinalBar - 3600, open: 214, high: 217, low: 213, close: 215 },
+    { timestamp: tFinalBar, open: 215, high: 217.5, low: 214.5, close: 217 } // 15:30 EDT final bar
+  ]
+  const lateAfternoonDate = new Date("2026-07-15T19:45:00Z") // 15:45 EDT -> 15m until 16:00 close
+  const resFinal = Model.evaluateStratChecklist("AAPL", hourlyFinal, daily, { regularMarketPrice: 217 }, lateAfternoonDate)
+  const r4Final = resFinal.rules.find(r => r.id === 4)
+  assert.equal(r4Final.passed, false)
+  assert.match(r4Final.detail, /Time exhaustion: <30m remaining before market close \(15m left\)/)
+  assert.equal(resFinal.isTradeable, false)
+
+  // Scenario D: Market session closed at 16:05 EDT (20:05 UTC)
+  const postCloseDate = new Date("2026-07-15T20:05:00Z")
+  const resClosed = Model.evaluateStratChecklist("AAPL", hourlyFinal, daily, { regularMarketPrice: 217 }, postCloseDate)
+  const r4Closed = resClosed.rules.find(r => r.id === 4)
+  assert.equal(r4Closed.passed, false)
+  assert.equal(r4Closed.detail, "Market session closed")
+  assert.equal(resClosed.isTradeable, false)
+
+  // Scenario E: Market session closed on Weekend (Saturday)
+  const resWeekend = Model.evaluateStratChecklist("AAPL", hourlyFinal, daily, { regularMarketPrice: 217 }, weekendDate)
+  const r4Weekend = resWeekend.rules.find(r => r.id === 4)
+  assert.equal(r4Weekend.passed, false)
+  assert.equal(r4Weekend.detail, "Market session closed")
+
+  // Scenario F: Crypto 24/7 at 16:05 EDT -> Session is never closed
+  const resCrypto = Model.evaluateStratChecklist("BTC-USD", hourlyFinal, daily, { regularMarketPrice: 217 }, postCloseDate)
+  const r4Crypto = resCrypto.rules.find(r => r.id === 4)
+  assert.notEqual(r4Crypto.detail, "Market session closed")
+
+  // 4. stratBarState staleness on the final 15:30 bar
+  // The 15:30 bar ends at 16:00 (1800s). At 16:05 (nowSec - 19:30 UTC = 2100s),
+  // with bar60Duration = 1800, stratBarState marks the bar stale and ignores live price.
+  const t1530 = Math.floor(new Date("2026-07-15T19:30:00Z").getTime() / 1000)
+  const bar1530Candle = { timestamp: t1530, open: 215, high: 217.5, low: 214.5, close: 217 }
+  const bar1430Candle = { timestamp: t1530 - 3600, open: 214, high: 217, low: 213, close: 215 }
+  const nowSecPostClose = Math.floor(postCloseDate.getTime() / 1000)
+  const bar60Duration = Model.candleDurationSec(bar1530Candle, "60", "AAPL", postCloseDate)
+  assert.equal(bar60Duration, 1800)
+  const stateStale = Model.stratBarState(bar1530Candle, bar1430Candle, 225 /* livePrice surging post-close */, nowSecPostClose, bar60Duration)
+  // Stale bar ignores live price 225 (doesn't merge into high 217.5) and falls back to close 217
+  assert.equal(stateStale.price, 217)
+  assert.equal(stateStale.high, 217.5)
+  assert.equal(stateStale.liveMerged, false)
+})
