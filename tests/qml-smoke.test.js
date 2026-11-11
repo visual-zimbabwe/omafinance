@@ -653,8 +653,8 @@ test("sector analysis window supports multi-tier recursive locking, 4-worker cha
   assert.match(win, /onTextEdited:[\s\S]*?text\.toUpperCase\(\)/)
   assert.match(win, /"1:\s*"\s*\+\s*Math\.round\(root\.breadthMetrics\.pct1/)
   assert.match(win, /"3:\s*"\s*\+\s*Math\.round\(root\.breadthMetrics\.pct3/)
-  assert.match(win, /"F2u:\s*"\s*\+\s*Math\.round\(root\.breadthMetrics\.pctF2u/)
-  assert.match(win, /"F2d:\s*"\s*\+\s*Math\.round\(root\.breadthMetrics\.pctF2d/)
+  assert.match(win, /"2u Red:\s*"\s*\+\s*Math\.round\(root\.breadthMetrics\.pctF2u/)
+  assert.match(win, /"2d Green:\s*"\s*\+\s*Math\.round\(root\.breadthMetrics\.pctF2d/)
 })
 
 
