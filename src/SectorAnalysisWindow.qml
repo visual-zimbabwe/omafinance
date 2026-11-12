@@ -438,23 +438,38 @@ FloatingWindow {
                         var nextCache = Object.assign({}, root.chartCache);
                         var keys = Object.keys(parsed);
                         var nowDate = new Date();
+                        var cacheModified = false;
                         for (var ki = 0; ki < keys.length; ki++) {
                             var s = keys[ki];
                             var q = parsed[s];
                             var kActive = root.cacheKey(s, root.timeframe);
                             if (nextCache[kActive] && nextCache[kActive].length > 0) {
-                                nextCache[kActive] = Model.updateDevelopingCandle(nextCache[kActive], q, root.timeframe, nowDate);
+                                var updatedActive = Model.updateDevelopingCandle(nextCache[kActive], q, root.timeframe, nowDate);
+                                if (updatedActive !== nextCache[kActive]) {
+                                    nextCache[kActive] = updatedActive;
+                                    cacheModified = true;
+                                }
                             }
                             var k1D = root.cacheKey(s, "1D");
                             if (root.timeframe !== "1D" && nextCache[k1D] && nextCache[k1D].length > 0) {
-                                nextCache[k1D] = Model.updateDevelopingCandle(nextCache[k1D], q, "1D", nowDate);
+                                var updated1D = Model.updateDevelopingCandle(nextCache[k1D], q, "1D", nowDate);
+                                if (updated1D !== nextCache[k1D]) {
+                                    nextCache[k1D] = updated1D;
+                                    cacheModified = true;
+                                }
                             }
                             var k60 = root.cacheKey(s, "60");
                             if (root.timeframe !== "60" && nextCache[k60] && nextCache[k60].length > 0) {
-                                nextCache[k60] = Model.updateDevelopingCandle(nextCache[k60], q, "60", nowDate);
+                                var updated60 = Model.updateDevelopingCandle(nextCache[k60], q, "60", nowDate);
+                                if (updated60 !== nextCache[k60]) {
+                                    nextCache[k60] = updated60;
+                                    cacheModified = true;
+                                }
                             }
                         }
-                        root.chartCache = nextCache;
+                        if (cacheModified) {
+                            root.chartCache = nextCache;
+                        }
                     }
                 } catch (e) {
                     console.log("[SectorAnalysis] Error parsing spark quotes:", e);

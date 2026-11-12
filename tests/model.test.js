@@ -3506,6 +3506,75 @@ test("shared model helpers: cacheKey, isBasketSector, chunkSymbols, and updateDe
   assert.equal(rolled[1].close, 110)
   assert.equal(rolled[1].high, 112)
   assert.equal(rolled[1].low, 109)
+
+  // 6. updateDevelopingCandle: Extended hours (pre/post/closed) gating
+  const preQuote = {
+    symbol: "NVDA",
+    session: "pre",
+    hasExtended: true,
+    price: 135.0, // Pre-market surge
+    regularPrice: 125.0,
+    extendedPrice: 135.0,
+    dayHigh: 126.0,
+    dayLow: 124.0
+  }
+  const postQuote = {
+    symbol: "NVDA",
+    session: "post",
+    hasExtended: true,
+    price: 120.0, // After-hours drop
+    regularPrice: 125.0,
+    extendedPrice: 120.0,
+    dayHigh: 126.0,
+    dayLow: 124.0
+  }
+  const closedQuote = {
+    symbol: "NVDA",
+    session: "closed",
+    price: 125.0,
+    regularPrice: 125.0
+  }
+
+  // Pre-market: candles must remain completely untouched (no rollover, no high/low wicks stretched)
+  const preResult = Model.updateDevelopingCandle(updated, preQuote, "1D", nextDayDate)
+  assert.equal(preResult, updated) // Same reference returned
+  assert.equal(preResult.length, 1) // No phantom morning bar created
+  assert.equal(preResult[0].close, 107)
+
+  // Post-market: candles must remain completely untouched
+  const postResult = Model.updateDevelopingCandle(updated, postQuote, "1D", new Date(1731335400 * 1000 + 3600 * 1000))
+  assert.equal(postResult, updated)
+  assert.equal(postResult[0].close, 107)
+
+  // Closed: candles must remain untouched
+  const closedResult = Model.updateDevelopingCandle(updated, closedQuote, "1D", nextDayDate)
+  assert.equal(closedResult, updated)
+
+  // Regular session: normalized quote with regularPrice and dayHigh/dayLow updates developing candle
+  const regularQuote = {
+    symbol: "NVDA",
+    session: "regular",
+    price: 109.5,
+    regularPrice: 109.5,
+    dayHigh: 111.0,
+    dayLow: 97.0
+  }
+  const regResult = Model.updateDevelopingCandle(updated, regularQuote, "1D", new Date(1731335400 * 1000 + 3600 * 1000))
+  assert.equal(regResult.length, 1)
+  assert.equal(regResult[0].close, 109.5)
+  assert.equal(regResult[0].high, 111.0)
+  assert.equal(regResult[0].low, 97.0)
+
+  // Live session (Crypto 24/7): updates developing candle
+  const cryptoQuote = {
+    symbol: "BTC-USD",
+    session: "live",
+    price: 90500,
+    regularPrice: 90500
+  }
+  const cryptoResult = Model.updateDevelopingCandle(updated, cryptoQuote, "1D", new Date(1731335400 * 1000 + 3600 * 1000))
+  assert.equal(cryptoResult.length, 1)
+  assert.equal(cryptoResult[0].close, 90500)
 })
 
 test("Contradiction 5: Canonical 33% Hammer/Shooter detection, DRY scanner, and entry bar +/- $0.01 stop placement", () => {
