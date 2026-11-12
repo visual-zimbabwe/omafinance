@@ -4591,3 +4591,30 @@ test("Contradiction 8: Pre-Trade Checklist (Canonical 11 Questions vs 9 Rules)",
   assert.equal(res.badgeText, "11/11")
   assert.match(res.statusTag, /TRADEABLE.*All 11 Questions Verified/)
 })
+
+test("bar count constants and clampBarCount helper", () => {
+  assert.equal(Model.MIN_BAR_COUNT, 8)
+  assert.equal(Model.DEFAULT_ANALYSIS_BAR_COUNT, 8)
+
+  // Valid values above min
+  assert.equal(Model.clampBarCount(20), 20)
+  assert.equal(Model.clampBarCount("45"), 45)
+  assert.equal(Model.clampBarCount(8), 8)
+
+  // Values below min clamped to 8
+  assert.equal(Model.clampBarCount(5), 8)
+  assert.equal(Model.clampBarCount(0), 8)
+  assert.equal(Model.clampBarCount(-10), 8)
+  assert.equal(Model.clampBarCount("3"), 8)
+
+  // Non-numeric and empty fallbacks
+  assert.equal(Model.clampBarCount(""), 8)
+  assert.equal(Model.clampBarCount("abc"), 8)
+  assert.equal(Model.clampBarCount(null), 8)
+  assert.equal(Model.clampBarCount(undefined), 8)
+  assert.equal(Model.clampBarCount(NaN), 8)
+
+  // Custom fallback
+  assert.equal(Model.clampBarCount("invalid", 14), 14)
+  assert.equal(Model.clampBarCount("invalid", 4), 8)
+})
