@@ -13,7 +13,7 @@ Item {
     property color downColor: Color.foreground
     property color gridColor: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.08)
     property color crosshairColor: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.35)
-    property color labelColor: Color.muted
+    property color labelColor: Model.accessibleDimColor(Color.foreground, Color.background)
     property string currency: "USD"
     property var priceHint: 2
     property string rangeKey: "1D"
@@ -835,7 +835,7 @@ Item {
                     var isHoveredTick = (ti === root.hoveredTickIndex);
 
                     ctx.font = (isHoveredTick ? "bold " : "") + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
-                    ctx.fillStyle = isHoveredTick ? Color.foreground : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.45);
+                    ctx.fillStyle = isHoveredTick ? Color.foreground : root.labelColor;
                     ctx.textAlign = "left";
                     ctx.textBaseline = "middle";
                     ctx.fillText(t.label, g.right + Style.space(6), Math.round(t.y));
@@ -1001,7 +1001,7 @@ Item {
                     var lx2 = ep.drawX2;
                     var isLvlActive = (li === root.hoveredLevelIndex || li === root.draggingLevelIndex || li === root.editingLevelIndex);
                     var isArmedAlert = Boolean(lvl.alertEnabled) && !lvl.alertTriggered;
-                    var lvlColor = (lvl.tone === "up" || lvl.tone === "down") ? root.levelToneColor(lvl.tone) : (isArmedAlert ? Color.accent.primary : root.levelToneColor(lvl.tone));
+                    var lvlColor = (lvl.tone === "up" || lvl.tone === "down") ? root.levelToneColor(lvl.tone) : (isArmedAlert ? Model.accessibleSemanticColor("warning", Color.background) : root.levelToneColor(lvl.tone));
 
                     ctx.save();
                     ctx.strokeStyle = lvlColor;
@@ -1108,7 +1108,7 @@ Item {
             // Bottom Time Scale Axis Ticks
             if (root.showTimeScale && g.timeTicks && g.timeTicks.length > 0) {
                 ctx.font = Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
-                ctx.fillStyle = Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.45);
+                ctx.fillStyle = root.labelColor;
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
                 var tickY = Math.round(g.bot + Style.space(9));
@@ -1506,7 +1506,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     visible: levelTextInput.text.length === 0
                     text: "Label (Tab=color)..."
-                    color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.4)
+                    color: root.labelColor
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.bodySmall
                 }
@@ -1557,7 +1557,7 @@ Item {
                 checked: Boolean(levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled)
                 text: checked ? "ALRT ON" : "ALRT OFF"
                 foreground: Color.accent
-                dimColor: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.65)
+                dimColor: root.labelColor
                 accentColor: Color.accent
                 fontFamily: root.fontFamily
                 fontSize: Style.font.bodySmall - 1

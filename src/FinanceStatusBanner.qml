@@ -16,11 +16,11 @@ FinanceSurface {
     property int autoHideMs: 0
     property string fontFamily: Style.font.family
     property color foreground: Color.foreground
-    property color dimColor: Color.muted
-    property color successColor: "#4ade80"
-    property color warningColor: "#fbbf24"
-    property color errorColor: Color.urgent
-    property color infoColor: Color.accent
+    property color dimColor: Model.accessibleDimColor(root.foreground, Color.background)
+    property color successColor: Model.accessibleSemanticColor("success", Color.background)
+    property color warningColor: Model.accessibleSemanticColor("warning", Color.background)
+    property color errorColor: Model.accessibleSemanticColor("error", Color.background)
+    property color infoColor: Model.accessibleSemanticColor("info", Color.background)
 
     signal actionTriggered
     signal secondaryActionTriggered

@@ -250,7 +250,7 @@ Item {
                             // Rule Title & Detail
                             Column {
                                 width: parent.width - Style.space(46)
-                                spacing: 2
+                                spacing: Style.space(2)
 
                                 Text {
                                     width: parent.width
