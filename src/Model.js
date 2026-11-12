@@ -7606,14 +7606,16 @@ function parseScenarioQuery(query) {
   return result;
 }
 
-function matchesScenarioTokens(candles, quote, tokens) {
-  if (!tokens || tokens.length === 0) return true;
-  if (!Array.isArray(candles) || candles.length < 2) return false;
+var COMPOSITE_SCENARIO_REGEX = /^(1|2u|2d|2|3)?(green|red|[gr])?([hsd]|hammer|shooter|doji)?$/;
+
+function buildScenarioContext(candles, quote) {
+  if (!Array.isArray(candles) || candles.length < 2) return null;
 
   var n = candles.length;
   var cLast = Object.assign({}, candles[n - 1]);
   var cPrev = candles[n - 2];
   var cTwo = n >= 3 ? candles[n - 3] : null;
+  var cThree = n >= 4 ? candles[n - 4] : null;
 
   var livePx = stratLivePrice(quote);
   if (livePx !== null && isFinite(livePx)) {
@@ -7631,66 +7633,128 @@ function matchesScenarioTokens(candles, quote, tokens) {
 
   var sc = stratScenario(cLast, cPrev);
   var scPrev = cTwo ? stratScenario(cPrev, cTwo) : null;
+  var scP2 = (cTwo && cThree) ? stratScenario(cTwo, cThree) : null;
+
   var isGreen = close >= open;
   var isRed = close < open;
-  var range = high - low;
-
   var inForce = false;
   if (sc === "2u" && close >= prevHigh) inForce = true;
   if (sc === "2d" && close <= prevLow) inForce = true;
 
   var shapeInfo = detectCandleShape(cLast, cPrev);
-  var isHammer = shapeInfo.isHammer;
-  var isShooter = shapeInfo.isShooter;
+  var shapePrev = cTwo ? detectCandleShape(cPrev, cTwo) : null;
 
-  for (var i = 0; i < tokens.length; i++) {
-    var t = tokens[i];
-    if (t === "1" || t === "inside") {
-      if (sc !== "1") return false;
-    } else if (t === "2u") {
-      if (sc !== "2u") return false;
-    } else if (t === "2d") {
-      if (sc !== "2d") return false;
-    } else if (t === "3" || t === "outside") {
-      if (sc !== "3") return false;
-    } else if (t === "2ug") {
-      if (sc !== "2u" || !isGreen) return false;
-    } else if (t === "2ur") {
-      if (sc !== "2u" || !isRed) return false;
-    } else if (t === "2dg") {
-      if (sc !== "2d" || !isGreen) return false;
-    } else if (t === "2dr") {
-      if (sc !== "2d" || !isRed) return false;
-    } else if (t === "g" || t === "green") {
-      if (!isGreen) return false;
-    } else if (t === "r" || t === "red") {
-      if (!isRed) return false;
-    } else if (t === "hammer") {
-      if (!isHammer) return false;
-    } else if (t === "shooter") {
-      if (!isShooter) return false;
-    } else if (t === "if" || t === "inforce") {
-      if (!inForce) return false;
-    } else if (t === "2-1-2") {
-      if (scPrev !== "1" || (sc !== "2u" && sc !== "2d")) return false;
-    } else if (t === "2-2") {
-      if ((scPrev !== "2u" && scPrev !== "2d") || (sc !== "2u" && sc !== "2d")) return false;
-    } else if (t === "3-2") {
-      if (scPrev !== "3" || (sc !== "2u" && sc !== "2d")) return false;
-    } else if (t === "revstrat" || t === "1-3" || t === "1-3-2") {
-      var is13 = (scPrev === "1" && sc === "3");
-      var is32 = (scPrev === "3" && (sc === "2u" || sc === "2d"));
-      if (t === "1-3-2") {
-        if (!is32) return false;
-        var cThree = n >= 4 ? candles[n - 4] : null;
-        var scP2 = (cTwo && cThree) ? stratScenario(cTwo, cThree) : null;
-        if (scP2 !== "1") return false;
-        var shapePrev = detectCandleShape(cPrev, cTwo);
-        if (sc === "2u" && !shapePrev.isHammer) return false;
-        if (sc === "2d" && !shapePrev.isShooter) return false;
-      } else if (!is13 && !is32) {
+  var baseSc = (sc === "2u" || sc === "2d") ? "2" : sc;
+  var basePrev = (scPrev === "2u" || scPrev === "2d") ? "2" : scPrev;
+  var baseP2 = (scP2 === "2u" || scP2 === "2d") ? "2" : scP2;
+
+  return {
+    sc: sc,
+    scPrev: scPrev,
+    scP2: scP2,
+    baseSc: baseSc,
+    basePrev: basePrev,
+    baseP2: baseP2,
+    isGreen: isGreen,
+    isRed: isRed,
+    inForce: inForce,
+    shapeInfo: shapeInfo,
+    shapePrev: shapePrev
+  };
+}
+
+function matchSingleScenarioToken(ctx, t) {
+  // Named aliases & states
+  if (t === "inside") return ctx.sc === "1";
+  if (t === "outside") return ctx.sc === "3";
+  if (t === "if" || t === "inforce") return ctx.inForce;
+  if (t === "f2u") return ctx.sc === "2u" && ctx.isRed;
+  if (t === "f2d") return ctx.sc === "2d" && ctx.isGreen;
+  if (t === "engulfing") return ctx.shapeInfo.isEngulfing;
+
+  // Multi-Bar Sequences
+  if (t === "2-1-2") return ctx.basePrev === "1" && ctx.baseSc === "2";
+  if (t === "2-1-2u") return ctx.basePrev === "1" && ctx.sc === "2u";
+  if (t === "2-1-2d") return ctx.basePrev === "1" && ctx.sc === "2d";
+  if (t === "2-2") return ctx.basePrev === "2" && ctx.baseSc === "2";
+  if (t === "2-2u") return ctx.basePrev === "2" && ctx.sc === "2u";
+  if (t === "2-2d") return ctx.basePrev === "2" && ctx.sc === "2d";
+  if (t === "2u-2u") return ctx.scPrev === "2u" && ctx.sc === "2u";
+  if (t === "2d-2d") return ctx.scPrev === "2d" && ctx.sc === "2d";
+  if (t === "2u-2d") return ctx.scPrev === "2u" && ctx.sc === "2d";
+  if (t === "2d-2u") return ctx.scPrev === "2d" && ctx.sc === "2u";
+  if (t === "3-2") return ctx.basePrev === "3" && ctx.baseSc === "2";
+  if (t === "3-2u") return ctx.basePrev === "3" && ctx.sc === "2u";
+  if (t === "3-2d") return ctx.basePrev === "3" && ctx.sc === "2d";
+  if (t === "3-1-2") return ctx.baseP2 === "3" && ctx.basePrev === "1" && ctx.baseSc === "2";
+  if (t === "3-1-2u") return ctx.baseP2 === "3" && ctx.basePrev === "1" && ctx.sc === "2u";
+  if (t === "3-1-2d") return ctx.baseP2 === "3" && ctx.basePrev === "1" && ctx.sc === "2d";
+  if (t === "1-3") return ctx.basePrev === "1" && ctx.sc === "3";
+  if (t === "revstrat") return (ctx.basePrev === "1" && ctx.sc === "3") || (ctx.basePrev === "3" && ctx.baseSc === "2");
+  if (t === "1-3-2") {
+    if (ctx.basePrev !== "3" || ctx.baseSc !== "2" || ctx.baseP2 !== "1") return false;
+    if (!ctx.shapePrev) return false;
+    if (ctx.sc === "2u" && !ctx.shapePrev.isHammer) return false;
+    if (ctx.sc === "2d" && !ctx.shapePrev.isShooter) return false;
+    return true;
+  }
+
+  // Atomic Composite Grammar: [scenario][color?][shape?]
+  // Handles: h, s, 2uh, 2us, 2dh, 2ds, 3h, 3s, 1h, 1s, 2ug, 2ur, 2dg, 2dr, 1, 2, 3, etc.
+  var m = t.match(COMPOSITE_SCENARIO_REGEX);
+  if (m && (m[1] || m[2] || m[3])) {
+    var reqSc = m[1];
+    var reqCol = m[2];
+    var reqShape = m[3];
+
+    if (reqSc) {
+      if (reqSc === "2") {
+        if (ctx.baseSc !== "2") return false;
+      } else if (ctx.sc !== reqSc) {
         return false;
       }
+    }
+    if (reqCol) {
+      if ((reqCol === "g" || reqCol === "green") && !ctx.isGreen) return false;
+      if ((reqCol === "r" || reqCol === "red") && !ctx.isRed) return false;
+    }
+    if (reqShape) {
+      var isH = (reqShape === "h" || reqShape === "hammer");
+      var isS = (reqShape === "s" || reqShape === "shooter");
+      var isD = (reqShape === "d" || reqShape === "doji");
+      if (isH && !ctx.shapeInfo.isHammer) return false;
+      if (isS && !ctx.shapeInfo.isShooter) return false;
+      if (isD && !ctx.shapeInfo.isDoji) return false;
+    }
+    return true;
+  }
+
+  return null;
+}
+
+function evaluateScenarioToken(ctx, token) {
+  if (!ctx || !token) return false;
+  var isNegated = false;
+  var raw = token;
+  if (raw.charAt(0) === "!" || raw.charAt(0) === "-") {
+    isNegated = true;
+    raw = raw.substring(1);
+  }
+  if (!raw) return false;
+
+  var res = matchSingleScenarioToken(ctx, raw);
+  if (res === null) return false;
+  return isNegated ? !res : res;
+}
+
+function matchesScenarioTokens(candles, quote, tokens) {
+  if (!tokens || tokens.length === 0) return true;
+  var ctx = buildScenarioContext(candles, quote);
+  if (!ctx) return false;
+
+  for (var i = 0; i < tokens.length; i++) {
+    if (!evaluateScenarioToken(ctx, tokens[i])) {
+      return false;
     }
   }
   return true;
@@ -8012,6 +8076,8 @@ if (typeof module !== "undefined") {
     parseSectorTickers: parseSectorTickers,
     extractSymbols: extractSymbols,
     formatTickerList: formatTickerList,
+    buildScenarioContext: buildScenarioContext,
+    evaluateScenarioToken: evaluateScenarioToken,
     parseScenarioQuery: parseScenarioQuery,
     matchesScenarioTokens: matchesScenarioTokens,
     matchesScenarioQuery: matchesScenarioQuery,

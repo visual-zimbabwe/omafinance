@@ -4701,3 +4701,87 @@ test("bar count constants and clampBarCount helper", () => {
   assert.equal(Model.clampBarCount("invalid", 14), 14)
   assert.equal(Model.clampBarCount("invalid", 4), 8)
 })
+
+test("scenario filter: composite tokens, shapes (h, s, 2us, 2ds, 2dh, 2uh, 3s, 3h), negation, and sequences", () => {
+  const p0 = { open: 100, high: 110, low: 90, close: 105 }
+
+  // 1. 2uh: 2u Hammer (broke high 115 > 110, low 95 > 90, closed near high with long lower wick)
+  const twoUHammer = [p0, { open: 113, high: 115, low: 95, close: 114.5 }]
+  assert.equal(Model.matchesScenarioQuery(twoUHammer, null, "2uh"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUHammer, null, "2u h"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUHammer, null, "h"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUHammer, null, "2u hammer"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUHammer, null, "2us"), false)
+  assert.equal(Model.matchesScenarioQuery(twoUHammer, null, "s"), false)
+  assert.equal(Model.matchesScenarioQuery(twoUHammer, null, "2"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUHammer, null, "!r"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUHammer, null, "!s"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUHammer, null, "2u !r"), true)
+
+  // 2. 2us: 2u Shooter (broke high 115 > 110, low 95 > 90, rejected down near low with long upper wick)
+  const twoUShooter = [p0, { open: 96, high: 115, low: 95, close: 95.5 }]
+  assert.equal(Model.matchesScenarioQuery(twoUShooter, null, "2us"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUShooter, null, "2u s"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUShooter, null, "s"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUShooter, null, "2u shooter"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUShooter, null, "2uh"), false)
+  assert.equal(Model.matchesScenarioQuery(twoUShooter, null, "h"), false)
+  assert.equal(Model.matchesScenarioQuery(twoUShooter, null, "2u !r"), false) // It IS red, so !r fails
+  assert.equal(Model.matchesScenarioQuery(twoUShooter, null, "2u r"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUShooter, null, "2ur"), true)
+  assert.equal(Model.matchesScenarioQuery(twoUShooter, null, "f2u"), true)
+
+  // 3. 2dh: 2d Hammer (broke low 85 < 90, high 108 <= 110, long lower wick)
+  const twoDHammer = [p0, { open: 105, high: 108, low: 85, close: 107 }]
+  assert.equal(Model.matchesScenarioQuery(twoDHammer, null, "2dh"), true)
+  assert.equal(Model.matchesScenarioQuery(twoDHammer, null, "2d h"), true)
+  assert.equal(Model.matchesScenarioQuery(twoDHammer, null, "h"), true)
+  assert.equal(Model.matchesScenarioQuery(twoDHammer, null, "2ds"), false)
+  assert.equal(Model.matchesScenarioQuery(twoDHammer, null, "f2d"), true)
+  assert.equal(Model.matchesScenarioQuery(twoDHammer, null, "2dg"), true)
+
+  // 4. 2ds: 2d Shooter (broke low 85 < 90, high 108 <= 110, rejected at high)
+  const twoDShooter = [p0, { open: 87, high: 108, low: 85, close: 85.5 }]
+  assert.equal(Model.matchesScenarioQuery(twoDShooter, null, "2ds"), true)
+  assert.equal(Model.matchesScenarioQuery(twoDShooter, null, "2d s"), true)
+  assert.equal(Model.matchesScenarioQuery(twoDShooter, null, "s"), true)
+  assert.equal(Model.matchesScenarioQuery(twoDShooter, null, "2dh"), false)
+  assert.equal(Model.matchesScenarioQuery(twoDShooter, null, "2dr"), true)
+
+  // 5. 3h: 3 Hammer (broke both 115 > 110 and 85 < 90, closed top 33%)
+  const threeHammer = [p0, { open: 112, high: 115, low: 85, close: 114 }]
+  assert.equal(Model.matchesScenarioQuery(threeHammer, null, "3h"), true)
+  assert.equal(Model.matchesScenarioQuery(threeHammer, null, "3 h"), true)
+  assert.equal(Model.matchesScenarioQuery(threeHammer, null, "h"), true)
+  assert.equal(Model.matchesScenarioQuery(threeHammer, null, "3s"), false)
+  assert.equal(Model.matchesScenarioQuery(threeHammer, null, "3"), true)
+  assert.equal(Model.matchesScenarioQuery(threeHammer, null, "outside"), true)
+  assert.equal(Model.matchesScenarioQuery(threeHammer, null, "!3"), false)
+
+  // 6. 3s: 3 Shooter (broke both 115 > 110 and 85 < 90, closed bottom 33%)
+  const threeShooter = [p0, { open: 88, high: 115, low: 85, close: 86 }]
+  assert.equal(Model.matchesScenarioQuery(threeShooter, null, "3s"), true)
+  assert.equal(Model.matchesScenarioQuery(threeShooter, null, "3 s"), true)
+  assert.equal(Model.matchesScenarioQuery(threeShooter, null, "s"), true)
+  assert.equal(Model.matchesScenarioQuery(threeShooter, null, "3h"), false)
+  assert.equal(Model.matchesScenarioQuery(threeShooter, null, "3"), true)
+
+  // 7. Directional Sequences and Negation
+  const insideCoil = [
+    { open: 98, high: 115, low: 88, close: 105 }, // motherbar
+    { open: 100, high: 108, low: 92, close: 102 }, // 1 inside bar
+    { open: 105, high: 112, low: 95, close: 111 }  // 2u breakout
+  ]
+  assert.equal(Model.matchesScenarioQuery(insideCoil, null, "2-1-2"), true)
+  assert.equal(Model.matchesScenarioQuery(insideCoil, null, "2-1-2u"), true)
+  assert.equal(Model.matchesScenarioQuery(insideCoil, null, "2-1-2d"), false)
+  assert.equal(Model.matchesScenarioQuery(insideCoil, null, "!3"), true)
+  assert.equal(Model.matchesScenarioQuery(insideCoil, null, "!1"), true) // current is 2u, not 1
+
+  // 8. Compound OR query with shorthands
+  const nonMatchingBar = [p0, { open: 98, high: 105, low: 95, close: 102 }]
+  assert.equal(Model.matchesScenarioQuery(twoUHammer, null, "3s, 2ds, 2uh"), true)
+  assert.equal(Model.matchesScenarioQuery(threeShooter, null, "3s, 2ds, 2uh"), true)
+  assert.equal(Model.matchesScenarioQuery(twoDShooter, null, "3s, 2ds, 2uh"), true)
+  assert.equal(Model.matchesScenarioQuery(nonMatchingBar, null, "3s, 2ds, 2uh"), false)
+})
