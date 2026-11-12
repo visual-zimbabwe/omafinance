@@ -15,6 +15,7 @@ Item {
     property color activeBorderColor: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.40)
 
     signal ratioChangedManually(real nextRatio)
+    signal dragFinished()
 
     implicitWidth: orientation === Qt.Vertical ? Style.space(6) : parent.width
     implicitHeight: orientation === Qt.Horizontal ? Style.space(6) : parent.height
@@ -62,16 +63,23 @@ Item {
         }
 
         onReleased: {
-            root.dragging = false;
+            if (root.dragging) {
+                root.dragging = false;
+                root.dragFinished();
+            }
         }
 
         onCanceled: {
-            root.dragging = false;
+            if (root.dragging) {
+                root.dragging = false;
+                root.dragFinished();
+            }
         }
 
         onDoubleClicked: {
             root.ratio = root.defaultRatio;
             root.ratioChangedManually(root.defaultRatio);
+            root.dragFinished();
         }
     }
 }

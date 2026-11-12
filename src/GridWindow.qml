@@ -1387,6 +1387,8 @@ FloatingWindow {
                             totalSpan: topRowContainer.width
                             onRatioChangedManually: function (r) {
                                 root.topColSplitRatio = r;
+                            }
+                            onDragFinished: {
                                 root.saveGridState();
                             }
                         }
@@ -1454,6 +1456,8 @@ FloatingWindow {
                         totalSpan: gridViewport.height
                         onRatioChangedManually: function (r) {
                             root.rowSplitRatio = r;
+                        }
+                        onDragFinished: {
                             root.saveGridState();
                         }
                     }
@@ -1537,6 +1541,8 @@ FloatingWindow {
                                 totalSpan: botRow2x2.width
                                 onRatioChangedManually: function (r) {
                                     root.botColSplitRatio = r;
+                                }
+                                onDragFinished: {
                                     root.saveGridState();
                                 }
                             }
@@ -1667,6 +1673,8 @@ FloatingWindow {
                                 totalSpan: botRow23.width
                                 onRatioChangedManually: function (r) {
                                     root.botCol1Ratio = r;
+                                }
+                                onDragFinished: {
                                     root.saveGridState();
                                 }
                             }
@@ -1733,6 +1741,8 @@ FloatingWindow {
                                 totalSpan: botRow23.width
                                 onRatioChangedManually: function (r) {
                                     root.botCol2Ratio = r;
+                                }
+                                onDragFinished: {
                                     root.saveGridState();
                                 }
                             }

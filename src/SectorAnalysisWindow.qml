@@ -198,10 +198,19 @@ FloatingWindow {
         }
     }
 
+    property int pendingGlobalBarCount: -1
     function setGlobalBarCount(nextZoom) {
         var clamped = (typeof Model.clampBarCount === "function") ? Model.clampBarCount(nextZoom) : Math.max(8, parseInt(nextZoom, 10) || 8);
         if (root.globalBarCount !== clamped) {
             root.globalBarCount = clamped;
+        }
+    }
+
+    function setGlobalBarCountDebounced(nextZoom) {
+        var clamped = (typeof Model.clampBarCount === "function") ? Model.clampBarCount(nextZoom) : Math.max(8, parseInt(nextZoom, 10) || 8);
+        if (clamped !== root.globalBarCount) {
+            root.pendingGlobalBarCount = clamped;
+            chartZoomDebounceTimer.restart();
         }
     }
 
@@ -1717,7 +1726,7 @@ FloatingWindow {
                                     }
                                 }
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCount(nextZoom);
+                                    root.setGlobalBarCountDebounced(nextZoom);
                                 }
                             }
                         }
@@ -1812,7 +1821,7 @@ FloatingWindow {
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCount(nextZoom);
+                                    root.setGlobalBarCountDebounced(nextZoom);
                                 }
                             }
 
@@ -1829,7 +1838,7 @@ FloatingWindow {
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCount(nextZoom);
+                                    root.setGlobalBarCountDebounced(nextZoom);
                                 }
                             }
                         }
@@ -1853,7 +1862,7 @@ FloatingWindow {
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCount(nextZoom);
+                                    root.setGlobalBarCountDebounced(nextZoom);
                                 }
                             }
 
@@ -1870,7 +1879,7 @@ FloatingWindow {
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCount(nextZoom);
+                                    root.setGlobalBarCountDebounced(nextZoom);
                                 }
                             }
 
@@ -1887,7 +1896,7 @@ FloatingWindow {
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCount(nextZoom);
+                                    root.setGlobalBarCountDebounced(nextZoom);
                                 }
                             }
                         }
@@ -1904,6 +1913,18 @@ FloatingWindow {
         onTriggered: {
             root.scenarioFilter = scenarioField.text;
             root.activeTileIndex = 0;
+        }
+    }
+
+    Timer {
+        id: chartZoomDebounceTimer
+        interval: 80
+        repeat: false
+        onTriggered: {
+            if (root.pendingGlobalBarCount >= 8) {
+                root.setGlobalBarCount(root.pendingGlobalBarCount);
+                root.pendingGlobalBarCount = -1;
+            }
         }
     }
 
