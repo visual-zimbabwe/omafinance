@@ -1035,7 +1035,14 @@ FloatingWindow {
                     anchors.right: parent.right
                     anchors.rightMargin: Style.space(12)
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(10)
+                    spacing: Style.space(6)
+
+                    FinanceLoader {
+                        active: root.fetching
+                        color: root.dim
+                        spinnerSize: Style.font.bodySmall
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
 
                     Text {
                         text: "SYNC"
@@ -1043,144 +1050,109 @@ FloatingWindow {
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.bodySmall
                         font.bold: true
+                        anchors.verticalCenter: parent.verticalCenter
                     }
 
-                    Text {
-                        textFormat: Text.PlainText
+                    FinanceChipButton {
                         text: "SYM " + (root.syncSymbol ? "[ON]" : "[OFF]")
-                        color: root.syncSymbol ? root.foreground : root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: root.syncSymbol
-
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -Style.space(4)
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                root.syncSymbol = !root.syncSymbol;
-                                if (root.syncSymbol) {
-                                    var currentSym = root.symbolForCell(root.activeCellIndex);
-                                    root.mainSymbol = currentSym;
-                                    var nextSymbols = [];
-                                    for (var i = 0; i < 5; i++)
-                                        nextSymbols.push(currentSym);
-                                    root.cellSymbols = nextSymbols;
-                                }
-                                root.refreshQuotes();
-                                root.refreshAllCharts();
-                                root.saveGridState();
+                        checked: root.syncSymbol
+                        foreground: root.foreground
+                        dimColor: root.dim
+                        fontFamily: root.fontFamily
+                        tooltipText: "Sync symbol across all cells"
+                        anchors.verticalCenter: parent.verticalCenter
+                        onClicked: {
+                            root.syncSymbol = !root.syncSymbol;
+                            if (root.syncSymbol) {
+                                var currentSym = root.symbolForCell(root.activeCellIndex);
+                                root.mainSymbol = currentSym;
+                                var nextSymbols = [];
+                                for (var i = 0; i < 5; i++)
+                                    nextSymbols.push(currentSym);
+                                root.cellSymbols = nextSymbols;
                             }
+                            root.refreshQuotes();
+                            root.refreshAllCharts();
+                            root.saveGridState();
                         }
                     }
 
-                    Text {
-                        textFormat: Text.PlainText
+                    FinanceChipButton {
                         text: "TF " + (root.syncTimeframe ? "[ON]" : "[OFF]")
-                        color: root.syncTimeframe ? root.foreground : root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: root.syncTimeframe
-
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -Style.space(4)
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                root.syncTimeframe = !root.syncTimeframe;
-                                if (root.syncTimeframe) {
-                                    var currentTf = root.timeframeForCell(root.activeCellIndex);
-                                    var nextTfs = [];
-                                    for (var i = 0; i < 5; i++)
-                                        nextTfs.push(currentTf);
-                                    root.cellTimeframes = nextTfs;
-                                } else {
-                                    root.cellTimeframes = Model.gridTimeframes(root.gridMode === "1x1" ? root.previousGridMode : root.gridMode);
-                                }
-                                root.refreshAllCharts();
-                                root.saveGridState();
+                        checked: root.syncTimeframe
+                        foreground: root.foreground
+                        dimColor: root.dim
+                        fontFamily: root.fontFamily
+                        tooltipText: "Sync timeframe across all cells"
+                        anchors.verticalCenter: parent.verticalCenter
+                        onClicked: {
+                            root.syncTimeframe = !root.syncTimeframe;
+                            if (root.syncTimeframe) {
+                                var currentTf = root.timeframeForCell(root.activeCellIndex);
+                                var nextTfs = [];
+                                for (var i = 0; i < 5; i++)
+                                    nextTfs.push(currentTf);
+                                root.cellTimeframes = nextTfs;
+                            } else {
+                                root.cellTimeframes = Model.gridTimeframes(root.gridMode === "1x1" ? root.previousGridMode : root.gridMode);
                             }
+                            root.refreshAllCharts();
+                            root.saveGridState();
                         }
                     }
 
-                    Text {
-                        textFormat: Text.PlainText
+                    FinanceChipButton {
                         text: "CROSS " + (root.syncCrosshair ? "[ON]" : "[OFF]")
-                        color: root.syncCrosshair ? root.foreground : root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: root.syncCrosshair
-
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -Style.space(4)
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                root.syncCrosshair = !root.syncCrosshair;
-                                root.saveGridState();
-                            }
+                        checked: root.syncCrosshair
+                        foreground: root.foreground
+                        dimColor: root.dim
+                        fontFamily: root.fontFamily
+                        tooltipText: "Sync crosshair across all cells"
+                        anchors.verticalCenter: parent.verticalCenter
+                        onClicked: {
+                            root.syncCrosshair = !root.syncCrosshair;
+                            root.saveGridState();
                         }
                     }
 
-                    Text {
-                        textFormat: Text.PlainText
+                    FinanceChipButton {
                         text: "TIME " + (root.syncTime ? "[ON]" : "[OFF]")
-                        color: root.syncTime ? root.foreground : root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: root.syncTime
-
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -Style.space(4)
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                root.syncTime = !root.syncTime;
-                                root.saveGridState();
-                            }
+                        checked: root.syncTime
+                        foreground: root.foreground
+                        dimColor: root.dim
+                        fontFamily: root.fontFamily
+                        tooltipText: "Sync time scroll across all cells"
+                        anchors.verticalCenter: parent.verticalCenter
+                        onClicked: {
+                            root.syncTime = !root.syncTime;
+                            root.saveGridState();
                         }
                     }
 
-                    Text {
-                        textFormat: Text.PlainText
+                    FinanceChipButton {
                         text: "BF " + (root.showBroadening ? "[ON]" : "[OFF]")
-                        color: root.showBroadening ? root.foreground : root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: root.showBroadening
-
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -Style.space(4)
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                root.showBroadening = !root.showBroadening;
-                                root.saveGridState();
-                            }
+                        checked: root.showBroadening
+                        foreground: root.foreground
+                        dimColor: root.dim
+                        fontFamily: root.fontFamily
+                        tooltipText: "Toggle Broadening Formation lines"
+                        anchors.verticalCenter: parent.verticalCenter
+                        onClicked: {
+                            root.showBroadening = !root.showBroadening;
+                            root.saveGridState();
                         }
                     }
 
-                    Text {
+                    FinanceChipButton {
                         id: alertsMuteToggle
-                        textFormat: Text.PlainText
                         text: "ALERTS " + (root.alertsMuted ? "[MUTED]" : "[ON]")
-                        color: root.alertsMuted ? Color.urgent : root.foreground
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-
-                        MouseArea {
-                            id: alertsMuteMouse
-                            anchors.fill: parent
-                            anchors.margins: -Style.space(4)
-                            cursorShape: Qt.PointingHandCursor
-                            hoverEnabled: true
-                            onClicked: root.alertsMuteToggleRequested()
-                        }
-
-                        QQC.ToolTip.visible: alertsMuteMouse.containsMouse
-                        QQC.ToolTip.delay: 400
-                        QQC.ToolTip.text: root.alertsMuted ? (root.alertsMuteStatus + " · click to unmute") : "Click to mute alerts until the next market open"
+                        checked: true
+                        foreground: root.alertsMuted ? Color.urgent : root.foreground
+                        accentColor: root.alertsMuted ? Color.urgent : Color.accent
+                        fontFamily: root.fontFamily
+                        tooltipText: root.alertsMuted ? (root.alertsMuteStatus + " · click to unmute") : "Click to mute alerts until the next market open"
+                        anchors.verticalCenter: parent.verticalCenter
+                        onClicked: root.alertsMuteToggleRequested()
                     }
                 }
             }

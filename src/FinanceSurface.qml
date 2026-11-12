@@ -37,6 +37,18 @@ Rectangle {
         return Qt.rgba(foregroundColor.r, foregroundColor.g, foregroundColor.b, alpha);
     }
 
+    Behavior on color {
+        ColorAnimation {
+            duration: Style.duration(120)
+        }
+    }
+
+    Behavior on border.color {
+        ColorAnimation {
+            duration: Style.duration(120)
+        }
+    }
+
     layer.enabled: root.shadowEnabled
     layer.effect: MultiEffect {
         shadowEnabled: true

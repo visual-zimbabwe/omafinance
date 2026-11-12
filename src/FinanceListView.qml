@@ -72,6 +72,30 @@ Column {
                 hasCursor: controller.listChrome === "alerts"
                 bordered: controller.listChrome === "alerts"
                 onClicked: controller.openAlerts()
+
+                Rectangle {
+                    readonly property int radarCount: controller.armedWatchlistSetups ? controller.armedWatchlistSetups.length : 0
+                    visible: radarCount > 0 && !controller.alertsMuted
+                    anchors.top: parent.top
+                    anchors.right: parent.right
+                    anchors.topMargin: Style.space(2)
+                    anchors.rightMargin: Style.space(2)
+                    width: Math.max(Style.space(13), badgeNum.implicitWidth + Style.space(4))
+                    height: Style.space(13)
+                    radius: height / 2
+                    color: Color.accent
+
+                    Text {
+                        id: badgeNum
+                        anchors.centerIn: parent
+                        textFormat: Text.PlainText
+                        text: parent.radarCount > 9 ? "9+" : String(parent.radarCount)
+                        color: Color.background
+                        font.family: controller.contentFontFamily
+                        font.pixelSize: Math.max(8, Style.font.caption - 2)
+                        font.bold: true
+                    }
+                }
             }
 
             PanelActionButton {
@@ -109,14 +133,16 @@ Column {
         }
     }
 
-    Text {
-        visible: controller.quoteStatusText !== ""
+    FinanceStatusBanner {
         width: parent.width
+        compact: true
+        tone: controller.quoteError ? "error" : "info"
         text: controller.quoteStatusText
-        color: controller.quoteError ? controller.contentUrgent : controller.dim
-        font.family: controller.contentFontFamily
-        font.pixelSize: Style.font.bodySmall
-        elide: Text.ElideRight
+        fontFamily: controller.contentFontFamily
+        foreground: controller.contentForeground
+        dimColor: controller.dim
+        errorColor: controller.contentUrgent
+        successColor: controller.upColor
     }
 
     Column {
@@ -355,31 +381,18 @@ Column {
             }
         }
 
-        Column {
+        FinanceStatusBanner {
             visible: controller.watchlist.length === 0
             width: parent.width
-            spacing: Style.space(8)
-            topPadding: Style.space(36)
-
-            Text {
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                text: qsTr("No favorites yet")
-                color: controller.contentForeground
-                font.family: controller.contentFontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
-            }
-            Text {
-                width: parent.width
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
-                lineHeight: 1.3
-                text: qsTr("Search for a ticker, then Favorite it to add it to your watchlist.")
-                color: controller.dim
-                font.family: controller.contentFontFamily
-                font.pixelSize: Style.font.body
-            }
+            compact: false
+            tone: "info"
+            title: qsTr("No favorites yet")
+            text: qsTr("Search for a ticker, then Favorite it to add it to your watchlist.")
+            actionText: qsTr("Search tickers")
+            fontFamily: controller.contentFontFamily
+            foreground: controller.contentForeground
+            dimColor: controller.dim
+            onActionTriggered: searchField.forceActiveFocus()
         }
     }
 }
