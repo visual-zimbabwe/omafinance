@@ -1775,6 +1775,24 @@ function stratLivePrice(liveQuote) {
   return null
 }
 
+// Extract or compute bid-ask spread from quote or options for Strat stop calculations.
+function stratSpread(liveQuote, options) {
+  if (options && typeof options === "object") {
+    var optSpread = finiteOrNull(options.spread)
+    if (optSpread !== null && optSpread >= 0) return optSpread
+  }
+  if (liveQuote && typeof liveQuote === "object") {
+    var qSpread = finiteOrNull(liveQuote.spread)
+    if (qSpread !== null && qSpread >= 0) return qSpread
+    var ask = finiteOrNull(liveQuote.ask)
+    var bid = finiteOrNull(liveQuote.bid)
+    if (ask !== null && bid !== null && ask >= bid) {
+      return Number((ask - bid).toFixed(4))
+    }
+  }
+  return 0
+}
+
 // Bar state = scenario (range vs prior bar) + color (price vs this bar's open).
 // The live price is folded into the bar's high/low so the scenario never lags the
 // color. If the bar is older than one period (nowSec - timestamp >= periodSec), the
@@ -4775,19 +4793,19 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   // 5. Execution Trigger Crossed & 3-Tier Stop Levels (Tightest / Tight / 50% / Wide)
   var triggerPrice = null
   var stopPrice = null
-  var stopLevels = { tightest: null, tight: null, fiftyPct: null, entryExtreme: null, structural: null }
+  var stopLevels = { tightest: null, tight: null, wide: null, fiftyPct: null, entryExtreme: null, structural: null }
   var signalCandleTimestamp = (signalCandle && signalCandle.timestamp != null) ? signalCandle.timestamp : null
   var isHammerStop = Boolean((sc_signal !== "3" || sc_p2_setup === "1") && isLong && signalShapeInfo && signalShapeInfo.isHammer)
   var isShooterStop = Boolean((sc_signal !== "3" || sc_p2_setup === "1") && !isLong && signalShapeInfo && signalShapeInfo.isShooter)
 
   if (cSetup && isFinite(Number(cSetup.open)) && isFinite(Number(cSetup.high)) && isFinite(Number(cSetup.low))) {
     stopLevels.tight = Number(cSetup.open)
-    stopLevels.tightest = (Number(cSetup.high) + Number(cSetup.low)) / 2
     stopLevels.entryExtreme = isLong ? Number(barSetup.low != null ? barSetup.low : cSetup.low) : Number(barSetup.high != null ? barSetup.high : cSetup.high)
   }
   if (signalCandle && isFinite(Number(signalCandle.high)) && isFinite(Number(signalCandle.low))) {
     stopLevels.fiftyPct = (Number(signalCandle.high) + Number(signalCandle.low)) / 2
     stopLevels.structural = isLong ? Number(signalCandle.low) : Number(signalCandle.high)
+    stopLevels.wide = stopLevels.structural
   }
 
   if (isFailed2 && cSetup) {
@@ -4816,6 +4834,25 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
         stopPrice = stopLevels.fiftyPct
       }
     }
+  }
+
+  // Canonical Tightest Stop: spread + $0.01 from trigger (per thestrat.ai/docs/stop-losses)
+  if (triggerPrice !== null && isFinite(triggerPrice)) {
+    var spreadVal = stratSpread(liveQuote, opts)
+    var tightestOffset = spreadVal + 0.01
+    stopLevels.tightest = isLong
+      ? Number((triggerPrice - tightestOffset).toFixed(2))
+      : Number((triggerPrice + tightestOffset).toFixed(2))
+  }
+
+  // Active stop tier selection: defaults to wide structural/entry-capped, with optional override
+  var selectedStopTier = String(opts.stopTier || "").toLowerCase()
+  if (selectedStopTier === "tightest" && stopLevels.tightest !== null) {
+    stopPrice = stopLevels.tightest
+  } else if (selectedStopTier === "tight" && stopLevels.tight !== null) {
+    stopPrice = stopLevels.tight
+  } else if (selectedStopTier === "fiftypct" && stopLevels.fiftyPct !== null) {
+    stopPrice = stopLevels.fiftyPct
   }
 
   var r5Pass = false
@@ -5118,7 +5155,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
   }
 
-  var isEntryBarStop = isFailed2 || isHammerStop || isShooterStop || (sc_signal === "3" && stopPrice === stopLevels.entryExtreme)
+  var isEntryBarStop = isFailed2 || isHammerStop || isShooterStop || (sc_signal === "3" && stopPrice === stopLevels.entryExtreme) || (selectedStopTier === "tightest" || selectedStopTier === "tight")
   var isStoppedOut = false
   if (stopPrice !== null && currentPrice !== null) {
     if (isLong) {
@@ -5200,14 +5237,23 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     r8Detail = "Stopped out: $" + (stopPrice != null ? stopPrice.toFixed(2) : "") + " breached"
   } else if (stopPrice !== null && currentPrice !== null) {
     r8Pass = isLong ? (currentPrice > stopPrice) : (currentPrice < stopPrice)
-    var stopAnchorName = isFailed2
-      ? ("Failed " + (isLong ? "2d Low" : "2u High"))
-      : (isHammerStop
-        ? (setupTf + " Entry Low - $0.01 (Hammer Stop)")
-        : (isShooterStop
-          ? (setupTf + " Entry High + $0.01 (Shooter Stop)")
-          : (sc_signal === "3" && stopPrice === stopLevels.entryExtreme ? (setupTf + " Entry " + (isLong ? "Low" : "High") + " (3-Bar Capped)") : (setupTf + " Signal " + (isLong ? "Low" : "High")))))
+    var stopAnchorName = selectedStopTier === "tightest"
+      ? ("Tightest (Spread + $0.01)")
+      : (selectedStopTier === "tight"
+        ? (setupTf + " Entry Open (Tight Stop)")
+        : (selectedStopTier === "fiftypct"
+          ? ("50% Retracement Stop")
+          : (isFailed2
+            ? ("Failed " + (isLong ? "2d Low" : "2u High"))
+            : (isHammerStop
+              ? (setupTf + " Entry Low - $0.01 (Hammer Stop)")
+              : (isShooterStop
+                ? (setupTf + " Entry High + $0.01 (Shooter Stop)")
+                : (sc_signal === "3" && stopPrice === stopLevels.entryExtreme ? (setupTf + " Entry " + (isLong ? "Low" : "High") + " (3-Bar Capped)") : (setupTf + " Signal " + (isLong ? "Low" : "High"))))))))
     var tierExtras = []
+    if (stopLevels.tightest !== null && isFinite(stopLevels.tightest)) {
+      tierExtras.push("Tightest: $" + stopLevels.tightest.toFixed(2))
+    }
     if (stopLevels.tight !== null && isFinite(stopLevels.tight)) {
       tierExtras.push("Tight (Open): $" + stopLevels.tight.toFixed(2))
     }
@@ -7706,7 +7752,8 @@ if (typeof module !== "undefined") {
     isBasketSector: isBasketSector,
     chunkSymbols: chunkSymbols,
     updateDevelopingCandle: updateDevelopingCandle,
-    SIMULTANEOUS_BREAK_THRESHOLD: SIMULTANEOUS_BREAK_THRESHOLD
+    SIMULTANEOUS_BREAK_THRESHOLD: SIMULTANEOUS_BREAK_THRESHOLD,
+    stratSpread: stratSpread
   }
 }
 
