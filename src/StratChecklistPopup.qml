@@ -11,9 +11,9 @@ Item {
     property real anchorX: 0
     property real anchorY: 0
     property color foreground: (Color.popups && Color.popups.text) ? Color.popups.text : Color.foreground
-    property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.70)
-    property color upColor: Qt.rgba(0.20, 0.80, 0.45, 1)
-    property color downColor: Qt.rgba(0.95, 0.35, 0.35, 1)
+    property color dim: Model.accessibleDimColor(foreground, popupCard.color)
+    property color upColor: Model.accessibleSemanticColor("up", popupCard.color)
+    property color downColor: Model.accessibleSemanticColor("down", popupCard.color)
     property string fontFamily: Style.font.family
 
     property int hoveredRuleIndex: -1

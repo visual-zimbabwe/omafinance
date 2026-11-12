@@ -54,21 +54,16 @@ Column {
         width: parent.width
         height: Math.max(backLabel.implicitHeight, detailActions.implicitHeight)
 
-        Text {
+        BackLink {
             id: backLabel
             anchors.left: parent.left
+            anchors.right: detailActions.left
+            anchors.rightMargin: Style.space(8)
             anchors.verticalCenter: parent.verticalCenter
-            text: controller.detailHistory && controller.detailHistory.length > 0 ? "‹ " + controller.detailHistory[controller.detailHistory.length - 1] : "‹ Watchlist"
-            color: controller.dim
-            font.family: controller.contentFontFamily
-            font.pixelSize: Style.font.body
-
-            MouseArea {
-                anchors.fill: parent
-                anchors.margins: -6
-                cursorShape: Qt.PointingHandCursor
-                onClicked: controller.closeDetail()
-            }
+            label: controller.detailHistory && controller.detailHistory.length > 0 ? controller.detailHistory[controller.detailHistory.length - 1] : qsTr("Watchlist")
+            linkColor: controller.dim
+            fontFamily: controller.contentFontFamily
+            onTriggered: controller.closeDetail()
         }
 
         Row {
@@ -189,69 +184,12 @@ Column {
                 }
             }
 
-            Row {
+            FtfcStrip {
                 id: ftfcRow
+                controller: detailViewRoot.controller
+                quote: controller.activeQuote
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(3)
-
-                Text {
-                    textFormat: Text.PlainText
-                    text: "60"
-                    color: controller.timeframeColor(controller.activeQuote, "60")
-                    font.family: controller.contentFontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.letterSpacing: 1
-                    font.bold: true
-                }
-                Text {
-                    textFormat: Text.PlainText
-                    text: "|"
-                    color: controller.dim
-                    font.family: controller.contentFontFamily
-                    font.pixelSize: Style.font.bodySmall
-                }
-                Text {
-                    textFormat: Text.PlainText
-                    text: "D"
-                    color: controller.timeframeColor(controller.activeQuote, "D")
-                    font.family: controller.contentFontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.letterSpacing: 1
-                    font.bold: true
-                }
-                Text {
-                    textFormat: Text.PlainText
-                    text: "|"
-                    color: controller.dim
-                    font.family: controller.contentFontFamily
-                    font.pixelSize: Style.font.bodySmall
-                }
-                Text {
-                    textFormat: Text.PlainText
-                    text: "W"
-                    color: controller.timeframeColor(controller.activeQuote, "W")
-                    font.family: controller.contentFontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.letterSpacing: 1
-                    font.bold: true
-                }
-                Text {
-                    textFormat: Text.PlainText
-                    text: "|"
-                    color: controller.dim
-                    font.family: controller.contentFontFamily
-                    font.pixelSize: Style.font.bodySmall
-                }
-                Text {
-                    textFormat: Text.PlainText
-                    text: "M"
-                    color: controller.timeframeColor(controller.activeQuote, "M")
-                    font.family: controller.contentFontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.letterSpacing: 1
-                    font.bold: true
-                }
             }
         }
 

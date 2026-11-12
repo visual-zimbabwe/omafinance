@@ -14,25 +14,17 @@ Column {
     property bool confirmOverwrite: false
     property string confirmDeleteName: ""
 
-    Text {
-        text: "‹ Watchlist"
-        color: controller.dim
-        font.family: controller.contentFontFamily
-        font.pixelSize: Style.font.body
-
-        MouseArea {
-            anchors.fill: parent
-            anchors.margins: -6
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                controller.layoutActionStatus = "";
-                controller.view = "list";
-            }
+    BackLink {
+        linkColor: controller.dim
+        fontFamily: controller.contentFontFamily
+        onTriggered: {
+            controller.layoutActionStatus = "";
+            controller.view = "list";
         }
     }
 
     Text {
-        text: "Chart Layouts"
+        text: qsTr("Chart Layouts")
         color: controller.contentForeground
         font.family: controller.contentFontFamily
         font.pixelSize: Style.font.heading
@@ -55,7 +47,7 @@ Column {
             spacing: Style.space(8)
 
             Text {
-                text: "Save Current Workspace"
+                text: qsTr("Save Current Workspace")
                 color: controller.contentForeground
                 font.family: controller.contentFontFamily
                 font.pixelSize: Style.font.body
@@ -63,11 +55,12 @@ Column {
             }
 
             Text {
-                text: "Captures all open Omafinance chart windows and their tickers."
+                text: qsTr("Captures all open Omafinance chart windows and their tickers.")
                 color: controller.dim
                 font.family: controller.contentFontFamily
                 font.pixelSize: Style.font.bodySmall
                 wrapMode: Text.WordWrap
+                lineHeight: 1.3
                 width: parent.width
             }
 
@@ -107,13 +100,18 @@ Column {
                     color: layoutsViewRoot.confirmOverwrite ? Qt.rgba(0.8, 0.4, 0.1, 0.9) : Qt.rgba(controller.contentForeground.r, controller.contentForeground.g, controller.contentForeground.b, 0.15)
                     border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.3)
                     border.width: 1
+                    activeFocusOnTab: true
+                    Accessible.role: Accessible.Button
+                    Accessible.name: saveBtnText.text
+                    Keys.onReturnPressed: handleSave()
+                    Keys.onSpacePressed: handleSave()
 
                     Text {
                         id: saveBtnText
                         anchors.centerIn: parent
                         textFormat: Text.PlainText
-                        text: layoutsViewRoot.confirmOverwrite ? "Overwrite?" : "Save Snapshot"
-                        color: controller.contentForeground
+                        text: layoutsViewRoot.confirmOverwrite ? qsTr("Overwrite?") : qsTr("Save Snapshot")
+                        color: layoutsViewRoot.confirmOverwrite ? Model.contrastForeground(saveBtn.color) : controller.contentForeground
                         font.family: controller.contentFontFamily
                         font.pixelSize: Style.font.bodySmall
                         font.bold: true
@@ -220,16 +218,21 @@ Column {
 
                             // Open Button
                             Rectangle {
+                                id: openLayoutBtn
                                 width: openBtnText.implicitWidth + Style.space(16)
                                 height: Style.space(26)
                                 radius: Style.space(4)
-                                color: Qt.rgba(0.22, 0.50, 0.30, 0.85)
+                                color: controller.upFill
+                                border.color: controller.upColor
+                                border.width: 1
+                                Accessible.role: Accessible.Button
+                                Accessible.name: qsTr("Open layout %1").arg(modelData)
 
                                 Text {
                                     id: openBtnText
                                     anchors.centerIn: parent
-                                    text: "Open"
-                                    color: "#ffffff"
+                                    text: qsTr("Open")
+                                    color: controller.upColor
                                     font.family: controller.contentFontFamily
                                     font.pixelSize: Style.font.bodySmall
                                     font.bold: true
@@ -246,16 +249,19 @@ Column {
 
                             // Delete Button
                             Rectangle {
+                                id: delLayoutBtn
                                 width: delBtnText.implicitWidth + Style.space(14)
                                 height: Style.space(26)
                                 radius: Style.space(4)
-                                color: layoutsViewRoot.confirmDeleteName === modelData ? Qt.rgba(0.8, 0.2, 0.2, 0.9) : Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.15)
+                                color: layoutsViewRoot.confirmDeleteName === modelData ? controller.contentUrgent : Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.15)
+                                Accessible.role: Accessible.Button
+                                Accessible.name: layoutsViewRoot.confirmDeleteName === modelData ? qsTr("Confirm delete %1").arg(modelData) : qsTr("Delete layout %1").arg(modelData)
 
                                 Text {
                                     id: delBtnText
                                     anchors.centerIn: parent
-                                    text: layoutsViewRoot.confirmDeleteName === modelData ? "Confirm?" : "✕"
-                                    color: layoutsViewRoot.confirmDeleteName === modelData ? "#ffffff" : controller.dim
+                                    text: layoutsViewRoot.confirmDeleteName === modelData ? qsTr("Confirm?") : "✕"
+                                    color: layoutsViewRoot.confirmDeleteName === modelData ? Model.contrastForeground(delLayoutBtn.color) : controller.dim
                                     font.family: controller.contentFontFamily
                                     font.pixelSize: Style.font.bodySmall
                                     font.bold: true

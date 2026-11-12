@@ -4476,3 +4476,28 @@ test("scenario filter: composite tokens, shapes (h, s, 2us, 2ds, 2dh, 2uh, 3s, 3
   assert.equal(Model.matchesScenarioQuery(twoDShooter, null, "3s, 2ds, 2uh"), true)
   assert.equal(Model.matchesScenarioQuery(nonMatchingBar, null, "3s, 2ds, 2uh"), false)
 })
+
+test("WCAG contrast, theme-adaptive dim/semantic colors, and quotedFontFamily", () => {
+  const darkBg = "#11111b"
+  const darkFg = "#cdd6f4"
+  const lightBg = "#eff1f5"
+  const lightFg = "#4c4f69"
+
+  // Semantic up/down colors meet WCAG AA (>= 4.5:1) on both dark and light themes
+  assert.ok(Model.contrastRatio(Model.accessibleSemanticColor("up", darkBg), darkBg) >= 4.5)
+  assert.ok(Model.contrastRatio(Model.accessibleSemanticColor("down", darkBg), darkBg) >= 4.5)
+  assert.ok(Model.contrastRatio(Model.accessibleSemanticColor("up", lightBg), lightBg) >= 4.5)
+  assert.ok(Model.contrastRatio(Model.accessibleSemanticColor("down", lightBg), lightBg) >= 4.5)
+
+  // Dim color meets WCAG AA (>= 4.5:1) on both dark and light themes
+  assert.ok(Model.contrastRatio(Model.accessibleDimColor(darkFg, darkBg), darkBg) >= 4.5)
+  assert.ok(Model.contrastRatio(Model.accessibleDimColor(lightFg, lightBg), lightBg) >= 4.5)
+
+  // contrastForeground picks dark text on bright fills and light text on dark fills
+  assert.equal(Model.contrastForeground("#4ade80"), "#0b0f14")
+  assert.equal(Model.contrastForeground("#11111b"), "#ffffff")
+
+  // quotedFontFamily quotes spaced family names for Canvas 2D
+  assert.equal(Model.quotedFontFamily("JetBrainsMono Nerd Font"), '"JetBrainsMono Nerd Font"')
+  assert.equal(Model.quotedFontFamily("monospace"), "monospace")
+})

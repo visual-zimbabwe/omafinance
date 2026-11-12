@@ -10,6 +10,8 @@ Panel {
     moduleName: "mohamedmansour.finance"
     ipcTarget: "mohamedmansour.finance"
     manageIpc: false
+    LayoutMirroring.enabled: Qt.application.layoutDirection === Qt.RightToLeft
+    LayoutMirroring.childrenInherit: true
 
     property var anchorItem: null
     property bool openedFromHotkey: false
@@ -112,13 +114,14 @@ Panel {
     property int detailActionIndex: 0
 
     readonly property color contentForeground: bar ? bar.foreground : Color.foreground
+    readonly property color contentBackground: (bar && bar.background) ? bar.background : Color.background
     readonly property color contentUrgent: bar ? bar.urgent : Color.urgent
     readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
-    readonly property color dim: Qt.darker(contentForeground, 1.45)
-    readonly property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
-    readonly property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
-    readonly property color upFill: Qt.rgba(upColor.r, upColor.g, upColor.b, 1)
-    readonly property color downFill: Qt.rgba(downColor.r, downColor.g, downColor.b, 1)
+    readonly property color dim: Model.accessibleDimColor(contentForeground, contentBackground)
+    readonly property color upColor: Model.accessibleSemanticColor("up", contentBackground)
+    readonly property color downColor: Model.accessibleSemanticColor("down", contentBackground)
+    readonly property color upFill: Qt.rgba(upColor.r, upColor.g, upColor.b, 0.24)
+    readonly property color downFill: Qt.rgba(downColor.r, downColor.g, downColor.b, 0.24)
     readonly property int refreshSeconds: Math.max(15, parseInt(setting("refreshSeconds", 60), 10) || 60)
     readonly property string changeStyle: {
         var style = String(setting("changeStyle", "percent") || "percent");

@@ -19,7 +19,9 @@ const qmlFiles = [
   "GridCell.qml",
   "GridWindow.qml",
   "FinanceAlertsView.qml",
-  "SectorAnalysisWindow.qml"
+  "SectorAnalysisWindow.qml",
+  "BackLink.qml",
+  "FtfcStrip.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
@@ -229,12 +231,12 @@ test("only changed detail price digits roll in their direction color", () => {
 
 test("change style follows the show-change setting and precedes refresh", () => {
   const settings = fs.readFileSync(source("FinanceSettingsView.qml"), "utf8")
-  const changeStyle = settings.indexOf('text: "Change on bar"')
+  const changeStyle = settings.indexOf('text: qsTr("Change on bar")')
   const refresh = settings.indexOf('label: "Background refresh (seconds)"')
 
   assert.notEqual(changeStyle, -1)
   assert.ok(changeStyle < refresh)
-  assert.match(settings, /visible:\s*controller\.showChange[\s\S]*text:\s*"Change on bar"/)
+  assert.match(settings, /visible:\s*controller\.showChange[\s\S]*text:\s*qsTr\("Change on bar"\)/)
   assert.match(settings, /ButtonGroup\s*{[\s\S]*?visible:\s*controller\.showChange[\s\S]*?value:\s*controller\.changeStyle/)
 })
 
@@ -249,26 +251,21 @@ test("manifest entry points exist", () => {
 
 test("detail view presents FTFC 60|D|W|M on far right of header", () => {
   const detail = fs.readFileSync(source("FinanceDetailView.qml"), "utf8")
+  const ftfc = fs.readFileSync(source("FtfcStrip.qml"), "utf8")
   const panel = fs.readFileSync(source("Panel.qml"), "utf8")
 
   assert.match(panel, /function timeframeColor\(quote, tf\)/)
   assert.match(detail, /id:\s*detailHeader/)
-  assert.match(detail, /id:\s*ftfcRow[\s\S]*?anchors\.right:\s*parent\.right/)
-  assert.match(detail, /text:\s*"60"[\s\S]*?controller\.timeframeColor/)
-  assert.match(detail, /text:\s*"D"[\s\S]*?controller\.timeframeColor/)
-  assert.match(detail, /text:\s*"W"[\s\S]*?controller\.timeframeColor/)
-  assert.match(detail, /text:\s*"M"[\s\S]*?controller\.timeframeColor/)
+  assert.match(detail, /FtfcStrip\s*\{[\s\S]*?id:\s*ftfcRow[\s\S]*?anchors\.right:\s*parent\.right/)
+  assert.match(ftfc, /\["60", "D", "W", "M"\]/)
+  assert.match(ftfc, /controller\.timeframeColor\(root\.quote, modelData\)/)
 })
 
 test("watchlist rows display FTFC 60|D|W|M replacing snapshot chart", () => {
   const list = fs.readFileSync(source("FinanceListView.qml"), "utf8")
 
   assert.doesNotMatch(list, /\bSparkline\s*\{/)
-  assert.match(list, /id:\s*ftfcRow/)
-  assert.match(list, /text:\s*"60"[\s\S]*?controller\.timeframeColor\(quote, "60"\)/)
-  assert.match(list, /text:\s*"D"[\s\S]*?controller\.timeframeColor\(quote, "D"\)/)
-  assert.match(list, /text:\s*"W"[\s\S]*?controller\.timeframeColor\(quote, "W"\)/)
-  assert.match(list, /text:\s*"M"[\s\S]*?controller\.timeframeColor\(quote, "M"\)/)
+  assert.match(list, /FtfcStrip\s*\{[\s\S]*?id:\s*ftfcRow/)
 })
 
 test("detail view includes Grid button after Pin", () => {
@@ -571,7 +568,7 @@ test("sector analysis window dynamically cycles across configured sector baskets
 
 test("candlestick chart renders broadening formation lines with white #FFFFFF and hierarchy dash/alpha styles", () => {
   const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
-  assert.match(chart, /var strokeColor = "#FFFFFF"/)
+  assert.match(chart, /var strokeColor = Model\.isLightColor\(Color\.background\) \? Color\.foreground : "#FFFFFF"/)
   assert.match(chart, /var dashPattern = \(lvl === 0\) \? \[\] : \(\(lvl === 1\) \? \[6, 4\] : \[2, 3\]\)/)
   assert.match(chart, /var lineAlpha = \(lvl === 0\) \? 1\.0 : \(\(lvl === 1\) \? 0\.75 : 0\.40\)/)
   assert.match(chart, /ctx\.globalAlpha = lineAlpha/)

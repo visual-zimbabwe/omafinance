@@ -14,6 +14,7 @@ Column {
     property string draftPrice: ""
     property string draftCondition: "CROSSES_ABOVE"
     property string draftNote: ""
+    property string formError: ""
 
     readonly property var workingPriceAlerts: {
         var map = controller.symbolLevels || ({});
@@ -50,8 +51,15 @@ Column {
     function submitQuickPriceAlert() {
         var sym = Model.normalizeSymbol(symbolInput.text || alertsViewRoot.draftSymbol);
         var priceVal = Number(priceInput.text);
-        if (!sym || !isFinite(priceVal) || priceVal <= 0)
+        if (!sym) {
+            alertsViewRoot.formError = qsTr("Enter a valid ticker symbol.");
             return;
+        }
+        if (!isFinite(priceVal) || priceVal <= 0) {
+            alertsViewRoot.formError = qsTr("Enter a positive target price.");
+            return;
+        }
+        alertsViewRoot.formError = "";
         controller.createPriceAlert(sym, priceVal, alertsViewRoot.draftCondition, noteInput.text.trim());
         priceInput.text = "";
         noteInput.text = "";
@@ -61,20 +69,12 @@ Column {
         width: parent.width
         height: backLabel.implicitHeight
 
-        Text {
+        BackLink {
             id: backLabel
             anchors.left: parent.left
-            text: "‹ Watchlist"
-            color: controller.dim
-            font.family: controller.contentFontFamily
-            font.pixelSize: Style.font.body
-
-            MouseArea {
-                anchors.fill: parent
-                anchors.margins: -6
-                cursorShape: Qt.PointingHandCursor
-                onClicked: controller.view = "list"
-            }
+            linkColor: controller.dim
+            fontFamily: controller.contentFontFamily
+            onTriggered: controller.view = "list"
         }
 
         Text {
@@ -124,10 +124,11 @@ Column {
             Text {
                 width: parent.width
                 visible: controller.alertsMuted
-                text: "No notifications, sounds, or Discord posts. Muted events are still logged below."
+                text: qsTr("No notifications, sounds, or Discord posts. Muted events are still logged below.")
                 color: controller.dim
                 font.family: controller.contentFontFamily
-                font.pixelSize: Style.font.bodySmall - 1
+                font.pixelSize: Style.font.caption
+                lineHeight: 1.3
                 wrapMode: Text.WordWrap
             }
 
@@ -268,17 +269,20 @@ Column {
 
                 Rectangle {
                     id: armBtn
-                    width: Style.space(52)
+                    width: Math.max(Style.space(52), armBtnText.implicitWidth + Style.space(16))
                     height: symbolInput.implicitHeight
                     radius: Style.space(6)
-                    color: Qt.rgba(0.22, 0.50, 0.30, 0.35)
-                    border.color: Qt.rgba(0.22, 0.50, 0.30, 0.7)
+                    color: controller.upFill
+                    border.color: controller.upColor
                     border.width: 1
+                    Accessible.role: Accessible.Button
+                    Accessible.name: qsTr("Arm price alert")
 
                     Text {
+                        id: armBtnText
                         anchors.centerIn: parent
-                        text: "Arm"
-                        color: controller.contentForeground
+                        text: qsTr("Arm")
+                        color: controller.upColor
                         font.family: controller.contentFontFamily
                         font.pixelSize: Style.font.bodySmall
                         font.bold: true
@@ -290,6 +294,16 @@ Column {
                         onClicked: alertsViewRoot.submitQuickPriceAlert()
                     }
                 }
+            }
+
+            Text {
+                visible: alertsViewRoot.formError !== ""
+                width: parent.width
+                text: alertsViewRoot.formError
+                color: controller.contentUrgent
+                font.family: controller.contentFontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
             }
         }
     }

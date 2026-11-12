@@ -10,22 +10,14 @@ Column {
     spacing: Style.space(14)
     visible: controller.view === "settings"
 
-    Text {
-        text: "‹ Watchlist"
-        color: controller.dim
-        font.family: controller.contentFontFamily
-        font.pixelSize: Style.font.body
-
-        MouseArea {
-            anchors.fill: parent
-            anchors.margins: -6
-            cursorShape: Qt.PointingHandCursor
-            onClicked: controller.view = "list"
-        }
+    BackLink {
+        linkColor: controller.dim
+        fontFamily: controller.contentFontFamily
+        onTriggered: controller.view = "list"
     }
 
     Text {
-        text: "Settings"
+        text: qsTr("Settings")
         color: controller.contentForeground
         font.family: controller.contentFontFamily
         font.pixelSize: Style.font.heading
@@ -67,8 +59,8 @@ Column {
 
     Text {
         visible: controller.showChange
-        text: "Change on bar"
-        color: Qt.darker(controller.contentForeground, 1.4)
+        text: qsTr("Change on bar")
+        color: controller.dim
         font.family: controller.contentFontFamily
         font.pixelSize: Style.font.bodySmall
     }
@@ -124,8 +116,8 @@ Column {
     }
 
     Text {
-        text: "Bar position"
-        color: Qt.darker(controller.contentForeground, 1.4)
+        text: qsTr("Bar position")
+        color: controller.dim
         font.family: controller.contentFontFamily
         font.pixelSize: Style.font.bodySmall
     }
