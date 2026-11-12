@@ -1450,8 +1450,12 @@ Item {
     }
 
     // Inline Trigger / Target Level Text Editor Overlay
-    Rectangle {
+    FinanceSurface {
         id: levelEditOverlay
+        elevation: 2
+        radiusToken: "sm"
+        borderColorOverride: activeLvl ? root.levelToneColor(activeLvl.tone) : Color.foreground
+        z: Model.Z_LAYER.LEVEL_EDIT
         visible: root.editingLevel && root.cachedGeometry !== null
         readonly property var activeLvl: (root.editingLevelIndex >= 0 && root.editingLevelIndex < root.priceLevels.length) ? root.priceLevels[root.editingLevelIndex] : null
         readonly property var activeEp: (activeLvl && root.cachedGeometry) ? root.resolveLevelEndpoints(activeLvl, root.cachedGeometry) : null
@@ -1468,11 +1472,6 @@ Item {
         }
         width: Math.min(Math.max(Style.space(160), levelEditRow.implicitWidth + Style.space(14)), Math.max(Style.space(120), (root.cachedGeometry ? root.cachedGeometry.innerW : root.width) - Style.space(8)))
         height: Style.space(22)
-        radius: Style.space(3)
-        color: Color.popups.background
-        border.width: 1
-        border.color: activeLvl ? root.levelToneColor(activeLvl.tone) : Color.foreground
-        z: 35
 
         Row {
             id: levelEditRow
@@ -1687,7 +1686,7 @@ Item {
         color: Color.popups.background
         border.width: 1
         border.color: root.hoveringScale ? Color.foreground : root.crosshairColor
-        z: 15
+        z: Model.Z_LAYER.CROSSHAIR
 
         Text {
             anchors.centerIn: parent
@@ -1713,7 +1712,7 @@ Item {
         color: Color.popups.background
         border.width: 1
         border.color: root.crosshairColor
-        z: 15
+        z: Model.Z_LAYER.CROSSHAIR
 
         Text {
             id: dateBadgeText
@@ -1778,16 +1777,14 @@ Item {
     }
 
     // Floating Close Price Badge (Used when showPriceScale is false)
-    Rectangle {
+    FinanceSurface {
         id: priceBadge
+        elevation: 2
+        radiusToken: "pill"
         visible: root.showTooltipHeader && !root.showPriceScale && root.interactive && root.hovering && root.hoverCandle !== null
         readonly property int maxX: Math.max(0, root.width - width - root.pad)
         x: Math.min(maxX, Math.max(root.pad, root.hoverX - width / 2))
         y: Math.max(root.pad + Style.space(18), Math.min(root.hoverY - height - Style.space(8), root.height - height - root.pad))
-        radius: height / 2
-        color: Color.popups.background
-        border.width: 1
-        border.color: Qt.rgba(Color.popups.text.r, Color.popups.text.g, Color.popups.text.b, 0.18)
         implicitWidth: badgeText.implicitWidth + Style.space(12)
         implicitHeight: badgeText.implicitHeight + Style.space(6)
 

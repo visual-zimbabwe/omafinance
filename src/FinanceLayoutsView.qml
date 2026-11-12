@@ -32,13 +32,12 @@ Column {
     }
 
     // Section 1: Save Current Layout Snapshot
-    Rectangle {
+    FinanceSurface {
+        elevation: 1
+        radiusToken: "lg"
+        foregroundColor: controller.contentForeground
         width: parent.width
         implicitHeight: saveSectionCol.implicitHeight + Style.space(20)
-        color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.08)
-        radius: Style.space(8)
-        border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.15)
-        border.width: 1
 
         Column {
             id: saveSectionCol
@@ -92,36 +91,18 @@ Column {
                     }
                 }
 
-                Rectangle {
+                Button {
                     id: saveBtn
-                    width: saveBtnText.implicitWidth + Style.space(20)
+                    bordered: true
+                    focusable: true
+                    selected: layoutsViewRoot.confirmOverwrite
+                    text: layoutsViewRoot.confirmOverwrite ? qsTr("Overwrite?") : qsTr("Save Snapshot")
+                    foreground: controller.contentForeground
+                    accent: layoutsViewRoot.confirmOverwrite ? controller.contentUrgent : Color.accent
+                    fontFamily: controller.contentFontFamily
+                    fontSize: Style.font.bodySmall
                     height: layoutNameField.implicitHeight
-                    radius: Style.space(6)
-                    color: layoutsViewRoot.confirmOverwrite ? Qt.rgba(0.8, 0.4, 0.1, 0.9) : Qt.rgba(controller.contentForeground.r, controller.contentForeground.g, controller.contentForeground.b, 0.15)
-                    border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.3)
-                    border.width: 1
-                    activeFocusOnTab: true
-                    Accessible.role: Accessible.Button
-                    Accessible.name: saveBtnText.text
-                    Keys.onReturnPressed: handleSave()
-                    Keys.onSpacePressed: handleSave()
-
-                    Text {
-                        id: saveBtnText
-                        anchors.centerIn: parent
-                        textFormat: Text.PlainText
-                        text: layoutsViewRoot.confirmOverwrite ? qsTr("Overwrite?") : qsTr("Save Snapshot")
-                        color: layoutsViewRoot.confirmOverwrite ? Model.contrastForeground(saveBtn.color) : controller.contentForeground
-                        font.family: controller.contentFontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: handleSave()
-                    }
+                    onClicked: handleSave()
                 }
             }
 
@@ -176,19 +157,18 @@ Column {
         Repeater {
             model: controller.layouts ? Object.keys(controller.layouts) : []
 
-            Rectangle {
+            FinanceSurface {
                 id: layoutItemCard
                 required property string modelData
                 readonly property var layoutObj: controller.layouts[modelData] || ({})
                 readonly property var layoutWindows: layoutObj.windows || []
                 readonly property int targetWs: layoutObj.workspace || 2
 
+                elevation: 1
+                radiusToken: "md"
+                foregroundColor: controller.contentForeground
                 width: layoutsViewRoot.width
                 implicitHeight: itemCol.implicitHeight + Style.space(16)
-                color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.05)
-                radius: Style.space(6)
-                border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.15)
-                border.width: 1
 
                 Column {
                     id: itemCol
@@ -217,66 +197,38 @@ Column {
                             anchors.verticalCenter: parent.verticalCenter
 
                             // Open Button
-                            Rectangle {
+                            Button {
                                 id: openLayoutBtn
-                                width: openBtnText.implicitWidth + Style.space(16)
+                                bordered: true
+                                selected: true
+                                text: qsTr("Open")
+                                foreground: controller.upColor
+                                accent: controller.upColor
+                                fontFamily: controller.contentFontFamily
+                                fontSize: Style.font.bodySmall
                                 height: Style.space(26)
-                                radius: Style.space(4)
-                                color: controller.upFill
-                                border.color: controller.upColor
-                                border.width: 1
-                                Accessible.role: Accessible.Button
                                 Accessible.name: qsTr("Open layout %1").arg(modelData)
-
-                                Text {
-                                    id: openBtnText
-                                    anchors.centerIn: parent
-                                    text: qsTr("Open")
-                                    color: controller.upColor
-                                    font.family: controller.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    font.bold: true
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        controller.loadLayout(modelData);
-                                    }
-                                }
+                                onClicked: controller.loadLayout(modelData)
                             }
 
                             // Delete Button
-                            Rectangle {
+                            Button {
                                 id: delLayoutBtn
-                                width: delBtnText.implicitWidth + Style.space(14)
+                                bordered: true
+                                selected: layoutsViewRoot.confirmDeleteName === modelData
+                                text: layoutsViewRoot.confirmDeleteName === modelData ? qsTr("Confirm?") : "✕"
+                                foreground: layoutsViewRoot.confirmDeleteName === modelData ? controller.contentUrgent : controller.dim
+                                accent: controller.contentUrgent
+                                fontFamily: controller.contentFontFamily
+                                fontSize: Style.font.bodySmall
                                 height: Style.space(26)
-                                radius: Style.space(4)
-                                color: layoutsViewRoot.confirmDeleteName === modelData ? controller.contentUrgent : Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.15)
-                                Accessible.role: Accessible.Button
                                 Accessible.name: layoutsViewRoot.confirmDeleteName === modelData ? qsTr("Confirm delete %1").arg(modelData) : qsTr("Delete layout %1").arg(modelData)
-
-                                Text {
-                                    id: delBtnText
-                                    anchors.centerIn: parent
-                                    text: layoutsViewRoot.confirmDeleteName === modelData ? qsTr("Confirm?") : "✕"
-                                    color: layoutsViewRoot.confirmDeleteName === modelData ? Model.contrastForeground(delLayoutBtn.color) : controller.dim
-                                    font.family: controller.contentFontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    font.bold: true
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (layoutsViewRoot.confirmDeleteName === modelData) {
-                                            controller.deleteLayout(modelData);
-                                            layoutsViewRoot.confirmDeleteName = "";
-                                        } else {
-                                            layoutsViewRoot.confirmDeleteName = modelData;
-                                        }
+                                onClicked: {
+                                    if (layoutsViewRoot.confirmDeleteName === modelData) {
+                                        controller.deleteLayout(modelData);
+                                        layoutsViewRoot.confirmDeleteName = "";
+                                    } else {
+                                        layoutsViewRoot.confirmDeleteName = modelData;
                                     }
                                 }
                             }

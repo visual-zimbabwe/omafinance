@@ -20,24 +20,29 @@ Item {
 
     visible: open && checklistData !== null
     anchors.fill: parent
-    z: 9999
+    z: Model.Z_LAYER.MODAL
 
-    // Click outside to dismiss
-    MouseArea {
+    // Translucent scrim + click outside to dismiss
+    Rectangle {
         anchors.fill: parent
-        onClicked: {
-            root.open = false;
+        color: Qt.rgba(0, 0, 0, 0.28)
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: {
+                root.open = false;
+            }
         }
     }
 
-    Rectangle {
+    FinanceSurface {
         id: popupCard
+        elevation: 3
+        radiusToken: "lg"
+        foregroundColor: root.foreground
+        surfaceColor: (Color.popups && Color.popups.background) ? Color.popups.background : Color.background
         width: Style.space(380)
         height: contentCol.implicitHeight + Style.space(24)
-        radius: Style.space(8)
-        color: (Color.popups && Color.popups.background) ? Color.popups.background : Color.background
-        border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
-        border.width: 1
 
         x: Math.max(Style.space(8), Math.min(root.width - width - Style.space(8), root.anchorX - width / 2))
         y: Math.max(Style.space(8), Math.min(root.height - height - Style.space(8), root.anchorY + Style.space(6)))
@@ -286,13 +291,12 @@ Item {
             }
 
             // Hover Tooltip / Rationale Card
-            Rectangle {
+            FinanceSurface {
+                elevation: 1
+                radiusToken: "md"
+                foregroundColor: root.foreground
                 width: parent.width
                 height: rationaleCol.implicitHeight + Style.space(12)
-                radius: Style.space(6)
-                color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.06)
-                border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.16)
-                border.width: 1
                 visible: root.hoveredRuleIndex >= 0 && root.checklistData && root.checklistData.rules && root.checklistData.rules[root.hoveredRuleIndex]
 
                 Column {

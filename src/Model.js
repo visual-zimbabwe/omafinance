@@ -7616,6 +7616,17 @@ function quotedFontFamily(family) {
   return f;
 }
 
+var Z_LAYER = {
+  TILE_BORDER: 5,
+  HEADER: 10,
+  CROSSHAIR: 15,
+  LEVEL_EDIT: 35,
+  SPLITTER: 100,
+  OVERLAY: 200,
+  TOOLTIP: 9998,
+  MODAL: 9999
+};
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -7793,7 +7804,8 @@ if (typeof module !== "undefined") {
     accessibleSemanticColor: accessibleSemanticColor,
     accessibleDimColor: accessibleDimColor,
     contrastForeground: contrastForeground,
-    quotedFontFamily: quotedFontFamily
+    quotedFontFamily: quotedFontFamily,
+    Z_LAYER: Z_LAYER
   }
 }
 

@@ -1987,18 +1987,17 @@ Panel {
             Item {
                 id: stratTooltipOverlay
                 anchors.fill: parent
-                z: 9999
+                z: Model.Z_LAYER.MODAL
                 visible: root.hoveredStratInfo !== null
 
-                Rectangle {
+                FinanceSurface {
                     id: stratTooltipBox
+                    elevation: 3
+                    radiusToken: "md"
+                    foregroundColor: root.contentForeground
                     visible: root.hoveredStratInfo !== null
                     width: tooltipCol.implicitWidth + Style.space(20)
                     height: tooltipCol.implicitHeight + Style.space(16)
-                    radius: Style.space(6)
-                    color: Qt.rgba(0.06, 0.06, 0.08, 0.96)
-                    border.color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.25)
-                    border.width: 1
 
                     x: Math.max(Style.space(8), Math.min(parent.width - width - Style.space(8), root.hoveredStratGlobalX - width / 2))
                     y: root.hoveredStratGlobalY - height - Style.space(10) > Style.space(8) ? (root.hoveredStratGlobalY - height - Style.space(10)) : (root.hoveredStratGlobalY + Style.space(24))

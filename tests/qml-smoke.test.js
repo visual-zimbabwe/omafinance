@@ -21,7 +21,10 @@ const qmlFiles = [
   "FinanceAlertsView.qml",
   "SectorAnalysisWindow.qml",
   "BackLink.qml",
-  "FtfcStrip.qml"
+  "FtfcStrip.qml",
+  "FinanceSurface.qml",
+  "FinanceLayoutsView.qml",
+  "StratChecklistPopup.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {

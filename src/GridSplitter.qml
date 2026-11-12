@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import "Model.js" as Model
 
 Item {
     id: root
@@ -19,7 +20,7 @@ Item {
 
     implicitWidth: orientation === Qt.Vertical ? Style.space(6) : parent.width
     implicitHeight: orientation === Qt.Horizontal ? Style.space(6) : parent.height
-    z: 100
+    z: Model.Z_LAYER.SPLITTER
 
     property real dragStartMousePos: 0
     property real dragStartRatio: 0.5
