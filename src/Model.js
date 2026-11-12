@@ -7780,7 +7780,14 @@ function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
   if (!Array.isArray(candles) || candles.length === 0) return candles || [];
   if (!quote) return candles;
 
-  var rawPrice = quote.regularMarketPrice != null ? quote.regularMarketPrice : (quote.price != null ? quote.price : null);
+  // Suspend developing candle mutations during extended hours (pre/post market) or closed sessions.
+  // Regular trading hours candlestick bars must remain pure RTH data, delegating pre/post action
+  // exclusively to the extendedPrice horizontal line and scale badge.
+  if (quote.session && quote.session !== "regular" && quote.session !== "live") {
+    return candles;
+  }
+
+  var rawPrice = quote.regularPrice != null ? quote.regularPrice : (quote.regularMarketPrice != null ? quote.regularMarketPrice : (quote.price != null ? quote.price : null));
   var price = finiteOrNull(rawPrice);
   if (price === null) return candles;
 
