@@ -178,6 +178,10 @@ FloatingWindow {
         refreshVisibleCharts(true);
     }
 
+    onScenarioFilterChanged: {
+        root.activeTileIndex = 0;
+    }
+
     function toggleSector() {
         root.sectorSymbol = (root.sectorSymbol === "SMH") ? "XLC" : "SMH";
     }
@@ -1085,10 +1089,6 @@ FloatingWindow {
                                     font.pixelSize: Style.font.caption
                                     selectByMouse: true
 
-                                    onTextChanged: {
-                                        filterDebounceTimer.restart();
-                                    }
-
                                     onAccepted: {
                                         root.scenarioFilter = text.trim();
                                         keyboardListener.forceActiveFocus();
@@ -1945,16 +1945,6 @@ FloatingWindow {
                     }
                 }
             }
-        }
-    }
-
-    Timer {
-        id: filterDebounceTimer
-        interval: 100
-        repeat: false
-        onTriggered: {
-            root.scenarioFilter = scenarioField.text;
-            root.activeTileIndex = 0;
         }
     }
 

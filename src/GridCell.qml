@@ -31,7 +31,7 @@ Item {
     property bool activeFocusCell: false
     focus: activeFocusCell
     onActiveFocusCellChanged: {
-        if (activeFocusCell)
+        if (activeFocusCell && !root.disableTickerSearch)
             root.forceActiveFocus();
     }
     property color foreground: Color.foreground
