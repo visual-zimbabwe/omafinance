@@ -23,9 +23,7 @@ Item {
     onHourlyCandlesChanged: root.liveClockMs = Date.now()
     onDailyCandlesChanged: root.liveClockMs = Date.now()
     property bool hideStratBadge: false
-    readonly property var stratChecklist: root.hideStratBadge ? null : Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote, root.replayCutoffTs > 0 ? new Date((root.replayCutoffTs - 1) * 1000) : new Date(root.liveClockMs), { activeTimeframe: root.timeframe, activeCandles: root.candles, attackScanResult: root.attackScanResult })
-    property var attackScanResult: null
-    readonly property var focusSupport: Model.computeFocusBasketSupport(root.symbol, root.timeframe, root.candles, root.quote, root.dailyCandles, null, root.attackScanResult, root.replayCutoffTs)
+    readonly property var stratChecklist: root.hideStratBadge ? null : Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote, root.replayCutoffTs > 0 ? new Date((root.replayCutoffTs - 1) * 1000) : new Date(root.liveClockMs), { activeTimeframe: root.timeframe, activeCandles: root.candles })
     property bool syncSymbolActive: true
     property bool isExecutionTimeframeCell: (!root.hideStratBadge && root.stratChecklist && root.stratChecklist.setupTimeframe && root.timeframe === root.stratChecklist.setupTimeframe)
     property bool activeFocusCell: false
@@ -427,126 +425,6 @@ Item {
                                         root.tfExpanded = false;
                                     }
                                 }
-                            }
-                        }
-                    }
-                }
-
-                // Basket Support Badge (Focus Tickers Only: GOOGL -> XLC, NVDA -> SMH)
-                Item {
-                    id: focusSupportBadgeItem
-                    visible: root.focusSupport !== null && root.focusSupport.hasSupport
-                    implicitWidth: badgeRow.implicitWidth
-                    implicitHeight: badgeRow.implicitHeight
-                    anchors.verticalCenter: parent.verticalCenter
-
-                    Row {
-                        id: badgeRow
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: Style.space(4)
-
-                        // 1. Basket Attack Token (e.g. XLC ATK)
-                        Text {
-                            textFormat: Text.PlainText
-                            text: root.focusSupport ? (root.focusSupport.basket + " " + root.focusSupport.attackToken) : ""
-                            color: {
-                                if (!root.focusSupport)
-                                    return root.dim;
-                                if (root.focusSupport.attackColor === "green")
-                                    return root.upColor;
-                                if (root.focusSupport.attackColor === "red")
-                                    return root.downColor;
-                                if (root.focusSupport.attackColor === "amber")
-                                    return Qt.rgba(0.92, 0.65, 0.15, 1);
-                                return root.dim;
-                            }
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: true
-
-                            MouseArea {
-                                id: atkHoverArea
-                                anchors.fill: parent
-                                anchors.margins: -Style.space(2)
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.toggleSupportPopup()
-                            }
-                        }
-
-                        // Dot Separator
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "·"
-                            color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        // 2. Key Peer Token (e.g. META 2U)
-                        Text {
-                            textFormat: Text.PlainText
-                            text: root.focusSupport ? root.focusSupport.peerToken : ""
-                            color: {
-                                if (!root.focusSupport)
-                                    return root.dim;
-                                if (root.focusSupport.peerColor === "green")
-                                    return root.upColor;
-                                if (root.focusSupport.peerColor === "red")
-                                    return root.downColor;
-                                return root.dim;
-                            }
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: true
-
-                            MouseArea {
-                                id: peerHoverArea
-                                anchors.fill: parent
-                                anchors.margins: -Style.space(2)
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.toggleSupportPopup()
-                            }
-                        }
-
-                        // Dot Separator
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "·"
-                            color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        // 3. Support % Token (e.g. SUP 74%)
-                        Text {
-                            textFormat: Text.PlainText
-                            text: root.focusSupport ? root.focusSupport.supportToken : ""
-                            color: {
-                                if (!root.focusSupport)
-                                    return root.dim;
-                                if (root.focusSupport.supportColor === "green")
-                                    return root.upColor;
-                                if (root.focusSupport.supportColor === "red")
-                                    return root.downColor;
-                                if (root.focusSupport.supportColor === "amber")
-                                    return Qt.rgba(0.92, 0.65, 0.15, 1);
-                                return root.dim;
-                            }
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: true
-
-                            MouseArea {
-                                id: supHoverArea
-                                anchors.fill: parent
-                                anchors.margins: -Style.space(2)
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.toggleSupportPopup()
                             }
                         }
                     }
@@ -958,58 +836,29 @@ Item {
         fontFamily: root.fontFamily
     }
 
-    function toggleSupportPopup() {
-        if (!cellSupportPopup)
-            return;
-        var pos = focusSupportBadgeItem.mapToItem(root, 0, 0);
-        cellSupportPopup.anchorX = pos.x + focusSupportBadgeItem.width / 2;
-        cellSupportPopup.anchorY = pos.y + focusSupportBadgeItem.height;
-        cellSupportPopup.open = !cellSupportPopup.open;
-    }
-
-    BasketSupportPopup {
-        id: cellSupportPopup
-        supportData: root.focusSupport
-        fontFamily: root.fontFamily
-    }
-
-    // Hover Tooltip Popup Overlay for Basket Support Tokens and Company Name
+    // Hover Tooltip for Company Name on Ticker
     Item {
-        id: focusSupportHoverTooltip
-        readonly property bool showTooltip: ((atkHoverArea.containsMouse || peerHoverArea.containsMouse || supHoverArea.containsMouse) && root.focusSupport !== null) || (symHoverArea.containsMouse && root.companyName !== "")
-        readonly property string tooltipText: {
-            if (symHoverArea.containsMouse && root.companyName !== "")
-                return root.companyName;
-            if (!root.focusSupport)
-                return "";
-            if (atkHoverArea.containsMouse)
-                return root.focusSupport.attackTooltip;
-            if (peerHoverArea.containsMouse)
-                return root.focusSupport.peerTooltip;
-            if (supHoverArea.containsMouse)
-                return root.focusSupport.supportTooltip;
-            return "";
-        }
-        visible: showTooltip && tooltipText !== ""
+        id: companyHoverTooltip
+        readonly property bool showTooltip: symHoverArea.containsMouse && root.companyName !== ""
+        visible: showTooltip
         anchors.fill: parent
         z: 9998
 
         Rectangle {
-            width: supportTooltipText.implicitWidth + Style.space(16)
-            height: supportTooltipText.implicitHeight + Style.space(10)
+            width: companyTooltipText.implicitWidth + Style.space(16)
+            height: companyTooltipText.implicitHeight + Style.space(10)
             radius: Style.space(4)
             color: (Color.popups && Color.popups.background) ? Color.popups.background : Color.background
             border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
             border.width: 1
-
-            x: symHoverArea.containsMouse ? Style.space(8) : Math.max(Style.space(8), Math.min(root.width - width - Style.space(8), focusSupportBadgeItem.mapToItem(root, 0, 0).x - Style.space(4)))
+            x: Style.space(8)
             y: Style.space(34)
 
             Text {
-                id: supportTooltipText
+                id: companyTooltipText
                 anchors.centerIn: parent
                 textFormat: Text.PlainText
-                text: focusSupportHoverTooltip.tooltipText
+                text: root.companyName
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption

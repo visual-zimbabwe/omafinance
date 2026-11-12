@@ -183,7 +183,12 @@ FloatingWindow {
     }
 
     function toggleSector() {
-        root.sectorSymbol = (root.sectorSymbol === "SMH") ? "XLC" : "SMH";
+        var keys = Object.keys(Model.sectorBaskets);
+        if (!keys || keys.length === 0)
+            return;
+        var idx = keys.indexOf(root.sectorSymbol);
+        var nextIdx = (idx + 1) % keys.length;
+        root.sectorSymbol = keys[nextIdx] || "SMH";
     }
 
     function setSector(sym) {
