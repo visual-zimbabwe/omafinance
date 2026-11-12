@@ -4161,3 +4161,94 @@ test("Contradiction 6: 2-1-2 Reversal Magnitude Target (Canonical p2 extreme as 
   assert.equal(res4.targetPrice, 515)
   assert.equal(res4.targetName, "1D High")
 })
+
+test("Contradiction 7: 1-3-2 Rev Strat Canonical Validation (1-3-[Hammer/Shooter]-2)", () => {
+  const daily = [
+    { timestamp: 100, open: 100, high: 110, low: 95, close: 108 },
+    { timestamp: 200, open: 108, high: 120, low: 105, close: 118 },
+    { timestamp: 300, open: 112, high: 125, low: 110, close: 120 }
+  ]
+
+  // Test 1: Valid Bullish 1-3-2 RevStrat:
+  // p3: 200-210 (Motherbar)
+  // p2: 202-208 (Inside Bar = 1)
+  // p1: 198-212, open=210, close=211 (Scenario 3 Outside Bar that closes in top 33% = Hammer!)
+  // c0: open=211.5, high=213, low=211, close=212.5 (2u breakout)
+  const hourlyBullHammer = [
+    { timestamp: 1000, open: 202, high: 210, low: 200, close: 208 }, // p3
+    { timestamp: 2000, open: 204, high: 208, low: 202, close: 206 }, // p2: 1 (inside p3)
+    { timestamp: 3000, open: 209.5, high: 212, low: 198, close: 211 }, // p1: 3 Outside Bar (range=14, body: 209.5-211, bottom=209.5 >= 198 + 9.33 = 207.33, upper wick=1 <= 1.4 -> Hammer!)
+    { timestamp: 4000, open: 211.5, high: 213, low: 211, close: 212.5 } // c0: 2u triggered at 212
+  ]
+  const resBull = Model.evaluateStratChecklist("SPY", hourlyBullHammer, daily, { regularMarketPrice: 212.5 })
+  const r2Bull = resBull.rules.find(r => r.id === 2)
+  assert.equal(r2Bull.passed, true)
+  assert.match(resBull.signalName, /1-3-2 RevStrat Up/)
+  assert.match(r2Bull.detail, /Hammer/)
+  // Stop is anchored to entry bar low - 0.01 (211 - 0.01 = 210.99), NOT the hammer wick at 198!
+  assert.equal(resBull.stopPrice, 210.99)
+  const r8Bull = resBull.rules.find(r => r.id === 8)
+  assert.match(r8Bull.detail, /Entry Low - \$0\.01/)
+
+  // Test 2: Gated Bullish 1-3-2 RevStrat where Scenario 3 bar fails to close as a Hammer (e.g. Doji or Red trend bar):
+  // p1: 198-212, open=206, close=200 (Red solid body closing near low = NOT a Hammer)
+  const hourlyBullInvalid = [
+    { timestamp: 1000, open: 202, high: 210, low: 200, close: 208 }, // p3
+    { timestamp: 2000, open: 204, high: 208, low: 202, close: 206 }, // p2: 1 (inside p3)
+    { timestamp: 3000, open: 206, high: 212, low: 198, close: 200 }, // p1: 3 Outside Bar (closes near low, NO rejection wick)
+    { timestamp: 4000, open: 211.5, high: 213, low: 211, close: 212.5 } // c0: 2u
+  ]
+  const resBullInv = Model.evaluateStratChecklist("SPY", hourlyBullInvalid, daily, { regularMarketPrice: 212.5 })
+  const r2BullInv = resBullInv.rules.find(r => r.id === 2)
+  assert.equal(r2BullInv.passed, false)
+  assert.match(r2BullInv.detail, /failed to close as Hammer \(rejection required for 1-3-2 RevStrat\)/)
+
+  // Test 3: Valid Bearish 1-3-2 RevStrat:
+  // p3: 200-210
+  // p2: 202-208 (Inside Bar = 1)
+  // p1: 198-212, open=200, close=199 (Scenario 3 Outside Bar closing in bottom 33% with long upper wick = Shooter!)
+  // c0: open=198.5, high=199, low=197, close=197.5 (2d breakout)
+  const dailyBear = [
+    { timestamp: 100, open: 220, high: 225, low: 205, close: 210 },
+    { timestamp: 200, open: 210, high: 215, low: 195, close: 200 },
+    { timestamp: 300, open: 200, high: 205, low: 190, close: 195 }
+  ]
+  const hourlyBearShooter = [
+    { timestamp: 1000, open: 202, high: 210, low: 200, close: 208 }, // p3
+    { timestamp: 2000, open: 204, high: 208, low: 202, close: 206 }, // p2: 1 (inside p3)
+    { timestamp: 3000, open: 200, high: 212, low: 198, close: 199 }, // p1: 3 Outside Bar (range=14, body: 199-200, top=200 <= 198 + 4.67 = 202.67, lower wick=1 <= 1.4 -> Shooter!)
+    { timestamp: 4000, open: 198.5, high: 199, low: 197, close: 197.5 } // c0: 2d triggered at 198
+  ]
+  const resBear = Model.evaluateStratChecklist("QQQ", hourlyBearShooter, dailyBear, { regularMarketPrice: 197.5 })
+  const r2Bear = resBear.rules.find(r => r.id === 2)
+  assert.equal(r2Bear.passed, true)
+  assert.match(resBear.signalName, /1-3-2 RevStrat Down/)
+  assert.match(r2Bear.detail, /Shooter/)
+  // Stop is anchored to entry bar high + 0.01 (199 + 0.01 = 199.01), NOT the shooter wick at 212!
+  assert.equal(resBear.stopPrice, 199.01)
+  const r8Bear = resBear.rules.find(r => r.id === 8)
+  assert.match(r8Bear.detail, /Entry High \+ \$0\.01/)
+
+  // Test 4: Gated Bearish 1-3-2 RevStrat where Scenario 3 bar fails to close as a Shooter:
+  // p1: 198-212, open=202, close=210 (Green solid body = NOT a Shooter)
+  const hourlyBearInvalid = [
+    { timestamp: 1000, open: 202, high: 210, low: 200, close: 208 }, // p3
+    { timestamp: 2000, open: 204, high: 208, low: 202, close: 206 }, // p2: 1 (inside p3)
+    { timestamp: 3000, open: 202, high: 212, low: 198, close: 210 }, // p1: 3 Outside Bar (closes near high, NO shooter wick)
+    { timestamp: 4000, open: 198.5, high: 199, low: 197, close: 197.5 } // c0: 2d
+  ]
+  const resBearInv = Model.evaluateStratChecklist("QQQ", hourlyBearInvalid, dailyBear, { regularMarketPrice: 197.5 })
+  const r2BearInv = resBearInv.rules.find(r => r.id === 2)
+  assert.equal(r2BearInv.passed, false)
+  assert.match(r2BearInv.detail, /failed to close as Shooter \(rejection required for 1-3-2 RevStrat\)/)
+
+  // Test 5: Sector query token "1-3-2" in matchesScenarioTokens
+  // Matches valid bullish 1-3-2
+  assert.equal(Model.matchesScenarioQuery(hourlyBullHammer, { regularMarketPrice: 212.5 }, "1-3-2"), true)
+  // Rejects invalid bullish 1-3-2 (3-bar did not close as Hammer)
+  assert.equal(Model.matchesScenarioQuery(hourlyBullInvalid, { regularMarketPrice: 212.5 }, "1-3-2"), false)
+  // Matches valid bearish 1-3-2
+  assert.equal(Model.matchesScenarioQuery(hourlyBearShooter, { regularMarketPrice: 197.5 }, "1-3-2"), true)
+  // Rejects invalid bearish 1-3-2 (3-bar did not close as Shooter)
+  assert.equal(Model.matchesScenarioQuery(hourlyBearInvalid, { regularMarketPrice: 197.5 }, "1-3-2"), false)
+})

@@ -4616,6 +4616,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
 
   // 2. Actionable Signal on Setup TF (supports 30m when activeTimeframe === "30", 60m, or 1D)
   var signalCandle = pSetup
+  var prevSignalBar = setupCandles.length >= 3 ? setupCandles[setupCandles.length - 3] : null
+  var signalShapeInfo = detectCandleShape(signalCandle, prevSignalBar)
   var entryState = stratEntryState(barSetup, isLong)
   var isFailed2 = (entryState.state === "FAILED_2_REVERSAL")
   var sc_signal = "-"
@@ -4623,6 +4625,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
 
   var validSignal = false
   var signalName = "-"
+  var invalidRevStratReason = null
   if (isFailed2) {
     validSignal = true
     signalName = setupLabel + (isLong ? " Failed 2d Bullish Reversal" : " Failed 2u Bearish Reversal")
@@ -4659,14 +4662,25 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
       validSignal = true
     } else if (sc_prev === "3") {
       if (sc_p2_setup === "1") {
-        signalName = setupLabel + " 1-3-2 RevStrat " + (isLong ? "Up" : "Down")
+        // Canonical TheStrat 1-3-2 RevStrat Rule (thestrat.ai/docs/1-3-2/):
+        // Outside bar (3) must close as a Hammer (Long) or Shooter (Short) representing round-trip rejection
+        var isRevHammer = isLong && signalShapeInfo && signalShapeInfo.isHammer
+        var isRevShooter = !isLong && signalShapeInfo && signalShapeInfo.isShooter
+        if (isRevHammer || isRevShooter) {
+          signalName = setupLabel + " 1-3-2 RevStrat " + (isLong ? "Up" : "Down")
+          validSignal = true
+        } else {
+          signalName = setupLabel + " 1-3-2 RevStrat " + (isLong ? "Up" : "Down")
+          validSignal = false
+          invalidRevStratReason = "Scenario 3 bar failed to close as " + (isLong ? "Hammer" : "Shooter") + " (rejection required for 1-3-2 RevStrat)"
+        }
       } else {
         signalName = setupLabel + " 3-2 " + (isLong ? "Up" : "Down")
+        validSignal = true
       }
-      validSignal = true
     }
   }
-  if (!validSignal && daily.length >= 3) {
+  if (!validSignal && !invalidRevStratReason && daily.length >= 3) {
     setupTf = "1D"
     setupCandles = daily
     cSetup = c1D
@@ -4681,8 +4695,6 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
   }
 
-  var prevSignalBar = setupCandles.length >= 3 ? setupCandles[setupCandles.length - 3] : null
-  var signalShapeInfo = detectCandleShape(signalCandle, prevSignalBar)
   var pmgInfo = detectPivotMachineGun(setupCandles, isLong)
   var kickerInfo = detectKickerPattern(setupCandles, currentPrice)
   if (kickerInfo.isKicker && kickerInfo.direction === direction && kickerInfo.gapType === "FULL") {
@@ -4698,9 +4710,11 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   if (kickerInfo.isKicker && kickerInfo.direction === direction) r2Extras.push(kickerInfo.label)
   var r2Detail = isDoji3Continuation
     ? "Doji 3 indecision bar — prefer 3-1-2 or 3-2-2 reversal over 3-2 continuation"
-    : (validSignal
-      ? (signalName + (r2Extras.length ? (" [" + r2Extras.join(" | ") + "]") : "") + " — " + tradeStyleInfo.label)
-      : "No actionable combo pattern")
+    : (invalidRevStratReason
+      ? invalidRevStratReason
+      : (validSignal
+        ? (signalName + (r2Extras.length ? (" [" + r2Extras.join(" | ") + "]") : "") + " — " + tradeStyleInfo.label)
+        : "No actionable combo pattern"))
 
   // 3. Signal Candle Closed
   var r3Pass = signalCandle !== null
@@ -4763,8 +4777,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var stopPrice = null
   var stopLevels = { tightest: null, tight: null, fiftyPct: null, entryExtreme: null, structural: null }
   var signalCandleTimestamp = (signalCandle && signalCandle.timestamp != null) ? signalCandle.timestamp : null
-  var isHammerStop = Boolean(sc_signal !== "3" && isLong && signalShapeInfo && signalShapeInfo.isHammer)
-  var isShooterStop = Boolean(sc_signal !== "3" && !isLong && signalShapeInfo && signalShapeInfo.isShooter)
+  var isHammerStop = Boolean((sc_signal !== "3" || sc_p2_setup === "1") && isLong && signalShapeInfo && signalShapeInfo.isHammer)
+  var isShooterStop = Boolean((sc_signal !== "3" || sc_p2_setup === "1") && !isLong && signalShapeInfo && signalShapeInfo.isShooter)
 
   if (cSetup && isFinite(Number(cSetup.open)) && isFinite(Number(cSetup.high)) && isFinite(Number(cSetup.low))) {
     stopLevels.tight = Number(cSetup.open)
@@ -7360,10 +7374,20 @@ function matchesScenarioTokens(candles, quote, tokens) {
       if ((scPrev !== "2u" && scPrev !== "2d") || (sc !== "2u" && sc !== "2d")) return false;
     } else if (t === "3-2") {
       if (scPrev !== "3" || (sc !== "2u" && sc !== "2d")) return false;
-    } else if (t === "revstrat" || t === "1-3") {
+    } else if (t === "revstrat" || t === "1-3" || t === "1-3-2") {
       var is13 = (scPrev === "1" && sc === "3");
       var is32 = (scPrev === "3" && (sc === "2u" || sc === "2d"));
-      if (!is13 && !is32) return false;
+      if (t === "1-3-2") {
+        if (!is32) return false;
+        var cThree = n >= 4 ? candles[n - 4] : null;
+        var scP2 = (cTwo && cThree) ? stratScenario(cTwo, cThree) : null;
+        if (scP2 !== "1") return false;
+        var shapePrev = detectCandleShape(cPrev, cTwo);
+        if (sc === "2u" && !shapePrev.isHammer) return false;
+        if (sc === "2d" && !shapePrev.isShooter) return false;
+      } else if (!is13 && !is32) {
+        return false;
+      }
     }
   }
   return true;
