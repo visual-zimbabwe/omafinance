@@ -43,6 +43,7 @@ FloatingWindow {
     readonly property var activeLockedSymbols: (root.lockStack && root.lockStack.length > 0) ? root.lockStack[root.lockStack.length - 1] : null
 
     property var holdings: []
+    property string holdingsFetchSymbol: ""
     property var quotes: ({})
     property var chartCache: ({})
     property var symbolLevels: ({})
@@ -76,39 +77,28 @@ FloatingWindow {
     readonly property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
     readonly property string fontFamily: Style.font.family
 
-    Component.onCompleted: {
-        if (root.isMultiTicker) {
+    function reloadSector(sym) {
+        var raw = (typeof sym === "string" && sym.length > 0) ? sym : root.sectorSymbol;
+        var tickers = Model.parseSectorTickers(raw);
+        var isMulti = tickers.length > 1;
+        var s = (tickers.length === 1) ? tickers[0] : raw;
+        if (!isMulti && Model.isBasketSector(s)) {
+            loadHoldingsForSector(s);
+        } else {
+            root.holdingsFetchSymbol = "";
             root.holdings = [];
             refreshBatchQuotes();
             refreshVisibleCharts(false);
-        } else {
-            var s = (root.sectorTickers.length === 1) ? root.sectorTickers[0] : root.sectorSymbol;
-            if (Model.isBasketSector(s)) {
-                loadHoldingsForSector(s);
-            } else {
-                root.holdings = [];
-                refreshBatchQuotes();
-                refreshVisibleCharts(false);
-            }
         }
+    }
+
+    Component.onCompleted: {
+        root.reloadSector(root.sectorSymbol);
     }
 
     onSectorSymbolChanged: {
         root.clearLockStack();
-        if (root.isMultiTicker) {
-            root.holdings = [];
-            refreshBatchQuotes();
-            refreshVisibleCharts(false);
-        } else {
-            var s = (root.sectorTickers.length === 1) ? root.sectorTickers[0] : root.sectorSymbol;
-            if (Model.isBasketSector(s)) {
-                loadHoldingsForSector(s);
-            } else {
-                root.holdings = [];
-                refreshBatchQuotes();
-                refreshVisibleCharts(false);
-            }
-        }
+        root.reloadSector(root.sectorSymbol);
     }
 
     function getTierHoldingsCount(tierIdx) {
@@ -216,6 +206,10 @@ FloatingWindow {
 
     function loadHoldingsForSector(sym) {
         root.holdings = [];
+        root.holdingsFetchSymbol = sym;
+        if (holdingsProc.running) {
+            holdingsProc.signal(9);
+        }
         var home = Quickshell.env("HOME") || "/home/juwimana";
         var fpath = home + "/.cache/omafinance/holdings/" + sym + ".json";
         holdingsProc.command = ["cat", fpath];
@@ -225,6 +219,8 @@ FloatingWindow {
     Process {
         id: holdingsProc
         onExited: function (exitCode) {
+            if (root.holdingsFetchSymbol !== root.sectorSymbol)
+                return;
             var raw = String(holdingsStdout.text || "").trim();
             if (exitCode === 0 && raw) {
                 try {
@@ -255,7 +251,9 @@ FloatingWindow {
         if (root.isMultiTicker) {
             for (var i = 0; i < root.sectorTickers.length; i++) {
                 var sym = root.sectorTickers[i];
-                targetHoldings.push({ symbol: sym });
+                targetHoldings.push({
+                    symbol: sym
+                });
                 dailyCandlesMap[sym] = root.getCandles(sym, root.timeframe);
             }
         } else {
@@ -382,10 +380,11 @@ FloatingWindow {
 
     // Live Batch Quotes (15-second interval)
     function getAllSymbols() {
-        if (root.isMultiTicker) {
-            return root.sectorTickers;
+        var tickers = Model.parseSectorTickers(root.sectorSymbol);
+        if (tickers.length > 1) {
+            return tickers;
         }
-        var singleSym = (root.sectorTickers.length === 1) ? root.sectorTickers[0] : root.sectorSymbol;
+        var singleSym = (tickers.length === 1) ? tickers[0] : root.sectorSymbol;
         var syms = singleSym ? [singleSym] : [];
         if (Model.isBasketSector(singleSym)) {
             for (var i = 0; i < root.holdings.length; i++) {
@@ -1279,7 +1278,9 @@ FloatingWindow {
                                 font.pixelSize: Style.font.caption
                                 selectByMouse: true
                                 inputMethodHints: Qt.ImhDigitsOnly
-                                validator: RegularExpressionValidator { regularExpression: /[0-9]*/ }
+                                validator: RegularExpressionValidator {
+                                    regularExpression: /[0-9]*/
+                                }
 
                                 onTextChanged: {
                                     if (activeFocus) {

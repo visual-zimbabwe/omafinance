@@ -7722,8 +7722,8 @@ function cacheKey(symbol, rangeKey) {
 }
 
 function isBasketSector(symbol) {
-  var s = String(symbol || "").trim().toUpperCase();
-  return s === "SMH" || s === "XLC";
+  var s = normalizeSymbol(symbol);
+  return Boolean(sectorBaskets[s]);
 }
 
 function chunkSymbols(symbols, chunkSize) {

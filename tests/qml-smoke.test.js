@@ -657,6 +657,8 @@ test("sector analysis window supports multi-tier recursive locking, 4-worker cha
   assert.match(win, /"2d Green:\s*"\s*\+\s*Math\.round\(root\.breadthMetrics\.pctF2d/)
   assert.match(win, /root\.breadthMetrics\.isSimultaneous2u \? root\.upColor : root\.foreground/)
   assert.match(win, /root\.breadthMetrics\.isSimultaneous2d \? root\.downColor : root\.foreground/)
+  assert.match(win, /function reloadSector\(sym\)/)
+  assert.match(win, /property string holdingsFetchSymbol:/)
 })
 
 
