@@ -1,13 +1,15 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "Model.js" as Model
 
 BarWidget {
     id: root
     moduleName: "mohamedmansour.finance"
 
-    readonly property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
-    readonly property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
+    readonly property color barBg: (bar && bar.background) ? bar.background : Color.background
+    readonly property color upColor: Model.accessibleSemanticColor("up", barBg)
+    readonly property color downColor: Model.accessibleSemanticColor("down", barBg)
     readonly property string labelTone: panelLoader.item ? String(panelLoader.item.labelTone || "flat") : "flat"
     readonly property color pillColor: labelTone === "up" ? upColor : (labelTone === "down" ? downColor : (bar ? bar.barForeground : Color.foreground))
 
@@ -93,6 +95,8 @@ BarWidget {
         tooltipText: root.alertsMuted && panelLoader.item ? (panelLoader.item.alertsMuteStatus + " · right-click to unmute") : ""
         horizontalMargin: 8.75
         verticalPadding: 8.75
+        Accessible.role: Accessible.Button
+        Accessible.name: panelLoader.item ? qsTr("Omafinance: %1").arg(button.text) : qsTr("Omafinance")
 
         Text {
             id: statusLabel

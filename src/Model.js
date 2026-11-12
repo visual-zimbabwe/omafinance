@@ -7517,6 +7517,116 @@ function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
   return list;
 }
 
+function parseColorRgb(c) {
+  if (!c) return { r: 0, g: 0, b: 0 };
+  if (typeof c === "string") {
+    var s = c.trim();
+    var m6 = s.match(/^#([0-9a-fA-F]{2})?([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/);
+    if (m6) {
+      // #RRGGBB (m6[1] undefined) or #AARRGGBB (m6[1] is AA)
+      return {
+        r: parseInt(m6[2], 16) / 255,
+        g: parseInt(m6[3], 16) / 255,
+        b: parseInt(m6[4], 16) / 255
+      };
+    }
+    var m3 = s.match(/^#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/);
+    if (m3) {
+      return {
+        r: parseInt(m3[1] + m3[1], 16) / 255,
+        g: parseInt(m3[2] + m3[2], 16) / 255,
+        b: parseInt(m3[3] + m3[3], 16) / 255
+      };
+    }
+  }
+  if (typeof c.r === "number" && typeof c.g === "number" && typeof c.b === "number") {
+    return {
+      r: Math.max(0, Math.min(1, c.r)),
+      g: Math.max(0, Math.min(1, c.g)),
+      b: Math.max(0, Math.min(1, c.b))
+    };
+  }
+  return { r: 0, g: 0, b: 0 };
+}
+
+function rgbToHex(r, g, b) {
+  function hexByte(v) {
+    var n = Math.max(0, Math.min(255, Math.round(v * 255)));
+    var h = n.toString(16);
+    return h.length < 2 ? "0" + h : h;
+  }
+  return "#" + hexByte(r) + hexByte(g) + hexByte(b);
+}
+
+function relativeLuminance(color) {
+  var rgb = parseColorRgb(color);
+  function chan(c) {
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+  return 0.2126 * chan(rgb.r) + 0.7152 * chan(rgb.g) + 0.0722 * chan(rgb.b);
+}
+
+function contrastRatio(c1, c2) {
+  var l1 = relativeLuminance(c1);
+  var l2 = relativeLuminance(c2);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+
+function isLightColor(color) {
+  return relativeLuminance(color) > 0.4;
+}
+
+function accessibleSemanticColor(tone, bgColor) {
+  var lightBg = isLightColor(bgColor);
+  if (tone === "up") return lightBg ? "#136f3a" : "#4ade80";
+  if (tone === "down") return lightBg ? "#b91c1c" : "#f87171";
+  return lightBg ? "#475569" : "#94a3b8";
+}
+
+function accessibleDimColor(fgColor, bgColor) {
+  var fg = parseColorRgb(fgColor);
+  var bg = parseColorRgb(bgColor);
+  var weight = 0.72;
+  for (var step = 0; step < 6; step++) {
+    var mixed = {
+      r: fg.r * weight + bg.r * (1 - weight),
+      g: fg.g * weight + bg.g * (1 - weight),
+      b: fg.b * weight + bg.b * (1 - weight)
+    };
+    if (contrastRatio(mixed, bg) >= 4.5 || weight >= 0.99) {
+      return rgbToHex(mixed.r, mixed.g, mixed.b);
+    }
+    weight = Math.min(1, weight + 0.06);
+  }
+  return rgbToHex(fg.r, fg.g, fg.b);
+}
+
+function contrastForeground(fillColor, lightText, darkText) {
+  var dark = darkText || "#0b0f14";
+  var light = lightText || "#ffffff";
+  return contrastRatio(fillColor, dark) >= contrastRatio(fillColor, light) ? dark : light;
+}
+
+function quotedFontFamily(family) {
+  var f = String(family || "monospace").trim();
+  if (!f) return "monospace";
+  if (f.indexOf(" ") >= 0 && f.charAt(0) !== '"' && f.charAt(0) !== "'") {
+    return '"' + f.replace(/"/g, "") + '"';
+  }
+  return f;
+}
+
+var Z_LAYER = {
+  TILE_BORDER: 5,
+  HEADER: 10,
+  CROSSHAIR: 15,
+  LEVEL_EDIT: 35,
+  SPLITTER: 100,
+  OVERLAY: 200,
+  TOOLTIP: 9998,
+  MODAL: 9999
+};
+
 if (typeof module !== "undefined") {
   module.exports = {
     defaultWatchlist: defaultWatchlist,
@@ -7685,7 +7795,17 @@ if (typeof module !== "undefined") {
     stratSpread: stratSpread,
     MIN_BAR_COUNT: MIN_BAR_COUNT,
     DEFAULT_ANALYSIS_BAR_COUNT: DEFAULT_ANALYSIS_BAR_COUNT,
-    clampBarCount: clampBarCount
+    clampBarCount: clampBarCount,
+    parseColorRgb: parseColorRgb,
+    rgbToHex: rgbToHex,
+    relativeLuminance: relativeLuminance,
+    contrastRatio: contrastRatio,
+    isLightColor: isLightColor,
+    accessibleSemanticColor: accessibleSemanticColor,
+    accessibleDimColor: accessibleDimColor,
+    contrastForeground: contrastForeground,
+    quotedFontFamily: quotedFontFamily,
+    Z_LAYER: Z_LAYER
   }
 }
 

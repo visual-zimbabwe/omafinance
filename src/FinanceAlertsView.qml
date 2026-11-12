@@ -14,6 +14,7 @@ Column {
     property string draftPrice: ""
     property string draftCondition: "CROSSES_ABOVE"
     property string draftNote: ""
+    property string formError: ""
 
     readonly property var workingPriceAlerts: {
         var map = controller.symbolLevels || ({});
@@ -50,8 +51,15 @@ Column {
     function submitQuickPriceAlert() {
         var sym = Model.normalizeSymbol(symbolInput.text || alertsViewRoot.draftSymbol);
         var priceVal = Number(priceInput.text);
-        if (!sym || !isFinite(priceVal) || priceVal <= 0)
+        if (!sym) {
+            alertsViewRoot.formError = qsTr("Enter a valid ticker symbol.");
             return;
+        }
+        if (!isFinite(priceVal) || priceVal <= 0) {
+            alertsViewRoot.formError = qsTr("Enter a positive target price.");
+            return;
+        }
+        alertsViewRoot.formError = "";
         controller.createPriceAlert(sym, priceVal, alertsViewRoot.draftCondition, noteInput.text.trim());
         priceInput.text = "";
         noteInput.text = "";
@@ -61,20 +69,12 @@ Column {
         width: parent.width
         height: backLabel.implicitHeight
 
-        Text {
+        BackLink {
             id: backLabel
             anchors.left: parent.left
-            text: "‹ Watchlist"
-            color: controller.dim
-            font.family: controller.contentFontFamily
-            font.pixelSize: Style.font.body
-
-            MouseArea {
-                anchors.fill: parent
-                anchors.margins: -6
-                cursorShape: Qt.PointingHandCursor
-                onClicked: controller.view = "list"
-            }
+            linkColor: controller.dim
+            fontFamily: controller.contentFontFamily
+            onTriggered: controller.view = "list"
         }
 
         Text {
@@ -96,14 +96,15 @@ Column {
     }
 
     // Section 0: Mute (chart-only days). Engines keep tracking; delivery is suppressed.
-    Rectangle {
+    FinanceSurface {
         id: muteCard
+        elevation: 1
+        radiusToken: "lg"
+        foregroundColor: controller.contentForeground
+        surfaceColor: controller.alertsMuted ? Qt.rgba(controller.contentUrgent.r, controller.contentUrgent.g, controller.contentUrgent.b, 0.12) : Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.08)
+        borderColorOverride: controller.alertsMuted ? Qt.rgba(controller.contentUrgent.r, controller.contentUrgent.g, controller.contentUrgent.b, 0.45) : "transparent"
         width: parent.width
         implicitHeight: muteCol.implicitHeight + Style.space(18)
-        color: controller.alertsMuted ? Qt.rgba(controller.contentUrgent.r, controller.contentUrgent.g, controller.contentUrgent.b, 0.12) : Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.08)
-        radius: Style.space(8)
-        border.color: controller.alertsMuted ? Qt.rgba(controller.contentUrgent.r, controller.contentUrgent.g, controller.contentUrgent.b, 0.45) : Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.15)
-        border.width: 1
 
         Column {
             id: muteCol
@@ -124,10 +125,11 @@ Column {
             Text {
                 width: parent.width
                 visible: controller.alertsMuted
-                text: "No notifications, sounds, or Discord posts. Muted events are still logged below."
+                text: qsTr("No notifications, sounds, or Discord posts. Muted events are still logged below.")
                 color: controller.dim
                 font.family: controller.contentFontFamily
-                font.pixelSize: Style.font.bodySmall - 1
+                font.pixelSize: Style.font.caption
+                lineHeight: 1.3
                 wrapMode: Text.WordWrap
             }
 
@@ -155,30 +157,14 @@ Column {
                         }
                     ]
 
-                    delegate: Rectangle {
+                    delegate: Button {
                         required property var modelData
-                        width: muteBtnLabel.implicitWidth + Style.space(16)
-                        height: muteBtnLabel.implicitHeight + Style.space(10)
-                        radius: Style.space(6)
-                        color: Qt.rgba(controller.contentForeground.r, controller.contentForeground.g, controller.contentForeground.b, 0.12)
-                        border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.3)
-                        border.width: 1
-
-                        Text {
-                            id: muteBtnLabel
-                            anchors.centerIn: parent
-                            text: modelData.label
-                            color: controller.contentForeground
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: true
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: controller.setAlertsMute(modelData.mode)
-                        }
+                        bordered: true
+                        text: modelData.label
+                        foreground: controller.contentForeground
+                        fontFamily: controller.contentFontFamily
+                        fontSize: Style.font.bodySmall
+                        onClicked: controller.setAlertsMute(modelData.mode)
                     }
                 }
             }
@@ -186,13 +172,12 @@ Column {
     }
 
     // Section 1: Create Price Alert
-    Rectangle {
+    FinanceSurface {
+        elevation: 1
+        radiusToken: "lg"
+        foregroundColor: controller.contentForeground
         width: parent.width
         implicitHeight: createCol.implicitHeight + Style.space(18)
-        color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.08)
-        radius: Style.space(8)
-        border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.15)
-        border.width: 1
 
         Column {
             id: createCol
@@ -221,30 +206,17 @@ Column {
                     text: alertsViewRoot.draftSymbol
                 }
 
-                Rectangle {
+                Button {
                     id: condBtn
+                    bordered: true
                     width: Style.space(52)
                     height: symbolInput.implicitHeight
-                    radius: Style.space(6)
-                    color: Qt.rgba(controller.contentForeground.r, controller.contentForeground.g, controller.contentForeground.b, 0.12)
-                    border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.3)
-                    border.width: 1
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: alertsViewRoot.draftCondition === "CROSSES_BELOW" ? "<=" : (alertsViewRoot.draftCondition === "CROSSES" ? "<>" : ">=")
-                        color: controller.contentForeground
-                        font.family: controller.contentFontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            alertsViewRoot.draftCondition = (alertsViewRoot.draftCondition === "CROSSES_ABOVE") ? "CROSSES_BELOW" : (alertsViewRoot.draftCondition === "CROSSES_BELOW" ? "CROSSES" : "CROSSES_ABOVE");
-                        }
+                    text: alertsViewRoot.draftCondition === "CROSSES_BELOW" ? "<=" : (alertsViewRoot.draftCondition === "CROSSES" ? "<>" : ">=")
+                    foreground: controller.contentForeground
+                    fontFamily: controller.contentFontFamily
+                    fontSize: Style.font.bodySmall
+                    onClicked: {
+                        alertsViewRoot.draftCondition = (alertsViewRoot.draftCondition === "CROSSES_ABOVE") ? "CROSSES_BELOW" : (alertsViewRoot.draftCondition === "CROSSES_BELOW" ? "CROSSES" : "CROSSES_ABOVE");
                     }
                 }
 
@@ -266,30 +238,29 @@ Column {
                     Keys.onReturnPressed: alertsViewRoot.submitQuickPriceAlert()
                 }
 
-                Rectangle {
+                Button {
                     id: armBtn
-                    width: Style.space(52)
+                    bordered: true
+                    selected: true
                     height: symbolInput.implicitHeight
-                    radius: Style.space(6)
-                    color: Qt.rgba(0.22, 0.50, 0.30, 0.35)
-                    border.color: Qt.rgba(0.22, 0.50, 0.30, 0.7)
-                    border.width: 1
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Arm"
-                        color: controller.contentForeground
-                        font.family: controller.contentFontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: alertsViewRoot.submitQuickPriceAlert()
-                    }
+                    text: qsTr("Arm")
+                    foreground: controller.upColor
+                    accent: controller.upColor
+                    fontFamily: controller.contentFontFamily
+                    fontSize: Style.font.bodySmall
+                    Accessible.name: qsTr("Arm price alert")
+                    onClicked: alertsViewRoot.submitQuickPriceAlert()
                 }
+            }
+
+            Text {
+                visible: alertsViewRoot.formError !== ""
+                width: parent.width
+                text: alertsViewRoot.formError
+                color: controller.contentUrgent
+                font.family: controller.contentFontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
             }
         }
     }
@@ -336,14 +307,13 @@ Column {
         Repeater {
             model: alertsViewRoot.workingPriceAlerts
 
-            delegate: Rectangle {
+            delegate: FinanceSurface {
                 required property var modelData
+                elevation: 1
+                radiusToken: "md"
+                foregroundColor: controller.contentForeground
                 width: alertsViewRoot.width
                 height: Style.space(42)
-                radius: Style.space(6)
-                color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.08)
-                border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.16)
-                border.width: 1
 
                 Row {
                     anchors.fill: parent
@@ -521,14 +491,13 @@ Column {
         Repeater {
             model: controller.armedWatchlistSetups || []
 
-            delegate: Rectangle {
+            delegate: FinanceSurface {
                 required property var modelData
+                elevation: 1
+                radiusToken: "md"
+                foregroundColor: controller.contentForeground
                 width: alertsViewRoot.width
                 height: Style.space(42)
-                radius: Style.space(6)
-                color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.08)
-                border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.16)
-                border.width: 1
 
                 Row {
                     anchors.fill: parent
@@ -654,14 +623,13 @@ Column {
         Repeater {
             model: controller.alertLog ? controller.alertLog.slice(0, 12) : []
 
-            delegate: Rectangle {
+            delegate: FinanceSurface {
                 required property var modelData
+                elevation: 1
+                radiusToken: "md"
+                foregroundColor: controller.contentForeground
                 width: alertsViewRoot.width
                 height: Style.space(40)
-                radius: Style.space(6)
-                color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.06)
-                border.color: Qt.rgba(controller.dim.r, controller.dim.g, controller.dim.b, 0.14)
-                border.width: 1
 
                 Row {
                     anchors.fill: parent

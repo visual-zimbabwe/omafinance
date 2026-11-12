@@ -72,9 +72,9 @@ FloatingWindow {
     minimumSize: Qt.size(Style.space(800), Style.space(550))
 
     readonly property color foreground: Color.foreground
-    readonly property color dim: Qt.darker(foreground, 1.45)
-    readonly property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
-    readonly property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
+    readonly property color dim: Model.accessibleDimColor(foreground, Color.background)
+    readonly property color upColor: Model.accessibleSemanticColor("up", Color.background)
+    readonly property color downColor: Model.accessibleSemanticColor("down", Color.background)
     readonly property string fontFamily: Style.font.family
 
     function reloadSector(sym) {
@@ -811,7 +811,7 @@ FloatingWindow {
             width: parent.width
             height: Model.isBasketSector(root.sectorSymbol) ? Style.space(96) : Style.space(68)
             color: Color.background
-            z: 10
+            z: Model.Z_LAYER.HEADER
 
             Column {
                 anchors.fill: parent
@@ -843,14 +843,16 @@ FloatingWindow {
                         }
 
                         // Sector Ticker Switcher
-                        Rectangle {
+                        FinanceSurface {
                             id: sectorBox
+                            elevation: 0
+                            radiusToken: "sm"
+                            sheen: false
+                            active: sectorInput.activeFocus
+                            foregroundColor: root.foreground
+                            surfaceColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
                             width: Math.max(Style.space(60), Math.min(Style.space(260), sectorInput.contentWidth + Style.space(16)))
                             height: Style.space(24)
-                            radius: Style.space(4)
-                            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                            border.color: sectorInput.activeFocus ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
-                            border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
                             clip: true
 
@@ -945,16 +947,18 @@ FloatingWindow {
                     }
 
                     // Global Broadening Formations Toggle (far right on row 1)
-                    Rectangle {
+                    FinanceSurface {
                         id: bfBtn
+                        elevation: 0
+                        radiusToken: "sm"
+                        sheen: false
+                        active: root.showBroadening
+                        foregroundColor: root.foreground
+                        surfaceColor: root.showBroadening ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.18) : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
                         height: Style.space(24)
                         implicitWidth: bfText.implicitWidth + Style.space(14)
-                        radius: Style.space(4)
-                        color: root.showBroadening ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.18) : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                        border.color: root.showBroadening ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
-                        border.width: 1
 
                         Text {
                             id: bfText
@@ -995,16 +999,19 @@ FloatingWindow {
 
                                 Rectangle {
                                     required property string modelData
-                                    width: Style.space(32)
-                                    height: Style.space(22)
+                                    width: Math.max(Style.space(32), tfBtnText.implicitWidth + Style.space(10))
+                                    height: Math.max(Style.space(22), tfBtnText.implicitHeight + Style.space(6))
                                     radius: Style.space(3)
                                     color: modelData === root.timeframe ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: qsTr("Timeframe %1").arg(modelData)
 
                                     Text {
+                                        id: tfBtnText
                                         anchors.centerIn: parent
                                         textFormat: Text.PlainText
                                         text: modelData
-                                        color: modelData === root.timeframe ? Color.background : root.foreground
+                                        color: modelData === root.timeframe ? Model.contrastForeground(Color.accent) : root.foreground
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.caption
                                         font.bold: modelData === root.timeframe
@@ -1020,13 +1027,14 @@ FloatingWindow {
                         }
 
                         // Sort Selector Button
-                        Rectangle {
+                        FinanceSurface {
+                            elevation: 0
+                            radiusToken: "sm"
+                            sheen: false
+                            foregroundColor: root.foreground
+                            surfaceColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
                             height: Style.space(24)
                             implicitWidth: sortText.implicitWidth + Style.space(16)
-                            radius: Style.space(4)
-                            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                            border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
-                            border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
 
                             Text {
@@ -1070,14 +1078,16 @@ FloatingWindow {
                             }
 
                             // Scenario Filter Input Box (Mirrors sectorBox implementation)
-                            Rectangle {
+                            FinanceSurface {
                                 id: scenarioBox
+                                elevation: 0
+                                radiusToken: "sm"
+                                sheen: false
+                                active: scenarioField.activeFocus
+                                foregroundColor: root.foreground
+                                surfaceColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
                                 width: Style.space(200)
                                 height: Style.space(24)
-                                radius: Style.space(4)
-                                color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                                border.color: scenarioField.activeFocus ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
-                                border.width: 1
                                 anchors.verticalCenter: parent.verticalCenter
                                 clip: true
 
@@ -1174,14 +1184,16 @@ FloatingWindow {
                         }
 
                         // Lock Control (Option B: Recursive Multi-Tier Funneling)
-                        Rectangle {
+                        FinanceSurface {
                             id: lockBtn
+                            elevation: 0
+                            radiusToken: "sm"
+                            sheen: false
+                            active: root.lockStack.length > 0
+                            foregroundColor: root.foreground
+                            surfaceColor: root.lockStack.length > 0 ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16) : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
                             height: Style.space(24)
                             implicitWidth: lockRow.implicitWidth + Style.space(16)
-                            radius: Style.space(4)
-                            color: root.lockStack.length > 0 ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16) : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                            border.color: root.lockStack.length > 0 ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
-                            border.width: 1
                             opacity: (root.lockStack.length === 0 && root.matchingHoldingsCount === 0) ? 0.4 : 1.0
                             anchors.verticalCenter: parent.verticalCenter
 
@@ -1323,14 +1335,16 @@ FloatingWindow {
                         }
 
                         // Copy Filtered Tickers Button
-                        Rectangle {
+                        FinanceSurface {
                             id: copyBtn
+                            elevation: 0
+                            radiusToken: "sm"
+                            sheen: false
+                            active: copyFeedbackTimer.running
+                            foregroundColor: root.foreground
+                            surfaceColor: copyFeedbackTimer.running ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16) : (copyHover.hovered ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.14) : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08))
                             height: Style.space(24)
                             implicitWidth: copyRow.implicitWidth + Style.space(16)
-                            radius: Style.space(4)
-                            color: copyFeedbackTimer.running ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16) : (copyHover.hovered ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.14) : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08))
-                            border.color: copyFeedbackTimer.running ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
-                            border.width: 1
                             opacity: root.filteredTiles.length === 0 ? 0.4 : 1.0
                             anchors.verticalCenter: parent.verticalCenter
 
@@ -1387,14 +1401,16 @@ FloatingWindow {
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
-                        Rectangle {
+                        FinanceSurface {
                             id: barsBox
+                            elevation: 0
+                            radiusToken: "sm"
+                            sheen: false
+                            active: barsInput.activeFocus
+                            foregroundColor: root.foreground
+                            surfaceColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
                             width: Style.space(48)
                             height: Style.space(24)
-                            radius: Style.space(4)
-                            color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                            border.color: barsInput.activeFocus ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
-                            border.width: 1
                             anchors.verticalCenter: parent.verticalCenter
 
                             TextInput {
@@ -1726,7 +1742,7 @@ FloatingWindow {
                                 color: "transparent"
                                 border.width: 1
                                 border.color: root.activeTileIndex === tileWrapper.index ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12)
-                                z: 5
+                                z: Model.Z_LAYER.TILE_BORDER
                             }
 
                             // 100% Native Omafinance GridCell

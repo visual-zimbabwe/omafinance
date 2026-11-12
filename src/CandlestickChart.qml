@@ -834,7 +834,7 @@ Item {
                     var t = g.ticks[ti];
                     var isHoveredTick = (ti === root.hoveredTickIndex);
 
-                    ctx.font = (isHoveredTick ? "bold " : "") + Style.font.bodySmall + "px " + root.fontFamily;
+                    ctx.font = (isHoveredTick ? "bold " : "") + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
                     ctx.fillStyle = isHoveredTick ? Color.foreground : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.45);
                     ctx.textAlign = "left";
                     ctx.textBaseline = "middle";
@@ -939,7 +939,7 @@ Item {
                         }
 
                         var lvl = (typeof formIdx === "number") ? formIdx : 0;
-                        var strokeColor = "#FFFFFF";
+                        var strokeColor = Model.isLightColor(Color.background) ? Color.foreground : "#FFFFFF";
                         var lineWidth = (lvl === 0) ? 0.60 : ((lvl === 1) ? 0.50 : 0.45);
                         var dotRadius = (lvl === 0) ? 1.8 : ((lvl === 1) ? 1.5 : 1.3);
                         var dashPattern = (lvl === 0) ? [] : ((lvl === 1) ? [6, 4] : [2, 3]);
@@ -1040,7 +1040,7 @@ Item {
                             fullLabel = condBadge + " · " + fullLabel;
                         }
 
-                        ctx.font = "bold " + Style.font.bodySmall + "px " + root.fontFamily;
+                        ctx.font = "bold " + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
                         var textW = ctx.measureText(fullLabel).width;
                         var padX = Style.space(4);
                         var pillW = textW + padX * 2;
@@ -1084,7 +1084,7 @@ Item {
                     ctx.fillStyle = badgeColor;
                     ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
 
-                    ctx.font = "bold " + Style.font.bodySmall + "px " + root.fontFamily;
+                    ctx.font = "bold " + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
                     ctx.fillStyle = Color.background;
                     ctx.textAlign = "center";
                     ctx.textBaseline = "middle";
@@ -1097,7 +1097,7 @@ Item {
                     ctx.fillStyle = extColor;
                     ctx.fillRect(badgeX, extBadgeY, badgeW, badgeH);
 
-                    ctx.font = "bold " + Style.font.bodySmall + "px " + root.fontFamily;
+                    ctx.font = "bold " + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
                     ctx.fillStyle = Color.background;
                     ctx.textAlign = "center";
                     ctx.textBaseline = "middle";
@@ -1107,7 +1107,7 @@ Item {
 
             // Bottom Time Scale Axis Ticks
             if (root.showTimeScale && g.timeTicks && g.timeTicks.length > 0) {
-                ctx.font = Style.font.bodySmall + "px " + root.fontFamily;
+                ctx.font = Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
                 ctx.fillStyle = Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.45);
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
@@ -1450,8 +1450,12 @@ Item {
     }
 
     // Inline Trigger / Target Level Text Editor Overlay
-    Rectangle {
+    FinanceSurface {
         id: levelEditOverlay
+        elevation: 2
+        radiusToken: "sm"
+        borderColorOverride: activeLvl ? root.levelToneColor(activeLvl.tone) : Color.foreground
+        z: Model.Z_LAYER.LEVEL_EDIT
         visible: root.editingLevel && root.cachedGeometry !== null
         readonly property var activeLvl: (root.editingLevelIndex >= 0 && root.editingLevelIndex < root.priceLevels.length) ? root.priceLevels[root.editingLevelIndex] : null
         readonly property var activeEp: (activeLvl && root.cachedGeometry) ? root.resolveLevelEndpoints(activeLvl, root.cachedGeometry) : null
@@ -1468,11 +1472,6 @@ Item {
         }
         width: Math.min(Math.max(Style.space(160), levelEditRow.implicitWidth + Style.space(14)), Math.max(Style.space(120), (root.cachedGeometry ? root.cachedGeometry.innerW : root.width) - Style.space(8)))
         height: Style.space(22)
-        radius: Style.space(3)
-        color: Color.popups.background
-        border.width: 1
-        border.color: activeLvl ? root.levelToneColor(activeLvl.tone) : Color.foreground
-        z: 35
 
         Row {
             id: levelEditRow
@@ -1687,7 +1686,7 @@ Item {
         color: Color.popups.background
         border.width: 1
         border.color: root.hoveringScale ? Color.foreground : root.crosshairColor
-        z: 15
+        z: Model.Z_LAYER.CROSSHAIR
 
         Text {
             anchors.centerIn: parent
@@ -1713,7 +1712,7 @@ Item {
         color: Color.popups.background
         border.width: 1
         border.color: root.crosshairColor
-        z: 15
+        z: Model.Z_LAYER.CROSSHAIR
 
         Text {
             id: dateBadgeText
@@ -1778,16 +1777,14 @@ Item {
     }
 
     // Floating Close Price Badge (Used when showPriceScale is false)
-    Rectangle {
+    FinanceSurface {
         id: priceBadge
+        elevation: 2
+        radiusToken: "pill"
         visible: root.showTooltipHeader && !root.showPriceScale && root.interactive && root.hovering && root.hoverCandle !== null
         readonly property int maxX: Math.max(0, root.width - width - root.pad)
         x: Math.min(maxX, Math.max(root.pad, root.hoverX - width / 2))
         y: Math.max(root.pad + Style.space(18), Math.min(root.hoverY - height - Style.space(8), root.height - height - root.pad))
-        radius: height / 2
-        color: Color.popups.background
-        border.width: 1
-        border.color: Qt.rgba(Color.popups.text.r, Color.popups.text.g, Color.popups.text.b, 0.18)
         implicitWidth: badgeText.implicitWidth + Style.space(12)
         implicitHeight: badgeText.implicitHeight + Style.space(6)
 

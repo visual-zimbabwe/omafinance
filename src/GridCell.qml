@@ -34,9 +34,9 @@ Item {
     }
     property color foreground: Color.foreground
     property bool showBroadening: false
-    property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.65)
-    property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
-    property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
+    property color dim: Model.accessibleDimColor(foreground, Color.background)
+    property color upColor: Model.accessibleSemanticColor("up", Color.background)
+    property color downColor: Model.accessibleSemanticColor("down", Color.background)
     property string fontFamily: Style.font.family
     property bool disableTickerSearch: false
 
@@ -552,7 +552,7 @@ Item {
                 anchors.rightMargin: Style.space(8)
                 height: Style.space(16)
                 visible: root.activeHoverCandle !== null
-                z: 10
+                z: Model.Z_LAYER.HEADER
 
                 Text {
                     anchors.left: parent.left
@@ -616,15 +616,16 @@ Item {
         anchors.leftMargin: Style.space(8)
         anchors.topMargin: Style.space(4)
         width: Style.space(260)
-        z: 200
+        z: Model.Z_LAYER.OVERLAY
 
-        Rectangle {
+        FinanceSurface {
             id: searchBox
+            elevation: 2
+            radiusToken: "sm"
+            active: searchInput.activeFocus
+            foregroundColor: root.foreground
             width: parent.width
             height: Style.space(28)
-            color: Color.popups.background
-            border.width: 1
-            border.color: root.foreground
 
             TextInput {
                 id: searchInput
@@ -674,16 +675,16 @@ Item {
         }
 
         // Suggestions Dropdown Popup
-        Rectangle {
+        FinanceSurface {
             id: suggestionsPopup
+            elevation: 3
+            radiusToken: "md"
+            foregroundColor: root.foreground
             visible: root.suggestions.length > 0 || (root.searchError !== "" && root.searchQuery.length > 0)
             anchors.top: searchBox.bottom
             anchors.topMargin: Style.space(4)
             width: parent.width
             implicitHeight: suggestionsColumn.implicitHeight + Style.space(8)
-            color: Color.popups.background
-            border.width: 1
-            border.color: root.dim
             clip: true
 
             Column {
@@ -777,13 +778,14 @@ Item {
         anchors.topMargin: Style.space(4)
         width: Style.space(170)
         height: Style.space(28)
-        z: 200
+        z: Model.Z_LAYER.OVERLAY
 
-        Rectangle {
+        FinanceSurface {
             anchors.fill: parent
-            color: Color.popups.background
-            border.width: 1
-            border.color: root.foreground
+            elevation: 2
+            radiusToken: "sm"
+            active: intervalInput.activeFocus
+            foregroundColor: root.foreground
 
             Row {
                 anchors.fill: parent
@@ -842,15 +844,14 @@ Item {
         readonly property bool showTooltip: symHoverArea.containsMouse && root.companyName !== ""
         visible: showTooltip
         anchors.fill: parent
-        z: 9998
+        z: Model.Z_LAYER.TOOLTIP
 
-        Rectangle {
+        FinanceSurface {
+            elevation: 3
+            radiusToken: "sm"
+            foregroundColor: root.foreground
             width: companyTooltipText.implicitWidth + Style.space(16)
             height: companyTooltipText.implicitHeight + Style.space(10)
-            radius: Style.space(4)
-            color: (Color.popups && Color.popups.background) ? Color.popups.background : Color.background
-            border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
-            border.width: 1
             x: Style.space(8)
             y: Style.space(34)
 

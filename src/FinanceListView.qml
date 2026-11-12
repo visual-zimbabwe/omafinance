@@ -20,10 +20,12 @@ Column {
             anchors.left: parent.left
             anchors.right: headerActions.left
             anchors.rightMargin: Style.space(8)
-            placeholderText: "Search tickers…"
+            placeholderText: qsTr("Search tickers…")
             hasCursor: controller.listChrome === "search" && !activeFocus
             foreground: controller.contentForeground
             font.family: controller.contentFontFamily
+            Accessible.role: Accessible.EditableText
+            Accessible.name: qsTr("Search tickers")
 
             onActiveFocusChanged: {
                 if (activeFocus)
@@ -129,13 +131,15 @@ Column {
                 required property int index
                 required property var modelData
                 width: parent.width
-                height: Style.space(44)
+                height: Math.max(Style.space(44), suggestionCol.implicitHeight + Style.space(12))
                 readonly property bool favorited: Model.isFavorite(controller.watchlist, modelData.symbol)
 
                 CursorSurface {
                     anchors.fill: parent
                     foreground: controller.contentForeground
                     hasCursor: controller.cursorActive && index === controller.suggestionIndex
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: modelData.symbol + (modelData.name ? " " + modelData.name : "")
 
                     MouseArea {
                         anchors.fill: parent
@@ -149,6 +153,7 @@ Column {
                     }
 
                     Column {
+                        id: suggestionCol
                         anchors.left: parent.left
                         anchors.right: starBtn.left
                         anchors.leftMargin: Style.space(10)
@@ -283,6 +288,7 @@ Column {
                                 visible: isPinned
                                 text: "★"
                                 color: controller.dim
+                                font.family: controller.contentFontFamily
                                 font.pixelSize: Style.font.bodySmall
                                 anchors.verticalCenter: parent.verticalCenter
                             }
@@ -298,70 +304,13 @@ Column {
                         }
                     }
 
-                    Row {
+                    FtfcStrip {
                         id: ftfcRow
-                        anchors.right: parent.right
-                        anchors.rightMargin: Style.space(8) + Style.space(108) + Style.space(10)
+                        controller: listViewRoot.controller
+                        quote: quote
+                        anchors.right: priceCol.left
+                        anchors.rightMargin: Style.space(10)
                         anchors.verticalCenter: parent.verticalCenter
-                        spacing: Style.space(3)
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "60"
-                            color: controller.timeframeColor(quote, "60")
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.letterSpacing: 1
-                            font.bold: true
-                        }
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "|"
-                            color: controller.dim
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall
-                        }
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "D"
-                            color: controller.timeframeColor(quote, "D")
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.letterSpacing: 1
-                            font.bold: true
-                        }
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "|"
-                            color: controller.dim
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall
-                        }
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "W"
-                            color: controller.timeframeColor(quote, "W")
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.letterSpacing: 1
-                            font.bold: true
-                        }
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "|"
-                            color: controller.dim
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall
-                        }
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "M"
-                            color: controller.timeframeColor(quote, "M")
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.letterSpacing: 1
-                            font.bold: true
-                        }
                     }
 
                     Column {
@@ -395,7 +344,7 @@ Column {
                                 anchors.centerIn: parent
                                 textFormat: Text.PlainText
                                 text: quote ? Model.formatQuoteChange(quote, controller.changeStyle) : "-"
-                                color: controller.contentForeground
+                                color: quote ? controller.toneColor(quote.changePercent) : controller.contentForeground
                                 font.family: controller.contentFontFamily
                                 font.pixelSize: Style.font.bodySmall
                                 font.bold: true
@@ -415,7 +364,7 @@ Column {
             Text {
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
-                text: "No favorites yet"
+                text: qsTr("No favorites yet")
                 color: controller.contentForeground
                 font.family: controller.contentFontFamily
                 font.pixelSize: Style.font.title
@@ -425,7 +374,8 @@ Column {
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
-                text: "Search for a ticker, then Favorite it to add it to your watchlist."
+                lineHeight: 1.3
+                text: qsTr("Search for a ticker, then Favorite it to add it to your watchlist.")
                 color: controller.dim
                 font.family: controller.contentFontFamily
                 font.pixelSize: Style.font.body
