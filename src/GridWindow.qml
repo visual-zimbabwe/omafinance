@@ -114,9 +114,9 @@ FloatingWindow {
     minimumSize: Qt.size(Style.space(700), Style.space(500))
 
     readonly property color foreground: Color.foreground
-    readonly property color dim: Qt.darker(foreground, 1.45)
-    readonly property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
-    readonly property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
+    readonly property color dim: Model.accessibleDimColor(foreground, Color.background)
+    readonly property color upColor: Model.accessibleSemanticColor("up", Color.background)
+    readonly property color downColor: Model.accessibleSemanticColor("down", Color.background)
     readonly property string fontFamily: Style.font.family
 
     function activeCellCount() {

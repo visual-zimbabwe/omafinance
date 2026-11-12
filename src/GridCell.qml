@@ -34,9 +34,9 @@ Item {
     }
     property color foreground: Color.foreground
     property bool showBroadening: false
-    property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.65)
-    property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
-    property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
+    property color dim: Model.accessibleDimColor(foreground, Color.background)
+    property color upColor: Model.accessibleSemanticColor("up", Color.background)
+    property color downColor: Model.accessibleSemanticColor("down", Color.background)
     property string fontFamily: Style.font.family
     property bool disableTickerSearch: false
 

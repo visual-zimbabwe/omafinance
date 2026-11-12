@@ -72,9 +72,9 @@ FloatingWindow {
     minimumSize: Qt.size(Style.space(800), Style.space(550))
 
     readonly property color foreground: Color.foreground
-    readonly property color dim: Qt.darker(foreground, 1.45)
-    readonly property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
-    readonly property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
+    readonly property color dim: Model.accessibleDimColor(foreground, Color.background)
+    readonly property color upColor: Model.accessibleSemanticColor("up", Color.background)
+    readonly property color downColor: Model.accessibleSemanticColor("down", Color.background)
     readonly property string fontFamily: Style.font.family
 
     function reloadSector(sym) {
@@ -995,16 +995,19 @@ FloatingWindow {
 
                                 Rectangle {
                                     required property string modelData
-                                    width: Style.space(32)
-                                    height: Style.space(22)
+                                    width: Math.max(Style.space(32), tfBtnText.implicitWidth + Style.space(10))
+                                    height: Math.max(Style.space(22), tfBtnText.implicitHeight + Style.space(6))
                                     radius: Style.space(3)
                                     color: modelData === root.timeframe ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: qsTr("Timeframe %1").arg(modelData)
 
                                     Text {
+                                        id: tfBtnText
                                         anchors.centerIn: parent
                                         textFormat: Text.PlainText
                                         text: modelData
-                                        color: modelData === root.timeframe ? Color.background : root.foreground
+                                        color: modelData === root.timeframe ? Model.contrastForeground(Color.accent) : root.foreground
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.caption
                                         font.bold: modelData === root.timeframe

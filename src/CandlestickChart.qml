@@ -834,7 +834,7 @@ Item {
                     var t = g.ticks[ti];
                     var isHoveredTick = (ti === root.hoveredTickIndex);
 
-                    ctx.font = (isHoveredTick ? "bold " : "") + Style.font.bodySmall + "px " + root.fontFamily;
+                    ctx.font = (isHoveredTick ? "bold " : "") + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
                     ctx.fillStyle = isHoveredTick ? Color.foreground : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.45);
                     ctx.textAlign = "left";
                     ctx.textBaseline = "middle";
@@ -939,7 +939,7 @@ Item {
                         }
 
                         var lvl = (typeof formIdx === "number") ? formIdx : 0;
-                        var strokeColor = "#FFFFFF";
+                        var strokeColor = Model.isLightColor(Color.background) ? Color.foreground : "#FFFFFF";
                         var lineWidth = (lvl === 0) ? 0.60 : ((lvl === 1) ? 0.50 : 0.45);
                         var dotRadius = (lvl === 0) ? 1.8 : ((lvl === 1) ? 1.5 : 1.3);
                         var dashPattern = (lvl === 0) ? [] : ((lvl === 1) ? [6, 4] : [2, 3]);
@@ -1040,7 +1040,7 @@ Item {
                             fullLabel = condBadge + " · " + fullLabel;
                         }
 
-                        ctx.font = "bold " + Style.font.bodySmall + "px " + root.fontFamily;
+                        ctx.font = "bold " + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
                         var textW = ctx.measureText(fullLabel).width;
                         var padX = Style.space(4);
                         var pillW = textW + padX * 2;
@@ -1084,7 +1084,7 @@ Item {
                     ctx.fillStyle = badgeColor;
                     ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
 
-                    ctx.font = "bold " + Style.font.bodySmall + "px " + root.fontFamily;
+                    ctx.font = "bold " + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
                     ctx.fillStyle = Color.background;
                     ctx.textAlign = "center";
                     ctx.textBaseline = "middle";
@@ -1097,7 +1097,7 @@ Item {
                     ctx.fillStyle = extColor;
                     ctx.fillRect(badgeX, extBadgeY, badgeW, badgeH);
 
-                    ctx.font = "bold " + Style.font.bodySmall + "px " + root.fontFamily;
+                    ctx.font = "bold " + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
                     ctx.fillStyle = Color.background;
                     ctx.textAlign = "center";
                     ctx.textBaseline = "middle";
@@ -1107,7 +1107,7 @@ Item {
 
             // Bottom Time Scale Axis Ticks
             if (root.showTimeScale && g.timeTicks && g.timeTicks.length > 0) {
-                ctx.font = Style.font.bodySmall + "px " + root.fontFamily;
+                ctx.font = Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
                 ctx.fillStyle = Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.45);
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
