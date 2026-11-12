@@ -412,63 +412,6 @@ FloatingWindow {
         onTriggered: root.refreshAllCharts(true)
     }
 
-    property var attackScanResult: null
-    property bool attackScanLoading: false
-
-    function refreshAttackScan() {
-        var isFocus = Model.focusPairForSymbol(root.mainSymbol) !== null;
-        if (!isFocus || root.attackScanLoading)
-            return;
-        root.attackScanLoading = true;
-        var home = Quickshell.env("HOME");
-        var scriptPath = home + "/.config/omarchy/plugins/mohamedmansour.finance/scripts/fetch-attack.js";
-        attackScannerProc.command = Model.nodeCommand(scriptPath);
-        attackScannerProc.running = true;
-    }
-
-    FileView {
-        id: attackCacheFile
-        path: Quickshell.env("HOME") + "/.cache/omafinance/attack.json"
-        watchChanges: true
-        onLoaded: {
-            try {
-                var txt = text();
-                if (txt && txt.length > 0) {
-                    var parsed = JSON.parse(txt);
-                    if (parsed && (parsed.focusPairs || parsed.daily))
-                        root.attackScanResult = parsed;
-                }
-            } catch (e) {}
-        }
-    }
-
-    Process {
-        id: attackScannerProc
-        onExited: function (exitCode) {
-            root.attackScanLoading = false;
-            var raw = String(attackScannerStdout.text || "").trim();
-            if (exitCode === 0 && raw) {
-                try {
-                    var data = JSON.parse(raw);
-                    if (data && (data.focusPairs || data.daily))
-                        root.attackScanResult = data;
-                } catch (e) {}
-            }
-        }
-        stdout: StdioCollector {
-            id: attackScannerStdout
-            waitForEnd: true
-        }
-    }
-
-    Timer {
-        id: attackScanTimer
-        interval: 60000
-        running: root.visible && Model.focusPairForSymbol(root.mainSymbol) !== null
-        repeat: true
-        onTriggered: root.refreshAttackScan()
-    }
-
     function refreshAllCharts(force) {
         var isForced = force === true;
         var stepTf = Model.mapReplayStepInterval(root.replayStepInterval);
@@ -1276,7 +1219,6 @@ FloatingWindow {
                         dailyCandles: root.getCandles(symbol, "1D")
                         priceLevels: root.symbolLevels[symbol] || []
                         replayCutoffTs: root.replayCutoffTs
-                        attackScanResult: root.attackScanResult
                         activeFocusCell: true
                         showBroadening: root.showBroadening
 
@@ -1341,7 +1283,6 @@ FloatingWindow {
                             dailyCandles: root.getCandles(symbol, "1D")
                             priceLevels: root.symbolLevels[symbol] || []
                             replayCutoffTs: root.replayCutoffTs
-                            attackScanResult: root.attackScanResult
                             activeFocusCell: root.activeCellIndex === 0
                             showBroadening: root.showBroadening
 
@@ -1409,7 +1350,6 @@ FloatingWindow {
                             dailyCandles: root.getCandles(symbol, "1D")
                             priceLevels: root.symbolLevels[symbol] || []
                             replayCutoffTs: root.replayCutoffTs
-                            attackScanResult: root.attackScanResult
                             activeFocusCell: root.activeCellIndex === 1
                             showBroadening: root.showBroadening
 
@@ -1495,7 +1435,6 @@ FloatingWindow {
                                 dailyCandles: root.getCandles(symbol, "1D")
                                 priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
-                                attackScanResult: root.attackScanResult
                                 activeFocusCell: root.activeCellIndex === 2
                                 showBroadening: root.showBroadening
 
@@ -1563,7 +1502,6 @@ FloatingWindow {
                                 dailyCandles: root.getCandles(symbol, "1D")
                                 priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
-                                attackScanResult: root.attackScanResult
                                 activeFocusCell: root.activeCellIndex === 3
                                 showBroadening: root.showBroadening
 
@@ -1627,7 +1565,6 @@ FloatingWindow {
                                 dailyCandles: root.getCandles(symbol, "1D")
                                 priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
-                                attackScanResult: root.attackScanResult
                                 activeFocusCell: root.activeCellIndex === 2
                                 showBroadening: root.showBroadening
 
@@ -1695,7 +1632,6 @@ FloatingWindow {
                                 dailyCandles: root.getCandles(symbol, "1D")
                                 priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
-                                attackScanResult: root.attackScanResult
                                 activeFocusCell: root.activeCellIndex === 3
                                 showBroadening: root.showBroadening
 
@@ -1763,7 +1699,6 @@ FloatingWindow {
                                 dailyCandles: root.getCandles(symbol, "1D")
                                 priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
-                                attackScanResult: root.attackScanResult
                                 activeFocusCell: root.activeCellIndex === 4
                                 showBroadening: root.showBroadening
 

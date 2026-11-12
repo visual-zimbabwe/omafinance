@@ -18,7 +18,6 @@ const qmlFiles = [
   "GridSplitter.qml",
   "GridCell.qml",
   "GridWindow.qml",
-  "BasketSupportPopup.qml",
   "FinanceAlertsView.qml",
   "SectorAnalysisWindow.qml"
 ]
@@ -553,33 +552,21 @@ test("grid window and panel persist cellTimeframes across state and layouts and 
   assert.match(chart, /signal replayRequested\(real timestamp\)/)
 })
 
-test("grid cell and basket support popup integrate focus basket tokens and inspector flyout", () => {
+test("grid cell is free of obsolete focus basket support and renders clean header", () => {
   const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
-  const popup = fs.readFileSync(source("BasketSupportPopup.qml"), "utf8")
+  const window = fs.readFileSync(source("GridWindow.qml"), "utf8")
 
-  assert.match(cell, /readonly property var focusSupport:\s*Model\.computeFocusBasketSupport/)
-  assert.match(cell, /id:\s*focusSupportBadgeItem/)
-  assert.match(cell, /root\.focusSupport\.attackToken/)
-  assert.match(cell, /root\.focusSupport\.peerToken/)
-  assert.match(cell, /root\.focusSupport\.supportToken/)
-  assert.match(cell, /id:\s*cellSupportPopup/)
-
-  assert.match(popup, /property var supportData/)
-  assert.match(popup, /allTimeframes/)
-  assert.match(popup, /positionSizing/)
-  assert.match(popup, /sizingReason/)
+  assert.doesNotMatch(cell, /focusSupportBadgeItem/)
+  assert.doesNotMatch(cell, /computeFocusBasketSupport/)
+  assert.doesNotMatch(cell, /cellSupportPopup/)
+  assert.doesNotMatch(window, /fetch-attack\.js/)
+  assert.doesNotMatch(window, /attackScanTimer/)
 })
 
-test("fetch-attack runner exists and produces structured focus basket output", () => {
-  const scriptPath = path.join(root, "scripts", "fetch-attack.js")
-  assert.ok(fs.existsSync(scriptPath), "scripts/fetch-attack.js should exist")
-  const code = fs.readFileSync(scriptPath, "utf8")
-  assert.match(code, /focusBasketSymbols\s*=\s*\[\s*"XLC",\s*"SMH"\s*\]/)
-  assert.match(code, /resolveEtfHoldings/)
-  assert.match(code, /Model\.computeBasketAttackMetrics/)
-  assert.match(code, /focusPairs/)
-  assert.match(code, /focusCandles/)
-  assert.match(code, /focusHoldings/)
+test("sector analysis window dynamically cycles across configured sector baskets including XLK", () => {
+  const saw = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
+  assert.match(saw, /function toggleSector\(\)/)
+  assert.match(saw, /Model\.sectorBaskets/)
 })
 
 test("candlestick chart renders broadening formation lines with white #FFFFFF and hierarchy dash/alpha styles", () => {

@@ -26,7 +26,7 @@ function fetchHttps(url, headers) {
 }
 
 async function run() {
-  const targetSymbol = Model.normalizeSymbol(process.argv[2] || "XLC");
+  const targetSymbol = Model.normalizeSymbol(process.argv[2] || "XLK");
   if (!targetSymbol) {
     process.stdout.write(JSON.stringify({ error: "Missing symbol" }));
     return;
