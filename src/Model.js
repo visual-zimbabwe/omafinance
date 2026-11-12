@@ -3913,15 +3913,17 @@ function computeFocusBasketSupport(symbol, timeframe, candles, quote, dailyCandl
 
 function stratRuleRationales() {
   return {
-    1: "Full Timeframe Continuity (FTFC): Price relative to open must align across 60, 1D, 1W, and 1M (all green for long, all red for short). Eliminates low-probability counter-trend traps.",
-    2: "Actionable Strat Signal: Trades must strictly originate from recognized combos (2-1-2, 2-2 Reversal, 2-2 Continuation, 3-1-2). Prevents arbitrary or emotional market entry.",
-    3: "Signal Bar Confirmation: Scenario classifications (1, 2, 3) are dynamic until the candle closes. Entering before close risks failed signals and false breakouts.",
-    4: "Time and Run Exhaustion: Entering late in a candle\x27s period or after 3+ consecutive uncorrected 2-bars carries high risk of instant reversal when the next period opens.",
-    5: "Trigger Execution: Orders must execute strictly when price breaks the signal candle extreme, mechanically turning the current bar into a live Scenario 2 or 3 in your favor.",
-    6: "Chop Avoidance: Scenario 1 represents indecision and range contraction. Trading inside an unresolved inside bar leads to whipsaws and theta decay.",
-    7: "Untagged Macro Targets: Strat targets are previous pivot highs/lows and broadening boundaries. Target must be untagged with open room/magnitude before encountering opposing structural resistance or exhaustion.",
-    8: "Structural Invalidation Stop: Non-negotiable stop placed at the opposite extreme of the signal candle. Breaching this level invalidates the trade hypothesis.",
-    9: "Runway Quality: Major 1W/1M previous extremes act as heavy supply/demand zones. There must be no opposing HTF wall blocking the path to target."
+    1: "Actionable Signals: Trades must strictly originate from recognized Strat combos (2-1-2, 2-2, 3-1-2, 1-3-2, PMG) on closed candles, avoiding inside bar consolidation chop.",
+    2: "Create & Negate: Every setup must identify what higher-timeframe scenario it triggers if it works, and exactly where it is negated if it fails.",
+    3: "Direction of Control: Trade in the direction where aggregated capital exerts control (Timeframe Continuity Polarity). Eliminates low-probability counter-trend traps.",
+    4: "Magnitude & Targets: Structural pivots (prior highs/lows and broadening formation boundaries) provide non-negotiable liquidity targets with open room/magnitude before encountering opposing resistance.",
+    5: "Full vs Partial FTFC: Full 4/4 continuity offers highest probability (full sizing). Partial continuity (1D+60m override) requires scaled sizing. Conflict must be avoided.",
+    6: "Momentum vs Retracement: The One-Bar Test: trading in the color of the prior bar is momentum (joining flow); trading against it is retracement (reversal into pullback).",
+    7: "Time Exhaustion: Entering late in a candle\x27s period or after 3+ consecutive uncorrected 2-bars carries extreme risk of reversal upon the next period open.",
+    8: "Level of Defense: Non-negotiable structural stop level placed where the trade idea is invalidated (tightest spread+1c, tight entry open, 50%, or wide).",
+    9: "Management Plan: Complete pre-entry roadmap defining trigger entry, T1 profit reduction, domino scaling, and invalidation stop before clicking.",
+    10: "Sector & Market Context: Individual equities move with their broader averages (SPY/QQQ) and sector ETF. Trading with institutional sector flow provides macro wind.",
+    11: "Broadening Formation Stage: Broadening formations are expanding ranges. Entering early off an outer ray provides maximum runway; entering late into an opposing ray carries exhaustion risk."
   }
 }
 
@@ -5419,16 +5421,121 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
 
   var rationales = stratRuleRationales()
 
+  // Canonical 11 Pre-Trade Questions (thestrat.ai/docs/trade-checklist/)
+  // 1. Actionable Signals: recognized Strat combos on closed candles, avoiding inside bar consolidation chop
+  var q1Pass = Boolean(validSignal && r3Pass && entryState.passes && !motherbarProblem.isMotherbarProblem && !isDoji3Continuation)
+  var q1Detail = isDoji3Continuation
+    ? "Doji 3 indecision bar — prefer 3-1-2 or 3-2-2 reversal over 3-2 continuation"
+    : (motherbarProblem.isMotherbarProblem
+      ? motherbarProblem.detail
+      : (!r3Pass
+        ? "Signal candle still forming (awaiting close)"
+        : (!entryState.passes
+          ? entryState.detail
+          : (invalidRevStratReason
+            ? invalidRevStratReason
+            : (validSignal
+              ? (signalName + (r2Extras.length ? (" [" + r2Extras.join(" | ") + "]") : "") + (signalCandle ? (" [Closed " + Number(signalCandle.low).toFixed(2) + " - " + Number(signalCandle.high).toFixed(2) + "]") : ""))
+              : "No actionable combo pattern")))))
+
+  // 2. Create & Negate: higher-timeframe scenario created if it works vs level of negation if it fails
+  var q2Pass = Boolean(validSignal && stopPrice !== null && (targetPrice !== null || patternMag !== null))
+  var worksStr = (domino && domino.hasDomino)
+    ? ("Works ➔ Triggers " + domino.triggeredSignal + " at $" + Number(domino.targetPrice).toFixed(2))
+    : (targetName
+      ? ("Works ➔ Tags " + targetName + " at $" + Number(targetPrice).toFixed(2))
+      : (setupLabel + " continuation"))
+  var negatesStr = (stopPrice !== null) ? ("Negated @ Stop $" + Number(stopPrice).toFixed(2)) : "No stop defined"
+  var q2Detail = worksStr + " | " + negatesStr
+
+  // 3. Direction of Control: Timeframe Continuity Polarity
+  var q3Pass = Boolean(direction && direction !== "CONFLICT" && (isFTFC || isOverride))
+  var q3Detail = r1Detail
+
+  // 4. Magnitude & Targets: structural pivots and untagged room
+  var q4Pass = r7Pass
+  var q4Detail = r7Detail
+
+  // 5. Full vs Partial FTFC: Full 4/4 vs 1D+60m Override vs Conflict
+  var q5Pass = Boolean(isFTFC || isOverride)
+  var q5Detail = isFTFC
+    ? "Full 4/4 Continuity (Full Size)"
+    : (isOverride
+      ? ("Partial Continuity (1D+" + setupLabel + " Override — Scaled Size)")
+      : "Timeframe Conflict (Blocked — No Sizing)")
+
+  // 6. Momentum or Retracement: The One-Bar Test
+  var q6Pass = Boolean(tradeStyleInfo && (tradeStyleInfo.style === "MOMENTUM" || tradeStyleInfo.style === "RETRACEMENT"))
+  var q6Detail = tradeStyleInfo.label + " — " + (tradeStyleInfo.style === "MOMENTUM"
+    ? "Joining trade-color flow (Trail stop to prior bar extreme)"
+    : "Reversal against prior bar pullback (Tighter targets / scale at T1)")
+
+  // 7. Time Exhaustion: candle time remaining, run count, session close
+  var q7Pass = r4Pass
+  var q7Detail = r4Detail
+
+  // 8. Level of Defense: defined stop level
+  var q8Pass = r8Pass
+  var q8Detail = r8Detail
+
+  // 9. Management Plan: Add, Reduce, Exit roadmap + trigger crossed
+  var planDefined = (triggerPrice !== null && stopPrice !== null && targetPrice !== null)
+  var q9Pass = Boolean(planDefined && r5Pass && !isStoppedOut && !isTargetHit)
+  var planParts = []
+  planParts.push("Enter @ Trig $" + (triggerPrice != null ? triggerPrice.toFixed(2) : "-"))
+  planParts.push("Scale @ T1 $" + (targetPrice != null ? targetPrice.toFixed(2) : "-"))
+  if (domino && domino.hasDomino) {
+    planParts.push("Add @ " + domino.targetName + " $" + Number(domino.targetPrice).toFixed(2))
+  }
+  planParts.push("Exit @ Stop $" + (stopPrice != null ? stopPrice.toFixed(2) : "-"))
+  var planStr = planParts.join(" ➔ ")
+  var q9Detail = isStoppedOut
+    ? (planStr + " [STOPPED OUT]")
+    : (isTargetHit
+      ? (planStr + " [TARGET HIT]")
+      : (r5Pass
+        ? (planStr + " [In-Force]")
+        : (planStr + " [Awaiting Trigger]")))
+
+  // 10. Sector & Market Context: broader averages & sector ETF alignment
+  var q10Pass = r9Pass
+  var q10Detail = r9Detail
+
+  // 11. Broadening Formation Stage: early expansion vs mid-range vs late exhaustion
+  var q11Pass = !isExhaustionByPrice && !isTargetHit
+  var bfStage = "Standard Range (Normal pivot-to-pivot discovery)"
+  if (activeBf && activeBf.major) {
+    if (bfSignalAtBoundary) {
+      bfStage = "Early Expansion (Reversal off " + (isLong ? "Lower" : "Upper") + " Ray — High Runway)"
+    } else if (isExhaustionByPrice) {
+      bfStage = "Late Exhaustion (Exhaustion by price into fresh unconfirmed range)"
+      q11Pass = false
+    } else {
+      var pLowerStr = activeBf.projectedLower != null ? ("$" + Number(activeBf.projectedLower).toFixed(2)) : "-"
+      var pUpperStr = activeBf.projectedUpper != null ? ("$" + Number(activeBf.projectedUpper).toFixed(2)) : "-"
+      bfStage = "Mid-Formation (Expanding range between " + pLowerStr + " and " + pUpperStr + ")"
+    }
+  } else if (isExhaustionByPrice) {
+    bfStage = "Late Exhaustion (Exhaustion by price — no untagged HTF pivots)"
+    q11Pass = false
+  } else if (isTargetHit) {
+    bfStage = "Exhausted (Target reached on setup timeframe)"
+    q11Pass = false
+  }
+  var q11Detail = bfStage
+
   var rules = [
-    { id: 1, title: "FTFC confirmed: all timeframes share same color.", shortTitle: "1. FTFC Polarity", passed: r1Pass, detail: r1Detail, rationale: rationales[1] },
-    { id: 2, title: "Valid Strat signal on active setup timeframe.", shortTitle: "2. Valid Signal", passed: r2Pass, detail: r2Detail, rationale: rationales[2] },
-    { id: 3, title: "Signal candle has completed and closed.", shortTitle: "3. Signal Closed", passed: r3Pass, detail: r3Detail, rationale: rationales[3] },
-    { id: 4, title: "Entry is fresh: no time or run exhaustion.", shortTitle: "4. No Exhaustion", passed: r4Pass, detail: r4Detail, rationale: rationales[4] },
-    { id: 5, title: "Execution trigger price crossed by min 1 tick.", shortTitle: "5. Trigger Crossed", passed: r5Pass, detail: r5Detail, rationale: rationales[5] },
-    { id: 6, title: "Execution candle is not stuck in Scenario 1.", shortTitle: "6. Avoid 1-Chop", passed: r6Pass, detail: r6Detail, rationale: rationales[6] },
-    { id: 7, title: "Untagged HTF target provides sufficient room.", shortTitle: "7. Untagged Target", passed: r7Pass, detail: r7Detail, rationale: rationales[7] },
-    { id: 8, title: "Stop-loss anchored to signal candle opposite.", shortTitle: "8. Stop Defined", passed: r8Pass, detail: r8Detail, rationale: rationales[8] },
-    { id: 9, title: "No major opposing HTF pivot blocks runway.", shortTitle: "9. Clear Runway", passed: r9Pass, detail: r9Detail, rationale: rationales[9] }
+    { id: 1, key: "SIGNALS", title: "How many actionable signals, and what are they?", shortTitle: "1. Actionable Signals", passed: q1Pass, detail: q1Detail, rationale: rationales[1] },
+    { id: 2, key: "CREATE_NEGATE", title: "What signals get created if this works, or if it fails?", shortTitle: "2. Create & Negate", passed: q2Pass, detail: q2Detail, rationale: rationales[2] },
+    { id: 3, key: "DIRECTION", title: "Is the trade in the direction of participation-group control?", shortTitle: "3. Direction of Control", passed: q3Pass, detail: q3Detail, rationale: rationales[3] },
+    { id: 4, key: "MAGNITUDE", title: "Where is the broadening-formation magnitude, and can it change?", shortTitle: "4. Magnitude & Targets", passed: q4Pass, detail: q4Detail, rationale: rationales[4] },
+    { id: 5, key: "CONTINUITY_TYPE", title: "Is FTFC full or partial?", shortTitle: "5. Full vs Partial FTFC", passed: q5Pass, detail: q5Detail, rationale: rationales[5] },
+    { id: 6, key: "MOMENTUM_RETRACEMENT", title: "Momentum or retracement?", shortTitle: "6. Momentum vs Retracement", passed: q6Pass, detail: q6Detail, rationale: rationales[6] },
+    { id: 7, key: "TIME_EXHAUSTION", title: "How much time until the signal exhausts?", shortTitle: "7. Time Exhaustion", passed: q7Pass, detail: q7Detail, rationale: rationales[7] },
+    { id: 8, key: "STOP_DEFENSE", title: "Where is the stop, the level of defense?", shortTitle: "8. Level of Defense", passed: q8Pass, detail: q8Detail, rationale: rationales[8] },
+    { id: 9, key: "MANAGEMENT_PLAN", title: "What is the management plan: add, reduce, or exit?", shortTitle: "9. Management Plan", passed: q9Pass, detail: q9Detail, rationale: rationales[9] },
+    { id: 10, key: "MARKET_SECTOR", title: "Does the trade line up with the broader averages and the sector ETF?", shortTitle: "10. Sector & Market Context", passed: q10Pass, detail: q10Detail, rationale: rationales[10] },
+    { id: 11, key: "BROADENING_STAGE", title: "Where in the broadening-formation series is price?", shortTitle: "11. Broadening Formation Stage", passed: q11Pass, detail: q11Detail, rationale: rationales[11] }
   ]
 
   var passedCount = 0
@@ -5448,7 +5555,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
 
   if (isTradeable) {
     var gr = (htfQuality && htfQuality.grade) ? (" (Grade " + htfQuality.grade + ")") : ""
-    statusTag = "TRADEABLE" + gr + " - All 9 Rules Verified"
+    statusTag = "TRADEABLE" + gr + " - All 11 Questions Verified"
   } else if (isTargetHit) {
     statusTag = "TARGET HIT (" + (targetName || "T1") + ") - Exhaustion Risk"
   } else if (isStoppedOut) {
@@ -5481,10 +5588,10 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   }
 
   if (!statusTag) {
-    statusTag = isConflict ? "BLOCKED - Multi-Timeframe Conflict" : ("BLOCKED - " + passedCount + "/9 Rules Met")
+    statusTag = isConflict ? "BLOCKED - Multi-Timeframe Conflict" : ("BLOCKED - " + passedCount + "/11 Questions Met")
   }
 
-  var badgeText = passedCount + "/9"
+  var badgeText = passedCount + "/11"
   var badgeTone = "neutral"
   if (isTradeable) {
     badgeTone = (direction === "SHORT") ? "down" : "up"
@@ -5507,6 +5614,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     currentPrice: isFinite(currentPrice) ? currentPrice : null,
     passedCount: passedCount,
     totalRules: rules.length,
+    totalCount: rules.length,
     isTradeable: isTradeable,
     isArmed: isArmed,
     statusTag: statusTag,
@@ -5574,7 +5682,8 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
       isOverride: isOverride,
       isConflict: isConflict
     },
-    rules: rules
+    rules: rules,
+    questions: rules
   }
 }
 
