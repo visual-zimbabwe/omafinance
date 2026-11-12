@@ -3306,6 +3306,20 @@ test("sector analysis: sector definitions, query parsing, scenario matching, and
   assert.deepEqual(Model.parseSectorTickers(""), [])
   assert.deepEqual(Model.parseSectorTickers(null), [])
 
+  // 1b. Symbol Extraction & Ticker List Formatting
+  assert.deepEqual(Model.extractSymbols(["aapl", "MSFT", "aapl", "  nvda  "]), ["AAPL", "MSFT", "NVDA"])
+  assert.deepEqual(Model.extractSymbols([{ symbol: "tsm" }, { symbol: "NVDA" }, { symbol: "tsm" }]), ["TSM", "NVDA"])
+  assert.deepEqual(Model.extractSymbols([{ symbol: "amd" }, "intc", { symbol: "AMD" }]), ["AMD", "INTC"])
+  assert.deepEqual(Model.extractSymbols([]), [])
+  assert.deepEqual(Model.extractSymbols(null), [])
+  assert.deepEqual(Model.extractSymbols(undefined), [])
+
+  assert.equal(Model.formatTickerList(["aapl", "msft", "nvda"]), "AAPL, MSFT, NVDA")
+  assert.equal(Model.formatTickerList([{ symbol: "nvda" }, { symbol: "amd" }]), "NVDA, AMD")
+  assert.equal(Model.formatTickerList([{ symbol: "nvda" }, { symbol: "amd" }], ","), "NVDA,AMD")
+  assert.equal(Model.formatTickerList([]), "")
+  assert.equal(Model.formatTickerList(null), "")
+
   // 2. Query Parsing
   assert.deepEqual(Model.parseScenarioQuery("1, hammer, 2dg"), [["1"], ["hammer"], ["2dg"]])
   assert.deepEqual(Model.parseScenarioQuery("2u if, 3"), [["2u", "if"], ["3"]])

@@ -7569,6 +7569,26 @@ function parseSectorTickers(symbolString) {
   return res;
 }
 
+function extractSymbols(items) {
+  if (!items || !items.length) return [];
+  var out = [];
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var raw = (it && typeof it === "object") ? it.symbol : it;
+    var sym = normalizeSymbol(raw);
+    if (sym.length > 0 && out.indexOf(sym) === -1) {
+      out.push(sym);
+    }
+  }
+  return out;
+}
+
+function formatTickerList(items, separator) {
+  var sep = (separator !== undefined) ? separator : ", ";
+  var syms = extractSymbols(items);
+  return syms.join(sep);
+}
+
 function parseScenarioQuery(query) {
   if (!query || typeof query !== "string") return [];
   var trimmed = query.trim();
@@ -7983,6 +8003,8 @@ if (typeof module !== "undefined") {
     sectorBaskets: sectorBaskets,
     getSectorInfo: getSectorInfo,
     parseSectorTickers: parseSectorTickers,
+    extractSymbols: extractSymbols,
+    formatTickerList: formatTickerList,
     parseScenarioQuery: parseScenarioQuery,
     matchesScenarioTokens: matchesScenarioTokens,
     matchesScenarioQuery: matchesScenarioQuery,
