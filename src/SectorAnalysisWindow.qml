@@ -746,12 +746,6 @@ FloatingWindow {
                     return;
                 }
             }
-            if (event.key === Qt.Key_Slash) {
-                scenarioField.forceActiveFocus();
-                scenarioField.selectAll();
-                event.accepted = true;
-                return;
-            }
             if (event.key === Qt.Key_Escape) {
                 if (root.inDrillDown) {
                     root.inDrillDown = false;
@@ -1066,8 +1060,9 @@ FloatingWindow {
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
-                            // Scenario Filter Input (/ shortcut)
+                            // Scenario Filter Input Box (Mirrors sectorBox implementation)
                             Rectangle {
+                                id: scenarioBox
                                 width: Style.space(200)
                                 height: Style.space(24)
                                 radius: Style.space(4)
@@ -1075,13 +1070,15 @@ FloatingWindow {
                                 border.color: scenarioField.activeFocus ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
                                 border.width: 1
                                 anchors.verticalCenter: parent.verticalCenter
+                                clip: true
 
                                 TextInput {
                                     id: scenarioField
                                     anchors.fill: parent
                                     anchors.leftMargin: Style.space(6)
-                                    anchors.rightMargin: Style.space(20)
+                                    anchors.rightMargin: Style.space(22)
                                     verticalAlignment: TextInput.AlignVCenter
+                                    clip: true
                                     text: root.scenarioFilter
                                     color: root.foreground
                                     font.family: root.fontFamily
@@ -1091,17 +1088,55 @@ FloatingWindow {
                                     onTextChanged: {
                                         filterDebounceTimer.restart();
                                     }
+
+                                    onAccepted: {
+                                        root.scenarioFilter = text.trim();
+                                        keyboardListener.forceActiveFocus();
+                                    }
+
+                                    onActiveFocusChanged: {
+                                        if (!activeFocus) {
+                                            root.scenarioFilter = text.trim();
+                                        } else {
+                                            selectAll();
+                                        }
+                                    }
+
                                     Keys.onPressed: function (ev) {
-                                        if (ev.key === Qt.Key_Down || ev.key === Qt.Key_Tab) {
+                                        if (ev.key === Qt.Key_Escape) {
+                                            text = root.scenarioFilter;
+                                            keyboardListener.forceActiveFocus();
+                                            ev.accepted = true;
+                                        } else if (ev.key === Qt.Key_Down || ev.key === Qt.Key_Tab) {
                                             keyboardListener.forceActiveFocus();
                                             ev.accepted = true;
                                         }
                                     }
                                 }
 
+                                Binding {
+                                    target: scenarioField
+                                    property: "text"
+                                    value: root.scenarioFilter
+                                    when: !scenarioField.activeFocus
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    z: 2
+                                    acceptedButtons: Qt.RightButton
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: function (mouse) {
+                                        if (mouse.button === Qt.RightButton) {
+                                            scenarioField.text = "";
+                                            root.scenarioFilter = "";
+                                        }
+                                    }
+                                }
+
                                 Text {
                                     visible: root.scenarioFilter.length === 0 && !scenarioField.activeFocus
-                                    text: "1, 2uh, 3s, !r... (/)"
+                                    text: "1, 2uh, 3s, !r..."
                                     color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.5)
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.caption
@@ -1118,6 +1153,7 @@ FloatingWindow {
                                     anchors.right: parent.right
                                     anchors.rightMargin: Style.space(6)
                                     anchors.verticalCenter: parent.verticalCenter
+                                    z: 3
 
                                     MouseArea {
                                         anchors.fill: parent
@@ -1698,6 +1734,7 @@ FloatingWindow {
                                 timeframe: root.timeframe
                                 showBroadening: root.showBroadening
                                 hideStratBadge: true
+                                disableTickerSearch: true
                                 activeFocusCell: root.activeTileIndex === tileWrapper.index
                                 zoomCount: root.globalBarCount
 
@@ -1815,6 +1852,7 @@ FloatingWindow {
                                 symbol: root.drillDownSymbol
                                 timeframe: "30"
                                 showBroadening: root.showBroadening
+                                disableTickerSearch: true
                                 zoomCount: root.globalBarCount
                                 quote: root.quotes[root.drillDownSymbol] || null
                                 candles: root.getCandles(root.drillDownSymbol, "30")
@@ -1832,6 +1870,7 @@ FloatingWindow {
                                 symbol: root.drillDownSymbol
                                 timeframe: "60"
                                 showBroadening: root.showBroadening
+                                disableTickerSearch: true
                                 zoomCount: root.globalBarCount
                                 quote: root.quotes[root.drillDownSymbol] || null
                                 candles: root.getCandles(root.drillDownSymbol, "60")
@@ -1856,6 +1895,7 @@ FloatingWindow {
                                 symbol: root.drillDownSymbol
                                 timeframe: "1D"
                                 showBroadening: root.showBroadening
+                                disableTickerSearch: true
                                 zoomCount: root.globalBarCount
                                 quote: root.quotes[root.drillDownSymbol] || null
                                 candles: root.getCandles(root.drillDownSymbol, "1D")
@@ -1873,6 +1913,7 @@ FloatingWindow {
                                 symbol: root.drillDownSymbol
                                 timeframe: "1W"
                                 showBroadening: root.showBroadening
+                                disableTickerSearch: true
                                 zoomCount: root.globalBarCount
                                 quote: root.quotes[root.drillDownSymbol] || null
                                 candles: root.getCandles(root.drillDownSymbol, "1W")
@@ -1890,6 +1931,7 @@ FloatingWindow {
                                 symbol: root.drillDownSymbol
                                 timeframe: "1M"
                                 showBroadening: root.showBroadening
+                                disableTickerSearch: true
                                 zoomCount: root.globalBarCount
                                 quote: root.quotes[root.drillDownSymbol] || null
                                 candles: root.getCandles(root.drillDownSymbol, "1M")
