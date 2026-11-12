@@ -40,6 +40,7 @@ Item {
     property color upColor: Qt.rgba(0.22, 0.50, 0.30, 1)
     property color downColor: Qt.rgba(0.62, 0.22, 0.22, 1)
     property string fontFamily: Style.font.family
+    property bool disableTickerSearch: false
 
     property bool searching: false
     property string searchQuery: ""
@@ -281,7 +282,7 @@ Item {
                 return;
             }
         } else if (event.key === Qt.Key_Slash || event.key === Qt.Key_S) {
-            if (!root.searching && !root.changingInterval && !root.editingLevel) {
+            if (!root.disableTickerSearch && !root.searching && !root.changingInterval && !root.editingLevel) {
                 root.startSearch();
                 event.accepted = true;
                 return;
@@ -355,11 +356,12 @@ Item {
                         id: symHoverArea
                         anchors.fill: parent
                         hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
+                        cursorShape: root.disableTickerSearch ? Qt.ArrowCursor : Qt.PointingHandCursor
                         onClicked: {
                             root.forceActiveFocus();
                             root.focusRequested(root.cellIndex);
-                            root.startSearch();
+                            if (!root.disableTickerSearch)
+                                root.startSearch();
                         }
                     }
                 }
