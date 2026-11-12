@@ -137,12 +137,9 @@ FloatingWindow {
     }
 
     function pushLockTier() {
-        if (!root.filteredTiles || root.filteredTiles.length === 0)
+        var symbols = Model.extractSymbols(root.filteredTiles);
+        if (symbols.length === 0)
             return;
-        var symbols = [];
-        for (var i = 0; i < root.filteredTiles.length; i++) {
-            symbols.push(root.filteredTiles[i].symbol);
-        }
         var nextStack = root.lockStack ? root.lockStack.slice() : [];
         nextStack.push(symbols);
         root.lockStack = nextStack;
@@ -151,6 +148,14 @@ FloatingWindow {
             scenarioField.text = "";
             root.scenarioFilter = "";
         }
+    }
+
+    function copyFilteredTickers() {
+        var text = Model.formatTickerList(root.filteredTiles);
+        if (!text || text.length === 0)
+            return;
+        Quickshell.execDetached(["wl-copy", "-n", "--", text]);
+        copyFeedbackTimer.restart();
     }
 
     function popLockTier(targetLength) {
@@ -394,10 +399,10 @@ FloatingWindow {
         var singleSym = (tickers.length === 1) ? tickers[0] : root.sectorSymbol;
         var syms = singleSym ? [singleSym] : [];
         if (Model.isBasketSector(singleSym)) {
-            for (var i = 0; i < root.holdings.length; i++) {
-                var h = root.holdings[i];
-                if (h && h.symbol && syms.indexOf(h.symbol) === -1)
-                    syms.push(h.symbol);
+            var hSyms = Model.extractSymbols(root.holdings);
+            for (var i = 0; i < hSyms.length; i++) {
+                if (syms.indexOf(hSyms[i]) === -1)
+                    syms.push(hSyms[i]);
             }
         }
         return syms;
@@ -710,6 +715,13 @@ FloatingWindow {
         focus: true
 
         Keys.onPressed: function (event) {
+            if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_C) {
+                if (!root.inDrillDown && root.filteredTiles.length > 0) {
+                    root.copyFilteredTickers();
+                    event.accepted = true;
+                    return;
+                }
+            }
             if (event.key === Qt.Key_Slash) {
                 scenarioField.forceActiveFocus();
                 scenarioField.selectAll();
@@ -1242,6 +1254,54 @@ FloatingWindow {
                                 enabled: root.lockStack.length === 0 && root.matchingHoldingsCount > 0
                                 cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                                 onClicked: root.pushLockTier()
+                            }
+                        }
+
+                        // Copy Filtered Tickers Button
+                        Rectangle {
+                            id: copyBtn
+                            height: Style.space(24)
+                            implicitWidth: copyRow.implicitWidth + Style.space(16)
+                            radius: Style.space(4)
+                            color: copyFeedbackTimer.running ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16) : (copyHover.hovered ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.14) : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08))
+                            border.color: copyFeedbackTimer.running ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.20)
+                            border.width: 1
+                            opacity: root.filteredTiles.length === 0 ? 0.4 : 1.0
+                            anchors.verticalCenter: parent.verticalCenter
+
+                            Row {
+                                id: copyRow
+                                anchors.centerIn: parent
+                                spacing: Style.space(4)
+
+                                Text {
+                                    textFormat: Text.PlainText
+                                    text: copyFeedbackTimer.running ? "✓" : "\uf0c5"
+                                    color: copyFeedbackTimer.running ? Color.accent : (root.filteredTiles.length === 0 ? root.dim : root.foreground)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.caption
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Text {
+                                    textFormat: Text.PlainText
+                                    text: copyFeedbackTimer.running ? "COPIED" : "COPY"
+                                    color: copyFeedbackTimer.running ? Color.accent : (root.filteredTiles.length === 0 ? root.dim : root.foreground)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.caption
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                            }
+
+                            MouseArea {
+                                id: copyHover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                enabled: root.filteredTiles.length > 0
+                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                onClicked: root.copyFilteredTickers()
                             }
                         }
                     }
@@ -1841,5 +1901,11 @@ FloatingWindow {
             if (raw.length > 0)
                 root.setGlobalBarCount(raw);
         }
+    }
+
+    Timer {
+        id: copyFeedbackTimer
+        interval: 1500
+        repeat: false
     }
 }

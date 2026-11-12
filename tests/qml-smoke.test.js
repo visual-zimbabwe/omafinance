@@ -661,6 +661,13 @@ test("sector analysis window supports multi-tier recursive locking, 4-worker cha
   assert.match(win, /property string holdingsFetchSymbol:/)
   assert.match(win, /property int globalBarCount:\s*\(Model && Model\.DEFAULT_ANALYSIS_BAR_COUNT !== undefined\) \? Model\.DEFAULT_ANALYSIS_BAR_COUNT : 8/)
   assert.match(win, /function setGlobalBarCount\(nextZoom\)/)
+  assert.match(win, /id:\s*copyBtn/)
+  assert.match(win, /function copyFilteredTickers\(\)/)
+  assert.match(win, /Model\.formatTickerList\(root\.filteredTiles\)/)
+  assert.match(win, /Quickshell\.execDetached\(\["wl-copy",\s*"-n",\s*"--",\s*text\]\)/)
+  assert.match(win, /id:\s*copyFeedbackTimer/)
+  assert.match(win, /"\\uf0c5"/)
+  assert.match(win, /event\.modifiers & Qt\.ControlModifier[\s\S]*?event\.key === Qt\.Key_C/)
 })
 
 
