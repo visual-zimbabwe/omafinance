@@ -2157,31 +2157,84 @@ function detectCandleShape(candle, prevCandle) {
 }
 
 function detectPivotMachineGun(candles, isLong) {
-  var empty = { isPMG: false, count: 0, pivots: [], topTarget: null }
+  var empty = { isPMG: false, count: 0, pivots: [], topTarget: null, triggerPrice: null }
   if (!Array.isArray(candles) || candles.length < 6) return empty
   var n = candles.length
   var p1 = candles[n - 2]
   if (!p1) return empty
   var firstPivot = isLong ? Number(p1.high) : Number(p1.low)
   if (!isFinite(firstPivot)) return empty
+
   var pivots = [firstPivot]
-  for (var idx = n - 2; idx >= 1; idx--) {
+  var lastPivotVal = firstPivot
+  var idx = n - 2
+
+  while (idx >= 1) {
     var curBar = candles[idx]
     var prevBar = candles[idx - 1]
     if (!curBar || !prevBar) break
+
     var curVal = isLong ? Number(curBar.high) : Number(curBar.low)
     var prevVal = isLong ? Number(prevBar.high) : Number(prevBar.low)
     if (!isFinite(curVal) || !isFinite(prevVal)) break
-    if (isLong ? (curVal < prevVal) : (curVal > prevVal)) {
-      pivots.push(prevVal)
+
+    // Progression in trade direction (allows equal extremes <= / >=)
+    if (isLong ? (prevVal >= lastPivotVal - 0.0001) : (prevVal <= lastPivotVal + 0.0001)) {
+      if (Math.abs(prevVal - lastPivotVal) >= 0.005) {
+        pivots.push(prevVal)
+        lastPivotVal = prevVal
+      }
+      idx--
     } else {
-      break
+      // Check if prevBar is an inside bar (Scenario 1) relative to its predecessor(s)
+      var foundMother = false
+      if (idx >= 2) {
+        var mIdx = idx - 2
+        while (mIdx >= 0) {
+          var motherBar = candles[mIdx]
+          var childBar = candles[mIdx + 1]
+          if (!motherBar || !childBar) break
+          if (stratScenario(childBar, motherBar) === "1") {
+            var motherVal = isLong ? Number(motherBar.high) : Number(motherBar.low)
+            if (isFinite(motherVal) && (isLong ? (motherVal >= lastPivotVal - 0.0001) : (motherVal <= lastPivotVal + 0.0001))) {
+              if (Math.abs(prevVal - lastPivotVal) >= 0.005 && (isLong ? prevVal > lastPivotVal : prevVal < lastPivotVal)) {
+                pivots.push(prevVal)
+              }
+              if (Math.abs(motherVal - lastPivotVal) >= 0.005) {
+                pivots.push(motherVal)
+                lastPivotVal = motherVal
+              }
+              idx = mIdx
+              foundMother = true
+              break
+            }
+          } else {
+            break
+          }
+          mIdx--
+        }
+      }
+      if (!foundMother) {
+        if (stratScenario(curBar, prevBar) === "1") {
+          if (isLong ? (prevVal >= lastPivotVal - 0.0001) : (prevVal <= lastPivotVal + 0.0001)) {
+            if (Math.abs(prevVal - lastPivotVal) >= 0.005) {
+              pivots.push(prevVal)
+              lastPivotVal = prevVal
+            }
+            idx--
+            continue
+          }
+        }
+        break
+      }
     }
   }
+
   if (pivots.length < 5) return empty
   return {
     isPMG: true,
     count: pivots.length,
+    triggerPrice: firstPivot,
     pivots: pivots,
     topTarget: pivots[pivots.length - 1]
   }
@@ -4503,6 +4556,32 @@ function sortAndDeduplicateTargets(rawTargets, isLong, entryBaseline, maxCount) 
       deduped.push(cur)
     }
   }
+
+  // Guaranteed Final Slot for pmg_final (Range Top/Bottom) if present and omitted
+  var pmgFinalTarget = null
+  for (var f = 0; f < valid.length; f++) {
+    if (valid[f].kind === "pmg_final") {
+      pmgFinalTarget = valid[f]
+      break
+    }
+  }
+  if (pmgFinalTarget && deduped.length > 0) {
+    var hasFinal = false
+    for (var d = 0; d < deduped.length; d++) {
+      if (Math.abs(deduped[d].price - pmgFinalTarget.price) < 0.01) {
+        hasFinal = true
+        break
+      }
+    }
+    if (!hasFinal) {
+      if (deduped.length >= limit) {
+        deduped[limit - 1] = pmgFinalTarget
+      } else {
+        deduped.push(pmgFinalTarget)
+      }
+    }
+  }
+
   return deduped
 }
 
@@ -4718,6 +4797,16 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   if (kickerInfo.isKicker && kickerInfo.direction === direction && kickerInfo.gapType === "FULL") {
     validSignal = true
     signalName = setupLabel + " Kicker " + (isLong ? "Up" : "Down")
+  }
+  if (!validSignal && pmgInfo.isPMG && signalCandle) {
+    var pmgTrig = pmgInfo.triggerPrice !== null ? pmgInfo.triggerPrice : (isLong ? Number(signalCandle.high) : Number(signalCandle.low))
+    var isPmgTriggered = isLong
+      ? ((currentPrice !== null && currentPrice >= pmgTrig) || (cSetup && Number(cSetup.high) >= pmgTrig))
+      : ((currentPrice !== null && currentPrice <= pmgTrig) || (cSetup && Number(cSetup.low) <= pmgTrig))
+    if (isPmgTriggered) {
+      validSignal = true
+      signalName = setupLabel + " PMG Reversal " + (isLong ? "Up" : "Down")
+    }
   }
   var tradeStyleInfo = classifyMomentumOrRetracement(setupCandles, isLong, isFailed2)
   var isDoji3Continuation = (validSignal && sc_signal === "3" && sc_p2_setup !== "1" && signalShapeInfo.isDoji)
@@ -5062,6 +5151,36 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   // 5. Broadening Formation target
   if (broadeningTarget) {
     rawTargets.push(broadeningTarget)
+  }
+
+  // 5b. Pivot Machine Gun (PMG) targets: intermediate stacked pivots & topTarget
+  if (pmgInfo.isPMG && Array.isArray(pmgInfo.pivots)) {
+    var pmgTfLabel = (setupTf === "30" || setupTf === "60") ? (setupTf + "m") : String(setupTf || "60m")
+    var pmgTargetIdx = 1
+    for (var pi = 1; pi < pmgInfo.pivots.length - 1; pi++) {
+      var pVal = pmgInfo.pivots[pi]
+      if (entryBaseline === null || (isLong ? pVal > entryBaseline : pVal < entryBaseline)) {
+        rawTargets.push({
+          name: pmgTfLabel + " PMG T" + pmgTargetIdx,
+          price: pVal,
+          timeframe: setupTf,
+          kind: "pmg",
+          priority: 2,
+          isReversal: false
+        })
+        pmgTargetIdx++
+      }
+    }
+    if (pmgInfo.topTarget !== null && isFinite(pmgInfo.topTarget) && (entryBaseline === null || (isLong ? pmgInfo.topTarget > entryBaseline : pmgInfo.topTarget < entryBaseline))) {
+      rawTargets.push({
+        name: pmgTfLabel + " PMG Final",
+        price: pmgInfo.topTarget,
+        timeframe: setupTf,
+        kind: "pmg_final",
+        priority: 1,
+        isReversal: false
+      })
+    }
   }
 
   // 6. Deduplicate and Sort in trade direction
