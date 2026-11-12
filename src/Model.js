@@ -51,12 +51,23 @@ function normalizeTimeframeList(raw) {
   return out.length > 0 ? out : null
 }
 
+var MIN_BAR_COUNT = 8
+var DEFAULT_ANALYSIS_BAR_COUNT = 8
+
+function clampBarCount(count, fallback) {
+  var n = parseInt(count, 10)
+  if (!isFinite(n) || isNaN(n)) {
+    return (fallback !== undefined && isFinite(fallback)) ? Math.max(MIN_BAR_COUNT, Math.round(fallback)) : DEFAULT_ANALYSIS_BAR_COUNT
+  }
+  return Math.max(MIN_BAR_COUNT, n)
+}
+
 function normalizeZoomList(raw) {
   if (!Array.isArray(raw) || raw.length === 0) return null
   var out = []
   for (var i = 0; i < raw.length; i++) {
     var n = parseInt(raw[i], 10)
-    if (isFinite(n) && n >= 8) out.push(n)
+    if (isFinite(n) && n >= MIN_BAR_COUNT) out.push(n)
     else out.push(-1)
   }
   return out.length > 0 ? out : null
@@ -7981,7 +7992,10 @@ if (typeof module !== "undefined") {
     chunkSymbols: chunkSymbols,
     updateDevelopingCandle: updateDevelopingCandle,
     SIMULTANEOUS_BREAK_THRESHOLD: SIMULTANEOUS_BREAK_THRESHOLD,
-    stratSpread: stratSpread
+    stratSpread: stratSpread,
+    MIN_BAR_COUNT: MIN_BAR_COUNT,
+    DEFAULT_ANALYSIS_BAR_COUNT: DEFAULT_ANALYSIS_BAR_COUNT,
+    clampBarCount: clampBarCount
   }
 }
 

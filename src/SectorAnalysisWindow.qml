@@ -33,7 +33,7 @@ FloatingWindow {
     property bool sortAscending: false
     property bool showBroadening: true
     property bool syncCrosshair: true
-    property int globalBarCount: 140
+    property int globalBarCount: (Model && Model.DEFAULT_ANALYSIS_BAR_COUNT !== undefined) ? Model.DEFAULT_ANALYSIS_BAR_COUNT : 8
 
     property int activeTileIndex: 0
     property bool inDrillDown: false
@@ -190,6 +190,13 @@ FloatingWindow {
     function setTimeframe(tf) {
         if (tf && tf !== root.timeframe) {
             root.timeframe = tf;
+        }
+    }
+
+    function setGlobalBarCount(nextZoom) {
+        var clamped = (typeof Model.clampBarCount === "function") ? Model.clampBarCount(nextZoom) : Math.max(8, parseInt(nextZoom, 10) || 8);
+        if (root.globalBarCount !== clamped) {
+            root.globalBarCount = clamped;
         }
     }
 
@@ -1297,7 +1304,12 @@ FloatingWindow {
                                 }
 
                                 Keys.onPressed: function (ev) {
-                                    if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter || ev.key === Qt.Key_Escape) {
+                                    if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter) {
+                                        barDebounceTimer.stop();
+                                        root.setGlobalBarCount(barsInput.text.trim());
+                                        keyboardListener.forceActiveFocus();
+                                        ev.accepted = true;
+                                    } else if (ev.key === Qt.Key_Escape) {
                                         keyboardListener.forceActiveFocus();
                                         ev.accepted = true;
                                     }
@@ -1630,9 +1642,7 @@ FloatingWindow {
                                     }
                                 }
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
-                                        root.globalBarCount = nextZoom;
-                                    }
+                                    root.setGlobalBarCount(nextZoom);
                                 }
                             }
                         }
@@ -1727,9 +1737,7 @@ FloatingWindow {
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
-                                        root.globalBarCount = nextZoom;
-                                    }
+                                    root.setGlobalBarCount(nextZoom);
                                 }
                             }
 
@@ -1746,9 +1754,7 @@ FloatingWindow {
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
-                                        root.globalBarCount = nextZoom;
-                                    }
+                                    root.setGlobalBarCount(nextZoom);
                                 }
                             }
                         }
@@ -1772,9 +1778,7 @@ FloatingWindow {
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
-                                        root.globalBarCount = nextZoom;
-                                    }
+                                    root.setGlobalBarCount(nextZoom);
                                 }
                             }
 
@@ -1791,9 +1795,7 @@ FloatingWindow {
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
-                                        root.globalBarCount = nextZoom;
-                                    }
+                                    root.setGlobalBarCount(nextZoom);
                                 }
                             }
 
@@ -1810,9 +1812,7 @@ FloatingWindow {
                                 hourlyCandles: root.getCandles(root.drillDownSymbol, "60")
                                 dailyCandles: root.getCandles(root.drillDownSymbol, "1D")
                                 onZoomChangedManually: function (idx, nextZoom) {
-                                    if (nextZoom >= 8 && root.globalBarCount !== nextZoom) {
-                                        root.globalBarCount = nextZoom;
-                                    }
+                                    root.setGlobalBarCount(nextZoom);
                                 }
                             }
                         }
@@ -1838,15 +1838,8 @@ FloatingWindow {
         repeat: false
         onTriggered: {
             var raw = barsInput.text.trim();
-            if (raw.length === 0)
-                return;
-            var num = parseInt(raw, 10);
-            if (!isNaN(num)) {
-                var clamped = Math.max(8, num);
-                if (root.globalBarCount !== clamped) {
-                    root.globalBarCount = clamped;
-                }
-            }
+            if (raw.length > 0)
+                root.setGlobalBarCount(raw);
         }
     }
 }

@@ -659,6 +659,8 @@ test("sector analysis window supports multi-tier recursive locking, 4-worker cha
   assert.match(win, /root\.breadthMetrics\.isSimultaneous2d \? root\.downColor : root\.foreground/)
   assert.match(win, /function reloadSector\(sym\)/)
   assert.match(win, /property string holdingsFetchSymbol:/)
+  assert.match(win, /property int globalBarCount:\s*\(Model && Model\.DEFAULT_ANALYSIS_BAR_COUNT !== undefined\) \? Model\.DEFAULT_ANALYSIS_BAR_COUNT : 8/)
+  assert.match(win, /function setGlobalBarCount\(nextZoom\)/)
 })
 
 
