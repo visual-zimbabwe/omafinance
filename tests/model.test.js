@@ -4252,3 +4252,76 @@ test("Contradiction 7: 1-3-2 Rev Strat Canonical Validation (1-3-[Hammer/Shooter
   // Rejects invalid bearish 1-3-2 (3-bar did not close as Shooter)
   assert.equal(Model.matchesScenarioQuery(hourlyBearInvalid, { regularMarketPrice: 197.5 }, "1-3-2"), false)
 })
+
+test("Contradiction 14: Canonical Stop-Loss Placements (Tightest Stop = spread + $0.01 from trigger)", () => {
+  // 1. stratSpread helper
+  assert.equal(Model.stratSpread(null), 0)
+  assert.equal(Model.stratSpread({ regularMarketPrice: 100 }), 0)
+  assert.equal(Model.stratSpread({ spread: 0.05 }), 0.05)
+  assert.equal(Model.stratSpread({ ask: 100.08, bid: 100.02 }), 0.06)
+  assert.equal(Model.stratSpread({ ask: 100.08, bid: 100.02 }, { spread: 0.03 }), 0.03)
+
+  // 2. Bullish 2d-1-2u setup:
+  // p2 (2d): 100-110, p1 (1): 102-108 (trigger = 108), c0: 107-111, open = 107.5
+  const dailyBull = [
+    { timestamp: 100, open: 95, high: 105, low: 90, close: 100 },
+    { timestamp: 200, open: 100, high: 115, low: 98, close: 110 },
+    { timestamp: 300, open: 110, high: 120, low: 105, close: 118 }
+  ]
+  const hourlyBull = [
+    { timestamp: 1000, open: 108, high: 110, low: 100, close: 102 }, // p2: 2d (high 110, low 100)
+    { timestamp: 2000, open: 103, high: 108, low: 102, close: 106 }, // p1: 1 inside bar (high 108, low 102) -> trigger = 108
+    { timestamp: 3000, open: 107.5, high: 111, low: 107, close: 109.5 } // c0: 2u breakout
+  ]
+
+  // Default spread fallback (0): tightest offset = 0.01 -> tightest stop = 108 - 0.01 = 107.99
+  const resBull = Model.evaluateStratChecklist("AAPL", hourlyBull, dailyBull, { regularMarketPrice: 109.5 })
+  assert.ok(resBull.stopLevels)
+  assert.equal(resBull.stopLevels.tightest, 107.99)
+  assert.equal(resBull.stopLevels.tight, 107.5) // entry candle open
+  assert.equal(resBull.stopLevels.wide, 102) // signal candle low (structural)
+  assert.equal(resBull.stopLevels.structural, 102)
+  assert.equal(resBull.stopLevels.fiftyPct, 105) // (108 + 102) / 2
+  // Default stopPrice remains structural/wide
+  assert.equal(resBull.stopPrice, 102)
+  const r8Bull = resBull.rules.find(r => r.id === 8)
+  assert.match(r8Bull.detail, /Tightest: \$107\.99/)
+  assert.match(r8Bull.detail, /Tight \(Open\): \$107\.50/)
+  assert.match(r8Bull.detail, /50%: \$105\.00/)
+
+  // Dynamic spread: live quote with ask 109.55, bid 109.51 (spread = 0.04) -> tightest offset = 0.05 -> stop = 108 - 0.05 = 107.95
+  const resSpread = Model.evaluateStratChecklist("AAPL", hourlyBull, dailyBull, { regularMarketPrice: 109.5, ask: 109.55, bid: 109.51 })
+  assert.equal(resSpread.stopLevels.tightest, 107.95)
+
+  // 3. Bearish 2u-1-2d setup:
+  // p2 (2u): 100-110, p1 (1): 102-108 (trigger = 102), c0: 103-99, open = 102.5
+  const dailyBear = [
+    { timestamp: 100, open: 120, high: 125, low: 110, close: 115 },
+    { timestamp: 200, open: 115, high: 118, low: 100, close: 105 },
+    { timestamp: 300, open: 105, high: 108, low: 90, close: 95 }
+  ]
+  const hourlyBear = [
+    { timestamp: 1000, open: 102, high: 110, low: 100, close: 108 }, // p2: 2u
+    { timestamp: 2000, open: 106, high: 108, low: 102, close: 104 }, // p1: 1 inside bar -> trigger = 102
+    { timestamp: 3000, open: 102.5, high: 103, low: 99, close: 100 } // c0: 2d breakout
+  ]
+  // Default spread (0): tightest offset = 0.01 -> tightest stop = 102 + 0.01 = 102.01
+  const resBear = Model.evaluateStratChecklist("TSLA", hourlyBear, dailyBear, { regularMarketPrice: 100 })
+  assert.equal(resBear.stopLevels.tightest, 102.01)
+  assert.equal(resBear.stopLevels.tight, 102.5) // entry candle open
+  assert.equal(resBear.stopLevels.wide, 108) // signal candle high (structural)
+  assert.equal(resBear.stopLevels.structural, 108)
+
+  // 4. options.stopTier selection:
+  // When stopTier is "tightest", stopPrice binds to tightest stop
+  const resTierTightest = Model.evaluateStratChecklist("AAPL", hourlyBull, dailyBull, { regularMarketPrice: 109.5 }, null, { stopTier: "tightest" })
+  assert.equal(resTierTightest.stopPrice, 107.99)
+  const r8Tightest = resTierTightest.rules.find(r => r.id === 8)
+  assert.match(r8Tightest.detail, /Tightest \(Spread \+ \$0\.01\)/)
+
+  // When stopTier is "tight", stopPrice binds to entry open
+  const resTierTight = Model.evaluateStratChecklist("AAPL", hourlyBull, dailyBull, { regularMarketPrice: 109.5 }, null, { stopTier: "tight" })
+  assert.equal(resTierTight.stopPrice, 107.5)
+  const r8Tight = resTierTight.rules.find(r => r.id === 8)
+  assert.match(r8Tight.detail, /Entry Open \(Tight Stop\)/)
+})
