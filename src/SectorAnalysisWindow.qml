@@ -1101,7 +1101,7 @@ FloatingWindow {
 
                                 Text {
                                     visible: root.scenarioFilter.length === 0 && !scenarioField.activeFocus
-                                    text: "1, hammer, 2dg... (/)"
+                                    text: "1, 2uh, 3s, !r... (/)"
                                     color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.5)
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.caption
