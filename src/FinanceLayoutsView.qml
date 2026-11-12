@@ -95,6 +95,7 @@ Column {
                     id: saveBtn
                     bordered: true
                     focusable: true
+                    enabled: layoutsViewRoot.saveName.trim().length > 0
                     selected: layoutsViewRoot.confirmOverwrite
                     text: layoutsViewRoot.confirmOverwrite ? qsTr("Overwrite?") : qsTr("Save Snapshot")
                     foreground: controller.contentForeground
@@ -106,14 +107,18 @@ Column {
                 }
             }
 
-            Text {
-                visible: controller.layoutActionStatus !== ""
+            FinanceStatusBanner {
                 width: parent.width
+                compact: true
+                tone: (layoutsViewRoot.confirmOverwrite || controller.layoutActionStatus.indexOf("No active") >= 0) ? "warning" : "success"
                 text: controller.layoutActionStatus
-                color: controller.dim
-                font.family: controller.contentFontFamily
-                font.pixelSize: Style.font.bodySmall
-                elide: Text.ElideRight
+                autoHideMs: layoutsViewRoot.confirmOverwrite ? 0 : 3500
+                fontFamily: controller.contentFontFamily
+                foreground: controller.contentForeground
+                dimColor: controller.dim
+                errorColor: controller.contentUrgent
+                successColor: controller.upColor
+                onDismissed: controller.layoutActionStatus = ""
             }
         }
     }
@@ -146,12 +151,18 @@ Column {
             font.bold: true
         }
 
-        Text {
+        FinanceStatusBanner {
             visible: !controller.layouts || Object.keys(controller.layouts).length === 0
-            text: "No saved layouts yet. Open your charts and save a snapshot above."
-            color: controller.dim
-            font.family: controller.contentFontFamily
-            font.pixelSize: Style.font.bodySmall
+            width: parent.width
+            compact: false
+            tone: "info"
+            title: qsTr("No saved layouts yet")
+            text: qsTr("Open your charts, enter a preset name above, and save a snapshot.")
+            actionText: qsTr("Name layout")
+            fontFamily: controller.contentFontFamily
+            foreground: controller.contentForeground
+            dimColor: controller.dim
+            onActionTriggered: layoutNameField.forceActiveFocus()
         }
 
         Repeater {
@@ -200,7 +211,7 @@ Column {
                             Button {
                                 id: openLayoutBtn
                                 bordered: true
-                                selected: true
+                                focusable: true
                                 text: qsTr("Open")
                                 foreground: controller.upColor
                                 accent: controller.upColor

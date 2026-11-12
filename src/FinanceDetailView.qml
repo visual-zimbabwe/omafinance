@@ -9,10 +9,6 @@ Column {
     width: parent.width
     spacing: Style.space(12)
     visible: controller.view === "detail"
-    property bool showDetailsSpinner: false
-    property double detailsLoadStartedAt: 0
-    readonly property int detailsSpinnerDelayMs: Model.delayedLoaderDelayMs()
-    readonly property string detailsPendingKey: visible && controller.detailDataLoading ? String(controller.detailSymbol) : ""
     property bool showAllHoldings: false
     property string holdingsSortKey: "weight"
     property bool holdingsSortAsc: false
@@ -20,35 +16,6 @@ Column {
     readonly property var sortedHoldings: Model.sortHoldings(rawHoldings, holdingsSortKey, holdingsSortAsc, controller.detailHoldingsStratMap)
     readonly property var displayedHoldings: showAllHoldings ? sortedHoldings : sortedHoldings.slice(0, 10)
     readonly property string holdingsReportDate: (controller.detailHoldings && controller.detailHoldings.reportDate) ? controller.detailHoldings.reportDate : ""
-
-    function armDetailsSpinner() {
-        detailsSpinnerDelay.stop();
-        showDetailsSpinner = false;
-        if (!detailsPendingKey) {
-            detailsLoadStartedAt = 0;
-            return;
-        }
-        detailsLoadStartedAt = Date.now();
-        detailsSpinnerDelay.interval = detailsSpinnerDelayMs;
-        detailsSpinnerDelay.start();
-    }
-
-    onDetailsPendingKeyChanged: armDetailsSpinner()
-
-    Timer {
-        id: detailsSpinnerDelay
-        interval: detailViewRoot.detailsSpinnerDelayMs
-        repeat: false
-        onTriggered: {
-            var remaining = detailViewRoot.detailsSpinnerDelayMs - (Date.now() - detailViewRoot.detailsLoadStartedAt);
-            if (remaining > 0 && controller.detailDataLoading && detailViewRoot.visible) {
-                interval = remaining;
-                start();
-                return;
-            }
-            showDetailsSpinner = Model.shouldShowDelayedLoader(controller.detailDataLoading && detailViewRoot.visible, detailViewRoot.detailsLoadStartedAt, Date.now(), detailViewRoot.detailsSpinnerDelayMs);
-        }
-    }
 
     Item {
         width: parent.width
@@ -74,6 +41,7 @@ Column {
 
             Button {
                 text: controller.detailIsFavorite ? "Favorited" : "Favorite"
+                selected: controller.detailIsFavorite
                 hasCursor: controller.detailSection === 0 && controller.detailActionIndex === 0
                 foreground: controller.detailIsFavorite ? controller.contentForeground : controller.dim
                 fontFamily: controller.contentFontFamily
@@ -84,6 +52,7 @@ Column {
             }
             Button {
                 text: Model.isPinned(controller.pinned, controller.detailSymbol) ? "Pinned" : "Pin"
+                selected: Model.isPinned(controller.pinned, controller.detailSymbol)
                 hasCursor: controller.detailSection === 0 && controller.detailActionIndex === 1
                 foreground: Model.isPinned(controller.pinned, controller.detailSymbol) ? controller.contentForeground : controller.dim
                 fontFamily: controller.contentFontFamily
@@ -145,42 +114,12 @@ Column {
                     font.bold: true
                 }
 
-                Item {
-                    id: detailsSpinnerSlot
-                    visible: detailViewRoot.showDetailsSpinner
-                    width: visible ? Style.font.body : 0
-                    height: tickerLabel.height
-
-                    Canvas {
-                        id: detailsSpinner
-                        width: Style.font.body
-                        height: Style.font.body
-                        anchors.verticalCenter: parent.verticalCenter
-                        onWidthChanged: requestPaint()
-                        onHeightChanged: requestPaint()
-                        onVisibleChanged: if (visible)
-                            requestPaint()
-                        onPaint: {
-                            var ctx = getContext("2d");
-                            var line = Math.max(1.5, width * 0.14);
-                            var radius = Math.min(width, height) / 2 - line;
-                            ctx.reset();
-                            ctx.lineWidth = line;
-                            ctx.lineCap = "round";
-                            ctx.strokeStyle = controller.dim;
-                            ctx.beginPath();
-                            ctx.arc(width / 2, height / 2, radius, 0, Math.PI * 1.5);
-                            ctx.stroke();
-                        }
-
-                        RotationAnimation on rotation {
-                            running: detailsSpinner.visible
-                            from: 0
-                            to: 360
-                            duration: 800
-                            loops: Animation.Infinite
-                        }
-                    }
+                FinanceLoader {
+                    id: detailsSpinner
+                    active: detailViewRoot.visible && controller.detailDataLoading
+                    pendingKey: String(controller.detailSymbol)
+                    color: controller.dim
+                    anchors.verticalCenter: parent.verticalCenter
                 }
             }
 

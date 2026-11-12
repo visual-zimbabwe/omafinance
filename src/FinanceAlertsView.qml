@@ -204,6 +204,7 @@ Column {
                     foreground: controller.contentForeground
                     font.family: controller.contentFontFamily
                     text: alertsViewRoot.draftSymbol
+                    onTextChanged: alertsViewRoot.formError = ""
                 }
 
                 Button {
@@ -212,6 +213,7 @@ Column {
                     width: Style.space(52)
                     height: symbolInput.implicitHeight
                     text: alertsViewRoot.draftCondition === "CROSSES_BELOW" ? "<=" : (alertsViewRoot.draftCondition === "CROSSES" ? "<>" : ">=")
+                    tooltipText: alertsViewRoot.draftCondition === "CROSSES_BELOW" ? qsTr("Crosses below") : (alertsViewRoot.draftCondition === "CROSSES" ? qsTr("Crosses either way") : qsTr("Crosses above"))
                     foreground: controller.contentForeground
                     fontFamily: controller.contentFontFamily
                     fontSize: Style.font.bodySmall
@@ -226,6 +228,7 @@ Column {
                     placeholderText: "Price"
                     foreground: controller.contentForeground
                     font.family: controller.contentFontFamily
+                    onTextChanged: alertsViewRoot.formError = ""
                     Keys.onReturnPressed: alertsViewRoot.submitQuickPriceAlert()
                 }
 
@@ -253,14 +256,15 @@ Column {
                 }
             }
 
-            Text {
-                visible: alertsViewRoot.formError !== ""
+            FinanceStatusBanner {
                 width: parent.width
+                compact: true
+                tone: "error"
                 text: alertsViewRoot.formError
-                color: controller.contentUrgent
-                font.family: controller.contentFontFamily
-                font.pixelSize: Style.font.caption
-                wrapMode: Text.WordWrap
+                fontFamily: controller.contentFontFamily
+                foreground: controller.contentForeground
+                dimColor: controller.dim
+                errorColor: controller.contentUrgent
             }
         }
     }
@@ -592,22 +596,17 @@ Column {
                 font.bold: true
             }
 
-            Text {
+            Button {
                 visible: Boolean(controller.alertLog && controller.alertLog.length > 0)
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
-                text: "Clear"
-                color: controller.dim
-                font.family: controller.contentFontFamily
-                font.pixelSize: Style.font.bodySmall - 1
-                font.underline: true
-
-                MouseArea {
-                    anchors.fill: parent
-                    anchors.margins: -4
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: controller.clearAlertLog()
-                }
+                text: qsTr("Clear")
+                foreground: controller.dim
+                fontFamily: controller.contentFontFamily
+                fontSize: Style.font.caption
+                horizontalPadding: Style.space(6)
+                verticalPadding: Style.space(2)
+                onClicked: controller.clearAlertLog()
             }
         }
 
@@ -669,27 +668,17 @@ Column {
                         }
                     }
 
-                    Rectangle {
-                        width: Style.space(42)
-                        height: Style.space(22)
+                    Button {
+                        bordered: true
+                        height: Style.space(24)
                         anchors.verticalCenter: parent.verticalCenter
-                        radius: Style.space(4)
-                        color: Qt.rgba(controller.contentForeground.r, controller.contentForeground.g, controller.contentForeground.b, 0.12)
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Grid"
-                            color: controller.contentForeground
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall - 1
-                            font.bold: true
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: controller.openGrid(modelData.symbol)
-                        }
+                        text: qsTr("Grid")
+                        foreground: controller.contentForeground
+                        fontFamily: controller.contentFontFamily
+                        fontSize: Style.font.caption
+                        horizontalPadding: Style.space(8)
+                        verticalPadding: Style.space(2)
+                        onClicked: controller.openGrid(modelData.symbol)
                     }
                 }
             }

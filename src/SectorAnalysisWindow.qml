@@ -1335,53 +1335,24 @@ FloatingWindow {
                         }
 
                         // Copy Filtered Tickers Button
-                        FinanceSurface {
+                        FinanceChipButton {
                             id: copyBtn
-                            elevation: 0
-                            radiusToken: "sm"
-                            sheen: false
-                            active: copyFeedbackTimer.running
-                            foregroundColor: root.foreground
-                            surfaceColor: copyFeedbackTimer.running ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16) : (copyHover.hovered ? Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.14) : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08))
-                            height: Style.space(24)
-                            implicitWidth: copyRow.implicitWidth + Style.space(16)
-                            opacity: root.filteredTiles.length === 0 ? 0.4 : 1.0
+                            bordered: true
+                            enabled: root.filteredTiles.length > 0
+                            checked: copyFeedbackTimer.running
+                            iconText: copyFeedbackTimer.running ? "✓" : "\uf0c5"
+                            text: copyFeedbackTimer.running ? "COPIED" : "COPY"
+                            foreground: copyFeedbackTimer.running ? Color.accent : root.foreground
+                            dimColor: root.dim
+                            accentColor: Color.accent
+                            fontFamily: root.fontFamily
+                            fontSize: Style.font.caption
+                            horizontalPadding: Style.space(8)
+                            verticalPadding: Style.space(3)
+                            cornerRadius: Style.space(4)
+                            tooltipText: "Copy filtered tickers to clipboard"
                             anchors.verticalCenter: parent.verticalCenter
-
-                            Row {
-                                id: copyRow
-                                anchors.centerIn: parent
-                                spacing: Style.space(4)
-
-                                Text {
-                                    textFormat: Text.PlainText
-                                    text: copyFeedbackTimer.running ? "✓" : "\uf0c5"
-                                    color: copyFeedbackTimer.running ? Color.accent : (root.filteredTiles.length === 0 ? root.dim : root.foreground)
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.caption
-                                    font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                Text {
-                                    textFormat: Text.PlainText
-                                    text: copyFeedbackTimer.running ? "COPIED" : "COPY"
-                                    color: copyFeedbackTimer.running ? Color.accent : (root.filteredTiles.length === 0 ? root.dim : root.foreground)
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.caption
-                                    font.bold: true
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-                            }
-
-                            MouseArea {
-                                id: copyHover
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                enabled: root.filteredTiles.length > 0
-                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: root.copyFilteredTickers()
-                            }
+                            onClicked: root.copyFilteredTickers()
                         }
                     }
 
@@ -1403,12 +1374,19 @@ FloatingWindow {
 
                         FinanceSurface {
                             id: barsBox
+                            readonly property int parsedBars: parseInt(barsInput.text, 10)
+                            readonly property bool barsOutOfRange: barsInput.activeFocus && barsInput.text.length > 0 && (isNaN(parsedBars) || parsedBars < Model.MIN_BAR_COUNT || parsedBars > Model.MAX_BAR_COUNT)
+
                             elevation: 0
                             radiusToken: "sm"
                             sheen: false
                             active: barsInput.activeFocus
                             foregroundColor: root.foreground
+                            borderColorOverride: barsOutOfRange ? Color.urgent : "transparent"
                             surfaceColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
+
+                            QQC.ToolTip.visible: barsBox.barsOutOfRange
+                            QQC.ToolTip.text: "Bars clamped to " + Model.MIN_BAR_COUNT + "–" + Model.MAX_BAR_COUNT
                             width: Style.space(48)
                             height: Style.space(24)
                             anchors.verticalCenter: parent.verticalCenter
@@ -1695,11 +1673,26 @@ FloatingWindow {
             }
         }
 
-        // 1px Hairline Divider
-        Rectangle {
+        // 1px Hairline Divider + Parallel Fetch Progress Bar
+        Item {
             width: parent.width
-            height: 1
-            color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.12)
+            height: 2
+
+            Rectangle {
+                anchors.top: parent.top
+                width: parent.width
+                height: 1
+                color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.12)
+            }
+
+            FinanceLoader {
+                readonly property bool workersBusy: worker0.running || worker1.running || worker2.running || worker3.running || root.pendingFetches.length > 0
+                readonly property int totalTarget: Math.max(1, root.holdingsList.length)
+                anchors.fill: parent
+                active: workersBusy
+                progress: workersBusy ? Math.max(0.08, Math.min(1.0, 1.0 - (root.pendingFetches.length / totalTarget))) : 0
+                color: Color.accent
+            }
         }
 
         // VIEWPORT CONTAINER (Swaps between 1x1 Dynamic Flex Grid and Drill-Down)
@@ -1790,6 +1783,32 @@ FloatingWindow {
                         }
                     }
                 }
+
+                FinanceStatusBanner {
+                    visible: gridViewport.visibleCount === 0
+                    anchors.centerIn: parent
+                    width: Math.min(Style.space(420), parent.width - Style.space(32))
+                    compact: false
+                    tone: "info"
+                    title: (root.holdingsList.length === 0) ? qsTr("Loading sector holdings…") : qsTr("No matching tickers")
+                    text: (root.holdingsList.length === 0)
+                        ? qsTr("Fetching constituent holdings and chart data for %1.").arg(root.sectorSymbol)
+                        : qsTr("No holdings in %1 match the current scenario filter or lock.").arg(root.sectorSymbol)
+                    actionText: root.scenarioFilterText !== "" ? qsTr("Clear filter") : (root.lockStack.length > 0 ? qsTr("Unlock all") : "")
+                    secondaryActionText: (root.scenarioFilterText !== "" && root.lockStack.length > 0) ? qsTr("Unlock all") : ""
+                    fontFamily: root.fontFamily
+                    foreground: root.foreground
+                    dimColor: root.dim
+                    onActionTriggered: {
+                        if (root.scenarioFilterText !== "") {
+                            root.scenarioFilterText = "";
+                            scenarioInput.text = "";
+                        } else if (root.lockStack.length > 0) {
+                            root.clearAllLocks();
+                        }
+                    }
+                    onSecondaryActionTriggered: root.clearAllLocks()
+                }
             }
 
             // 2. DRILL-DOWN 2+3 VIEWPORT (Expanded for focus ticker, all other tickers hidden)
@@ -1814,30 +1833,18 @@ FloatingWindow {
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: Style.space(12)
 
-                            Rectangle {
-                                width: backText.implicitWidth + Style.space(16)
-                                height: Style.space(22)
-                                radius: Style.space(3)
-                                color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12)
-                                border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.25)
-                                border.width: 1
-
-                                Text {
-                                    id: backText
-                                    anchors.centerIn: parent
-                                    textFormat: Text.PlainText
-                                    text: "← BACK TO SECTOR GRID (Esc)"
-                                    color: root.foreground
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.caption
-                                    font.bold: true
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.inDrillDown = false
-                                }
+                            FinanceChipButton {
+                                bordered: true
+                                text: "← BACK TO SECTOR GRID (Esc)"
+                                checked: true
+                                foreground: root.foreground
+                                dimColor: root.dim
+                                fontFamily: root.fontFamily
+                                fontSize: Style.font.caption
+                                horizontalPadding: Style.space(8)
+                                verticalPadding: Style.space(3)
+                                cornerRadius: Style.space(3)
+                                onClicked: root.inDrillDown = false
                             }
 
                             Text {

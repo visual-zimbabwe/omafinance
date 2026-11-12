@@ -1550,64 +1550,46 @@ Item {
                 }
             }
 
-            Rectangle {
+            FinanceChipButton {
                 id: alertToggleBadge
                 anchors.verticalCenter: parent.verticalCenter
-                height: Style.space(16)
-                width: alertToggleLabel.implicitWidth + Style.space(8)
-                radius: Style.space(2)
-                color: (levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled) ? Qt.rgba(Color.accent.primary.r, Color.accent.primary.g, Color.accent.primary.b, 0.22) : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.08)
-                border.width: 1
-                border.color: (levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled) ? Color.accent.primary : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.25)
-
-                Text {
-                    id: alertToggleLabel
-                    anchors.centerIn: parent
-                    text: (levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled) ? "ALRT ON" : "ALRT OFF"
-                    color: (levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled) ? Color.accent.primary : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.65)
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall - 1
-                    font.bold: true
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.toggleEditingLevelAlert()
-                }
+                bordered: true
+                checked: Boolean(levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled)
+                text: checked ? "ALRT ON" : "ALRT OFF"
+                foreground: Color.accent
+                dimColor: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.65)
+                accentColor: Color.accent
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall - 1
+                horizontalPadding: Style.space(4)
+                verticalPadding: Style.space(1)
+                cornerRadius: Style.space(2)
+                tooltipText: "Toggle price crossover alert (Alt+A)"
+                onClicked: root.toggleEditingLevelAlert()
             }
 
-            Rectangle {
+            FinanceChipButton {
                 id: alertCondBadge
                 visible: Boolean(levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled)
                 anchors.verticalCenter: parent.verticalCenter
-                height: Style.space(16)
-                width: alertCondLabel.implicitWidth + Style.space(8)
-                radius: Style.space(2)
-                color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.1)
-
-                Text {
-                    id: alertCondLabel
-                    anchors.centerIn: parent
-                    text: {
-                        var cond = levelEditOverlay.activeLvl ? levelEditOverlay.activeLvl.alertCondition : "CROSSES_ABOVE";
-                        if (cond === "CROSSES_BELOW")
-                            return "<=";
-                        if (cond === "CROSSES")
-                            return "<>";
-                        return ">=";
-                    }
-                    color: Color.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall - 1
-                    font.bold: true
+                bordered: true
+                checked: true
+                text: {
+                    var cond = levelEditOverlay.activeLvl ? levelEditOverlay.activeLvl.alertCondition : "CROSSES_ABOVE";
+                    if (cond === "CROSSES_BELOW")
+                        return "<=";
+                    if (cond === "CROSSES")
+                        return "<>";
+                    return ">=";
                 }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.cycleEditingLevelCondition()
-                }
+                foreground: Color.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall - 1
+                horizontalPadding: Style.space(4)
+                verticalPadding: Style.space(1)
+                cornerRadius: Style.space(2)
+                tooltipText: "Cycle crossover condition"
+                onClicked: root.cycleEditingLevelCondition()
             }
 
             Text {
