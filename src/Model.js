@@ -6978,10 +6978,8 @@ function candleDateIso(candle) {
 // Float-noise guard: how far a bar may sit above the upper line (or below the lower line)
 // and still count as "on the line", and how far a newer anchor may fall short of the older
 // one and still count as broadening. 1e-5 = 0.001% of price (about 0.1 cent on a $100 stock).
+// Broadening Formations enforce strict zero breach tolerance (Rob Smith Canon, Truth #3).
 var BF_EPS_REL = 0.00001;
-// A later bar may poke through a finished ray by up to 0.5% of its own price before the ray
-// counts as traded through (it is then replaced by the redraw from the newer extreme).
-var BF_BREACH_TOL_REL = 0.005;
 // Cycle window used when no explicit formation start is given (about one trading year of dailies).
 var BF_DEFAULT_WINDOW = 260;
 // Minimum number of bars between the two anchors of a ray.
@@ -7053,10 +7051,10 @@ function computeRayForOrigin(candles, startIdx, endIdx, isUpper, minSpan) {
     // Every bar of the formation before anchor1 [startIdx, a1) must also stay on or under the line
     if (a1 === -1 || slopeQ > ceiling) continue;
 
-    // No later bar may have traded through the finished ray
+    // No later bar may have traded through the finished ray (Zero Breach Tolerance: Truth #3)
     var breached = false;
     for (var post = a2 + 1; post < n; post++) {
-      if (q[post] > p2 + slopeQ * (post - a2) + BF_BREACH_TOL_REL * Math.abs(q[post])) {
+      if (q[post] > p2 + slopeQ * (post - a2) + BF_EPS_REL * Math.abs(q[post])) {
         breached = true;
         break;
       }
@@ -7840,6 +7838,8 @@ if (typeof module !== "undefined") {
     bfQuarterStarts: bfQuarterStarts,
     candleYearKey: candleYearKey,
     bfYearStarts: bfYearStarts,
+    BF_EPS_REL: BF_EPS_REL,
+    computeRayForOrigin: computeRayForOrigin,
     computeActiveBroadening: computeActiveBroadening,
     nodeCommand: nodeCommand,
     normalizeSymbolLevels: normalizeSymbolLevels,
