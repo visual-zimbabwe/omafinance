@@ -336,6 +336,8 @@ Item {
                 bestIdx = i;
             }
         }
+        if (hovering && hoverIndex === bestIdx)
+            return;
         isSyncing = true;
         hoverIndex = bestIdx;
         hoverCandle = candles[bestIdx];
@@ -386,6 +388,7 @@ Item {
         var unset = {
             allCandles: [],
             candles: [],
+            broadening: null,
             strats: [],
             min: 0,
             max: 1,
@@ -621,9 +624,21 @@ Item {
             }
         }
 
+        var isThirtyMinChart = (root.rangeKey === "30" || root.rangeKey === "30m");
+        var isDailyChart = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
+        var isHourlyChart = (root.rangeKey === "60" || root.rangeKey === "60m" || root.rangeKey === "1h");
+        var isWeeklyChart = (root.rangeKey === "1W" || root.rangeKey === "W" || root.rangeKey === "1w" || root.rangeKey === "week");
+        var isMonthlyChart = (root.rangeKey === "1M" || root.rangeKey === "M" || root.rangeKey === "month");
+        var bf = null;
+        if (root.showBroadening && (isThirtyMinChart || isDailyChart || isHourlyChart || isWeeklyChart || isMonthlyChart) && all && all.length >= 3 && innerW > 0) {
+            var anchorMode = isThirtyMinChart ? "day" : (isHourlyChart ? "week" : (isWeeklyChart ? "quarter" : (isMonthlyChart ? "year" : "month")));
+            bf = Model.computeActiveBroadening(all, null, anchorMode);
+        }
+
         return {
             allCandles: all,
             candles: list,
+            broadening: bf,
             strats: strats,
             min: min,
             max: max,
@@ -659,7 +674,7 @@ Item {
     function refreshGeometry() {
         cachedGeometry = buildGeom();
         canvas.requestPaint();
-        if (hovering)
+        if (hovering && !dragging)
             updateHover(hoverPointerX, hoverPointerY);
     }
 
@@ -887,15 +902,8 @@ Item {
             }
 
             // TheStrat Broadening Formation (BF) Lines (30m: daily/10d; 60m: weekly; 1D: monthly; 1W: quarterly; 1M: yearly)
-            var isThirtyMinChart = (root.rangeKey === "30" || root.rangeKey === "30m");
-            var isDailyChart = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
-            var isHourlyChart = (root.rangeKey === "60" || root.rangeKey === "60m" || root.rangeKey === "1h");
-            var isWeeklyChart = (root.rangeKey === "1W" || root.rangeKey === "W" || root.rangeKey === "1w" || root.rangeKey === "week");
-            var isMonthlyChart = (root.rangeKey === "1M" || root.rangeKey === "M" || root.rangeKey === "month");
-            if (root.showBroadening && (isThirtyMinChart || isDailyChart || isHourlyChart || isWeeklyChart || isMonthlyChart) && g.allCandles && g.allCandles.length >= 3 && g.innerW > 0) {
-                var anchorMode = isThirtyMinChart ? "day" : (isHourlyChart ? "week" : (isWeeklyChart ? "quarter" : (isMonthlyChart ? "year" : "month")));
-                var bf = Model.computeActiveBroadening(g.allCandles, null, anchorMode);
-                if (bf) {
+            var bf = g.broadening;
+            if (bf) {
                     var rightEdgeX = g.right;
 
                     var forms = (bf.formations && Array.isArray(bf.formations) && bf.formations.length > 0)
@@ -975,7 +983,6 @@ Item {
                         if (f.lower) drawBFRay(f.lower, false, fi);
                     }
                 }
-            }
 
             // User-Drawn Trigger / Target Price Level Lines
             if (root.priceLevels && root.priceLevels.length > 0 && g.innerW > 0) {
@@ -1325,8 +1332,8 @@ Item {
                     root.hoveredLevelPart = nextHoverPart;
                     canvas.requestPaint();
                 }
+                root.updateHover(mouse.x, mouse.y);
             }
-            root.updateHover(mouse.x, mouse.y);
         }
 
         onReleased: function (mouse) {
@@ -1344,6 +1351,7 @@ Item {
             }
             root.dragging = false;
             root.isShiftDrag = false;
+            root.updateHover(mouse.x, mouse.y);
         }
 
         onCanceled: {
