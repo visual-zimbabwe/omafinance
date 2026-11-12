@@ -79,7 +79,7 @@ Item {
 
                 // Score text (Text & Color only, no box/border)
                 Text {
-                    text: root.checklistData ? root.checklistData.badgeText : "0/9"
+                    text: root.checklistData ? root.checklistData.badgeText : "0/11"
                     color: {
                         if (!root.checklistData)
                             return root.dim;
@@ -110,7 +110,7 @@ Item {
                         return dir + "TARGET HIT (" + (root.checklistData.targetName || "T1") + ") - Exhaustion Risk";
                     if (root.checklistData.isStoppedOut)
                         return dir + "INVALIDATED - Stop Loss Breached";
-                    return dir + (root.checklistData.isTradeable ? "TRADEABLE - All 9 Rules Verified" : "BLOCKED - " + root.checklistData.passedCount + "/9 Rules Met");
+                    return dir + (root.checklistData.isTradeable ? "TRADEABLE - All 11 Questions Verified" : "BLOCKED - " + root.checklistData.passedCount + "/11 Questions Met");
                 }
                 color: {
                     if (!root.checklistData)
@@ -202,7 +202,7 @@ Item {
                 color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12)
             }
 
-            // 9 Rules List
+            // 11 Questions List
             Column {
                 width: parent.width
                 spacing: Style.space(6)

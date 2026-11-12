@@ -1043,8 +1043,8 @@ test("sortHoldings correctly sorts by timeframe Strat columns (Option B: 3 > 2U 
 
 test("stratRuleRationales provides rationales for all 9 rules without emojis", () => {
   const rat = Model.stratRuleRationales()
-  assert.equal(Object.keys(rat).length, 9)
-  for (let i = 1; i <= 9; i++) {
+  assert.equal(Object.keys(rat).length, 11)
+  for (let i = 1; i <= 11; i++) {
     assert.ok(typeof rat[i] === "string" && rat[i].length > 10)
     // Verify no emojis
     assert.ok(!/[\u{1F300}-\u{1F9FF}]/u.test(rat[i]))
@@ -1066,9 +1066,9 @@ test("evaluateStratChecklist evaluates 9 rules correctly and produces max 5 char
 
   const res = Model.evaluateStratChecklist("TEST", hourly, daily, quote)
   assert.equal(res.symbol, "TEST")
-  assert.equal(res.totalRules, 9)
+  assert.equal(res.totalRules, 11)
   assert.ok(res.badgeText.length <= 5)
-  assert.equal(res.rules.length, 9)
+  assert.equal(res.rules.length, 11)
   assert.equal(typeof res.isTradeable, "boolean")
 })
 
@@ -1341,13 +1341,13 @@ test("evaluateStratChecklist blocks 1-Red inside chop despite full bearish FTFC"
 
   const res = Model.evaluateStratChecklist("TSLA", hourly, daily, quote)
   assert.equal(res.direction, "SHORT")
-  // Rule 1: FTFC Polarity PASSES (all are Red)
+  // Question 3: Direction of Control PASSES (all are Red)
+  const r3 = res.rules.find(r => r.id === 3)
+  assert.equal(r3.passed, true)
+  // Question 1: Actionable Signals FAILS (inside chop, continuity but no trigger)
   const r1 = res.rules.find(r => r.id === 1)
-  assert.equal(r1.passed, true)
-  // Rule 6: Avoid 1-Chop FAILS (continuity, but no trigger)
-  const r6 = res.rules.find(r => r.id === 6)
-  assert.equal(r6.passed, false)
-  assert.match(r6.detail, /continuity but no trigger/)
+  assert.equal(r1.passed, false)
+  assert.match(r1.detail, /continuity but no trigger/)
   // Overall setup is BLOCKED from execution but ARMED waiting for break
   assert.equal(res.isTradeable, false)
   assert.equal(res.isArmed, true)
@@ -1376,9 +1376,11 @@ test("evaluateStratChecklist executes tradeable short on 60m 2d-Red in-force", (
   assert.equal(res.triggerPrice, 180)
   assert.equal(res.stopPrice, 185)
 
-  const r6 = res.rules.find(r => r.id === 6)
-  assert.equal(r6.passed, true)
-  assert.match(r6.detail, /in force/)
+  const r1 = res.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, true)
+  const r9 = res.rules.find(r => r.id === 9)
+  assert.equal(r9.passed, true)
+  assert.match(r9.detail, /In-Force/)
 })
 
 test("evaluateStratChecklist triggers tradeable Failed 2u Reversal with tight stop on current candle high", () => {
@@ -1405,11 +1407,11 @@ test("evaluateStratChecklist triggers tradeable Failed 2u Reversal with tight st
   assert.equal(res.targetPrice, 180)  // T1 is prior 60m low (turning bar into Scenario 3)
   assert.equal(res.targetName, "60m Low (Outside Bar Trigger)")
 
-  const r5 = res.rules.find(r => r.id === 5)
-  assert.equal(r5.passed, true)
-  const r6 = res.rules.find(r => r.id === 6)
-  assert.equal(r6.passed, true)
-  assert.match(r6.detail, /Failed 2u reversal/)
+  const r9 = res.rules.find(r => r.id === 9)
+  assert.equal(r9.passed, true)
+  const r1 = res.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, true)
+  assert.match(res.entryState.detail, /Failed 2u reversal/)
 
   // Verify Discord alert includes Failed 2 Reversal execution mechanics
   const alertStr = Model.discordAlertPayload(res, "TRIGGERED")
@@ -1434,13 +1436,13 @@ test("evaluateStratChecklist blocks trade when 60m is green against red HTF (pro
 
   const res = Model.evaluateStratChecklist("AMD", hourly, daily, quote)
   // Direction falls back to daily SHORT, but FTFC is broken
+  const r3 = res.rules.find(r => r.id === 3)
+  assert.equal(r3.passed, false)
+  assert.match(r3.detail, /Conflict/)
+
   const r1 = res.rules.find(r => r.id === 1)
   assert.equal(r1.passed, false)
-  assert.match(r1.detail, /Conflict/)
-
-  const r6 = res.rules.find(r => r.id === 6)
-  assert.equal(r6.passed, false)
-  assert.match(r6.detail, /against SHORT/)
+  assert.match(r1.detail, /against SHORT/)
 
   assert.equal(res.isTradeable, false)
   assert.equal(res.isArmed, true)
@@ -1504,9 +1506,9 @@ test("evaluateStratChecklist detects run exhaustion when 3+ consecutive uncorrec
   const quote = { regularMarketPrice: 123 }
 
   const res = Model.evaluateStratChecklist("NVDA", hourly, daily, quote)
-  const r4 = res.rules.find(r => r.id === 4)
-  assert.equal(r4.passed, false)
-  assert.match(r4.detail, /Run exhaustion: 3 consecutive 2u bars/)
+  const r7 = res.rules.find(r => r.id === 7)
+  assert.equal(r7.passed, false)
+  assert.match(r7.detail, /Run exhaustion: 3 consecutive 2u bars/)
   assert.equal(res.isTradeable, false)
 })
 
@@ -1624,13 +1626,13 @@ test("evaluateStratChecklist enriches Rule 1 and checklist with HTF scenario ver
   assert.equal(res.targetPrice, 150)
   assert.equal(res.isTargetHit, false)
 
-  // Rule 1 details include timeframe scenarios and setup grade
-  const r1 = res.rules.find(r => r.id === 1)
-  assert.equal(r1.passed, true)
-  assert.match(r1.detail, /1W\(2d R\)/)
-  assert.match(r1.detail, /1D\(2d R\)/)
-  assert.match(r1.detail, /60m\(2d R\)/)
-  assert.match(r1.detail, /Grade A\+ \(Macro Expansion\)/)
+  // Question 3 details include timeframe scenarios and setup grade
+  const r3 = res.rules.find(r => r.id === 3)
+  assert.equal(r3.passed, true)
+  assert.match(r3.detail, /1W\(2d R\)/)
+  assert.match(r3.detail, /1D\(2d R\)/)
+  assert.match(r3.detail, /60m\(2d R\)/)
+  assert.match(r3.detail, /Grade A\+ \(Macro Expansion\)/)
 
   // Status tag reflects Grade A+ tradeable
   assert.match(res.statusTag, /TRADEABLE \(Grade A\+\)/)
@@ -2682,9 +2684,9 @@ test("Update 1: evaluateStratChecklist allows 1D + 60m active in-force override 
   assert.equal(res.direction, "LONG")
   assert.equal(res.ftfcSummary.isFTFC, false)
   assert.equal(res.ftfcSummary.isOverride, true)
-  const r1 = res.rules.find(r => r.id === 1)
-  assert.equal(r1.passed, true)
-  assert.match(r1.detail, /1D\+60m Override/)
+  const r3 = res.rules.find(r => r.id === 3)
+  assert.equal(r3.passed, true)
+  assert.match(r3.detail, /1D\+60m Override/)
   assert.equal(res.isTradeable, true)
 })
 
@@ -2711,9 +2713,9 @@ test("Update 2: detectMotherbarProblem and Rule 6 block Compound 1 Motherbar tra
   assert.equal(mb.containedBars, 2)
 
   const resTrapped = Model.evaluateStratChecklist("NVDA", hourlyTrapped, daily, { regularMarketPrice: 207.8 })
-  const r6 = resTrapped.rules.find(r => r.id === 6)
-  assert.equal(r6.passed, false)
-  assert.match(r6.detail, /Compound 1 Motherbar trap/)
+  const r1 = resTrapped.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, false)
+  assert.match(r1.detail, /Compound 1 Motherbar trap/)
   assert.equal(resTrapped.isTradeable, false)
 
   // Once price breaks above Motherbar high 210 -> Motherbar trap clears!
@@ -2888,9 +2890,9 @@ test("Update 7: evaluateStratChecklist Rule 9 blocks opposing sector attack and 
     null,
     { attackScanResult: opposingScan }
   )
-  const r9Sector = blockedSector.rules.find(r => r.id === 9)
-  assert.equal(r9Sector.passed, false)
-  assert.match(r9Sector.detail, /Blocked by opposing sector context/)
+  const r10Sector = blockedSector.rules.find(r => r.id === 10)
+  assert.equal(r10Sector.passed, false)
+  assert.match(r10Sector.detail, /Blocked by opposing sector context/)
   assert.equal(blockedSector.isTradeable, false)
 
   const blockedMarket = Model.evaluateStratChecklist(
@@ -2901,9 +2903,9 @@ test("Update 7: evaluateStratChecklist Rule 9 blocks opposing sector attack and 
     null,
     { marketContext: { indexMotherbar: true } }
   )
-  const r9Market = blockedMarket.rules.find(r => r.id === 9)
-  assert.equal(r9Market.passed, false)
-  assert.match(r9Market.detail, /SPY\/QQQ stuck in 60m Motherbar problem/)
+  const r10Market = blockedMarket.rules.find(r => r.id === 10)
+  assert.equal(r10Market.passed, false)
+  assert.match(r10Market.detail, /SPY\/QQQ stuck in 60m Motherbar problem/)
   assert.equal(blockedMarket.isTradeable, false)
 })
 
@@ -2928,9 +2930,9 @@ test("Batch 2 Update 1: evaluateStratChecklist supports Macro + Intraday Flip ne
   assert.equal(resFlip.ftfcSummary.isConflict, true)
   assert.equal(resFlip.ftfcSummary.isFTFC, false)
   assert.equal(resFlip.ftfcSummary.isOverride, false)
-  const r1Flip = resFlip.rules.find(r => r.id === 1)
-  assert.equal(r1Flip.passed, false)
-  assert.match(r1Flip.detail, /Conflict:.*Awaiting 1D Open Reclaim/)
+  const r3Flip = resFlip.rules.find(r => r.id === 3)
+  assert.equal(r3Flip.passed, false)
+  assert.match(r3Flip.detail, /Conflict:.*Awaiting 1D Open Reclaim/)
   assert.equal(resFlip.isTradeable, false)
   assert.equal(resFlip.isArmed, true)
   assert.match(resFlip.statusTag, /ARMED - Macro Trend LONG \(Awaiting 1D Open Reclaim/)
@@ -2949,8 +2951,8 @@ test("Batch 2 Update 1: evaluateStratChecklist supports Macro + Intraday Flip ne
   const resGapper = Model.evaluateStratChecklist("AMD", hourlyGapper, dailyGapper, { regularMarketPrice: 179 })
   assert.equal(resGapper.bar1D.failed2d, true)
   assert.equal(resGapper.direction, "LONG")
-  const r1Gapper = resGapper.rules.find(r => r.id === 1)
-  assert.equal(r1Gapper.passed, true)
+  const r3Gapper = resGapper.rules.find(r => r.id === 3)
+  assert.equal(r3Gapper.passed, true)
   assert.equal(resGapper.isTradeable, true)
 })
 
@@ -2987,11 +2989,11 @@ test("Batch 2 Update 2: 30m time exhaustion, 3/3 HTF In-Force exemption, resolve
   ]
   const resExhPrice = Model.evaluateStratChecklist("NVDA", hourlyGapExhausted, dailyAllBroken, { regularMarketPrice: 118 })
   assert.equal(resExhPrice.isExhaustionByPrice, true)
-  const r4Exh = resExhPrice.rules.find(r => r.id === 4)
   const r7Exh = resExhPrice.rules.find(r => r.id === 7)
-  assert.equal(r4Exh.passed, false)
-  assert.match(r4Exh.detail, /Exhaustion by price/)
+  const r4Exh = resExhPrice.rules.find(r => r.id === 4)
   assert.equal(r7Exh.passed, false)
+  assert.match(r7Exh.detail, /Exhaustion by price/)
+  assert.equal(r4Exh.passed, false)
 
   // 3. 30m Time Exhaustion (<5m left in 30m candle when inForceCount < 3) vs 3/3 HTF In-Force Exemption
   const dailyInside = [
@@ -3013,9 +3015,9 @@ test("Batch 2 Update 2: 30m time exhaustion, 3/3 HTF In-Force exemption, resolve
     new Date((3600 + 1600) * 1000),
     { activeTimeframe: "30", activeCandles: candles30 }
   )
-  const r4Late30 = res30Late.rules.find(r => r.id === 4)
-  assert.equal(r4Late30.passed, false)
-  assert.match(r4Late30.detail, /<5m remaining in 30m candle/)
+  const r7Late30 = res30Late.rules.find(r => r.id === 7)
+  assert.equal(r7Late30.passed, false)
+  assert.match(r7Late30.detail, /<5m remaining in 30m candle/)
 
   // When 1M, 1W, and 1D are all 3 in-force (inForceCount === 3), time exhaustion is exempted!
   const tM1 = Math.floor(new Date("2026-08-15T14:30:00Z").getTime() / 1000)
@@ -3037,8 +3039,8 @@ test("Batch 2 Update 2: 30m time exhaustion, 3/3 HTF In-Force exemption, resolve
     { activeTimeframe: "30", activeCandles: candles30 }
   )
   assert.equal(res30Exempt.htfQuality.inForceCount, 3)
-  const r4Exempt = res30Exempt.rules.find(r => r.id === 4)
-  assert.equal(r4Exempt.passed, true)
+  const r7Exempt = res30Exempt.rules.find(r => r.id === 7)
+  assert.equal(r7Exempt.passed, true)
 })
 
 test("Batch 2 Update 3: computeFocusBasketSupport keeps intraday Most 2s in tooltip, adds 1D Most 2s, and cross-checks opposing 1D Most 2s", () => {
@@ -3112,9 +3114,9 @@ test("Batch 2 Update 4: detectCandleShape identifies Doji vs Engulfing 3-bars an
     { timestamp: 3000, open: 107, high: 110.5, low: 106.5, close: 110 }
   ]
   const resDoji = Model.evaluateStratChecklist("SPY", hourlyDoji32, daily, { regularMarketPrice: 110 })
-  const r2Doji = resDoji.rules.find(r => r.id === 2)
-  assert.equal(r2Doji.passed, false)
-  assert.match(r2Doji.detail, /Doji 3 indecision bar/)
+  const r1Doji = resDoji.rules.find(r => r.id === 1)
+  assert.equal(r1Doji.passed, false)
+  assert.match(r1Doji.detail, /Doji 3 indecision bar/)
 })
 
 test("Batch 2 Update 5: I-O-I (1-3-1-2), Pivot Machine Gun (PMG), and Kicker pattern detection", () => {
@@ -3434,18 +3436,16 @@ test("Contradiction 2: Scenario 3 outside bars classified as broadening chop, ha
     { timestamp: t3, open: 190, high: 193, low: 187, close: 192 }                  // c60 (Scenario 3 developing)
   ]
   const res13 = Model.evaluateStratChecklist("NVDA", hourly13, dailyBull, { regularMarketPrice: 192 })
-  const r2 = res13.rules.find(r => r.id === 2)
-  const r6 = res13.rules.find(r => r.id === 6)
-  assert.equal(r2.passed, true)
-  assert.match(r2.detail, /1-3 RevStrat/)
-  assert.equal(r6.passed, false) // Gated by Rule 6 entryState.passes === false (Behavior 1)
-  assert.match(r6.detail, /outside bar; both sides taken/)
+  assert.match(res13.signalName, /1-3 RevStrat/)
+  const r1 = res13.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, false) // Gated by Question 1 entryState.passes === false (Behavior 1)
+  assert.match(r1.detail, /outside bar; both sides taken/)
   assert.equal(res13.isTradeable, false)
 
-  // 8. Rule 9 appends caution for HTF broadening formation
-  const r9 = resChop.rules.find(r => r.id === 9)
-  if (r9.passed) {
-    assert.match(r9.detail, /Caution: HTF broadening formation \/ outside bar/)
+  // 8. Question 10 appends caution for HTF broadening formation
+  const r10 = resChop.rules.find(r => r.id === 10)
+  if (r10.passed) {
+    assert.match(r10.detail, /Caution: HTF broadening formation \/ outside bar/)
   }
 })
 
@@ -3571,11 +3571,11 @@ test("Contradiction 5: Canonical 33% Hammer/Shooter detection, DRY scanner, and 
 })
 
 test("Contradiction 9: Eliminates refuted Risk/Reward ratio in favor of canonical Magnitude (Room %) and Defense", () => {
-  // 1. Rationale 7 alignment: no 'Risk-to-Reward' or 'R:R'
+  // 1. Question 4 (Magnitude & Targets) alignment: no 'Risk-to-Reward' or 'R:R'
   const rationales = Model.stratRuleRationales()
-  assert.ok(!rationales[7].includes("Risk-to-Reward"))
-  assert.ok(!rationales[7].includes("1:2"))
-  assert.match(rationales[7], /open room\/magnitude/i)
+  assert.ok(!rationales[4].includes("Risk-to-Reward"))
+  assert.ok(!rationales[4].includes("1:2"))
+  assert.match(rationales[4], /open room\/magnitude/i)
 
   // 2. evaluateStratChecklist produces Room with positive 2-decimal percentage and no R:R
   const daily = [
@@ -3597,13 +3597,13 @@ test("Contradiction 9: Eliminates refuted Risk/Reward ratio in favor of canonica
   assert.equal(typeof res.roomPct, "number")
   assert.equal(typeof res.defense, "number")
 
-  const r7 = res.rules.find(r => r.id === 7)
-  assert.ok(r7.passed)
-  // Ensure no R:R appears in r7.detail
-  assert.ok(!r7.detail.includes("R:R"))
-  assert.ok(!r7.detail.includes("Risk:Reward"))
+  const r4 = res.rules.find(r => r.id === 4)
+  assert.ok(r4.passed)
+  // Ensure no R:R appears in r4.detail
+  assert.ok(!r4.detail.includes("R:R"))
+  assert.ok(!r4.detail.includes("Risk:Reward"))
   // Ensure positive percentage with 2 decimal places is formatted
-  assert.match(r7.detail, /\(Room: \$\d+\.\d{2} \/ \+\d+\.\d{2}%\)/)
+  assert.match(r4.detail, /\(Room: \$\d+\.\d{2} \/ \+\d+\.\d{2}%\)/)
 
   // 3. discordAlertPayload replaces 'Risk : Reward' with 'Magnitude & Defense'
   const alertStr = Model.discordAlertPayload(res, "TRIGGERED")
@@ -3690,9 +3690,9 @@ test("Contradiction 11: Override & Conflict Permissiveness (Day+60m agree, elimi
   assert.equal(res.isTradeable, false)
   assert.equal(res.isArmed, true)
   assert.match(res.statusTag, /ARMED - Macro Trend LONG \(Awaiting 1D Open Reclaim at \$212\.00\)/)
-  const r1 = res.rules.find(r => r.id === 1)
-  assert.equal(r1.passed, false)
-  assert.match(r1.detail, /Conflict:.*Awaiting 1D Open Reclaim \(\$212\.00\)/)
+  const r3 = res.rules.find(r => r.id === 3)
+  assert.equal(r3.passed, false)
+  assert.match(r3.detail, /Conflict:.*Awaiting 1D Open Reclaim \(\$212\.00\)/)
 })
 
 test("Contradiction 10: The Flip & 60-Minute Bar Timing (xx:30 vs xx:00 and 15:30 Half-Hour Close)", () => {
@@ -3754,16 +3754,16 @@ test("Contradiction 10: The Flip & 60-Minute Bar Timing (xx:30 vs xx:00 and 15:3
   ]
   const morningDate = new Date("2026-07-15T14:15:00Z") // 10:15 EDT -> 15m remaining in bar
   const resMorning = Model.evaluateStratChecklist("AAPL", hourlyMorning, daily, { regularMarketPrice: 215 }, morningDate)
-  const r4Morning = resMorning.rules.find(r => r.id === 4)
-  assert.equal(r4Morning.passed, true)
-  assert.match(r4Morning.detail, /Fresh setup, no exhaustion/)
+  const r7Morning = resMorning.rules.find(r => r.id === 7)
+  assert.equal(r7Morning.passed, true)
+  assert.match(r7Morning.detail, /Fresh setup, no exhaustion/)
 
   // Scenario B: Intraday time exhaustion at 10:27 AM EDT (14:27 UTC) -> <5m remaining (3m left)
   const lateMorningDate = new Date("2026-07-15T14:27:00Z") // 10:27 EDT -> 3m left in 60m candle
   const resLateMorning = Model.evaluateStratChecklist("AAPL", hourlyMorning, daily, { regularMarketPrice: 215 }, lateMorningDate)
-  const r4LateMorning = resLateMorning.rules.find(r => r.id === 4)
-  assert.equal(r4LateMorning.passed, false)
-  assert.match(r4LateMorning.detail, /Time exhaustion: <5m remaining in 60m candle \(3m left\)/)
+  const r7LateMorning = resLateMorning.rules.find(r => r.id === 7)
+  assert.equal(r7LateMorning.passed, false)
+  assert.match(r7LateMorning.detail, /Time exhaustion: <5m remaining in 60m candle \(3m left\)/)
 
   // Scenario C: Final bar at 15:45 EDT (19:45 UTC) -> <30m remaining before market close (15m left)
   // Even with 3/3 HTF In-Force, this is blocked!
@@ -3775,29 +3775,29 @@ test("Contradiction 10: The Flip & 60-Minute Bar Timing (xx:30 vs xx:00 and 15:3
   ]
   const lateAfternoonDate = new Date("2026-07-15T19:45:00Z") // 15:45 EDT -> 15m until 16:00 close
   const resFinal = Model.evaluateStratChecklist("AAPL", hourlyFinal, daily, { regularMarketPrice: 217 }, lateAfternoonDate)
-  const r4Final = resFinal.rules.find(r => r.id === 4)
-  assert.equal(r4Final.passed, false)
-  assert.match(r4Final.detail, /Time exhaustion: <30m remaining before market close \(15m left\)/)
+  const r7Final = resFinal.rules.find(r => r.id === 7)
+  assert.equal(r7Final.passed, false)
+  assert.match(r7Final.detail, /Time exhaustion: <30m remaining before market close \(15m left\)/)
   assert.equal(resFinal.isTradeable, false)
 
   // Scenario D: Market session closed at 16:05 EDT (20:05 UTC)
   const postCloseDate = new Date("2026-07-15T20:05:00Z")
   const resClosed = Model.evaluateStratChecklist("AAPL", hourlyFinal, daily, { regularMarketPrice: 217 }, postCloseDate)
-  const r4Closed = resClosed.rules.find(r => r.id === 4)
-  assert.equal(r4Closed.passed, false)
-  assert.equal(r4Closed.detail, "Market session closed")
+  const r7Closed = resClosed.rules.find(r => r.id === 7)
+  assert.equal(r7Closed.passed, false)
+  assert.equal(r7Closed.detail, "Market session closed")
   assert.equal(resClosed.isTradeable, false)
 
   // Scenario E: Market session closed on Weekend (Saturday)
   const resWeekend = Model.evaluateStratChecklist("AAPL", hourlyFinal, daily, { regularMarketPrice: 217 }, weekendDate)
-  const r4Weekend = resWeekend.rules.find(r => r.id === 4)
-  assert.equal(r4Weekend.passed, false)
-  assert.equal(r4Weekend.detail, "Market session closed")
+  const r7Weekend = resWeekend.rules.find(r => r.id === 7)
+  assert.equal(r7Weekend.passed, false)
+  assert.equal(r7Weekend.detail, "Market session closed")
 
   // Scenario F: Crypto 24/7 at 16:05 EDT -> Session is never closed
   const resCrypto = Model.evaluateStratChecklist("BTC-USD", hourlyFinal, daily, { regularMarketPrice: 217 }, postCloseDate)
-  const r4Crypto = resCrypto.rules.find(r => r.id === 4)
-  assert.notEqual(r4Crypto.detail, "Market session closed")
+  const r7Crypto = resCrypto.rules.find(r => r.id === 7)
+  assert.notEqual(r7Crypto.detail, "Market session closed")
 
   // 4. stratBarState staleness on the final 15:30 bar
   // The 15:30 bar ends at 16:00 (1800s). At 16:05 (nowSec - 19:30 UTC = 2100s),
@@ -3958,9 +3958,9 @@ test("Contradiction 3: Pure Canon Triggered vs. In-Force Definition (stratInForc
     activeTimeframe: "60"
   })
 
-  const r5 = chkPullback.rules.find(r => r.id === 5)
-  assert.equal(r5.passed, true) // Rule 5 passes because setup triggered and is in-force!
-  assert.match(r5.detail, /pullback\) — In-Force/)
+  const r9 = chkPullback.rules.find(r => r.id === 9)
+  assert.equal(r9.passed, true) // Question 9 passes because setup triggered and is in-force!
+  assert.match(r9.detail, /In-Force/)
   assert.equal(chkPullback.isTriggered, true)
   assert.equal(chkPullback.takeActionWindow.isOpen, true) // Take Action Window stays open during pullback!
 
@@ -3973,9 +3973,9 @@ test("Contradiction 3: Pure Canon Triggered vs. In-Force Definition (stratInForc
     regularMarketPrice: 103.00,
     activeTimeframe: "60"
   })
-  const r5Untrig = chkUntriggered.rules.find(r => r.id === 5)
-  assert.equal(r5Untrig.passed, false) // Has not triggered
-  assert.match(r5Untrig.detail, /Awaiting Trigger: \$105\.00/)
+  const r9Untrig = chkUntriggered.rules.find(r => r.id === 9)
+  assert.equal(r9Untrig.passed, false) // Has not triggered
+  assert.match(r9Untrig.detail, /Awaiting Trigger/)
   assert.equal(chkUntriggered.isTriggered, false)
 })
 
@@ -4181,10 +4181,10 @@ test("Contradiction 7: 1-3-2 Rev Strat Canonical Validation (1-3-[Hammer/Shooter
     { timestamp: 4000, open: 211.5, high: 213, low: 211, close: 212.5 } // c0: 2u triggered at 212
   ]
   const resBull = Model.evaluateStratChecklist("SPY", hourlyBullHammer, daily, { regularMarketPrice: 212.5 })
-  const r2Bull = resBull.rules.find(r => r.id === 2)
-  assert.equal(r2Bull.passed, true)
+  const r1Bull = resBull.rules.find(r => r.id === 1)
+  assert.equal(r1Bull.passed, true)
   assert.match(resBull.signalName, /1-3-2 RevStrat Up/)
-  assert.match(r2Bull.detail, /Hammer/)
+  assert.match(r1Bull.detail, /Hammer/)
   // Stop is anchored to entry bar low - 0.01 (211 - 0.01 = 210.99), NOT the hammer wick at 198!
   assert.equal(resBull.stopPrice, 210.99)
   const r8Bull = resBull.rules.find(r => r.id === 8)
@@ -4199,9 +4199,9 @@ test("Contradiction 7: 1-3-2 Rev Strat Canonical Validation (1-3-[Hammer/Shooter
     { timestamp: 4000, open: 211.5, high: 213, low: 211, close: 212.5 } // c0: 2u
   ]
   const resBullInv = Model.evaluateStratChecklist("SPY", hourlyBullInvalid, daily, { regularMarketPrice: 212.5 })
-  const r2BullInv = resBullInv.rules.find(r => r.id === 2)
-  assert.equal(r2BullInv.passed, false)
-  assert.match(r2BullInv.detail, /failed to close as Hammer \(rejection required for 1-3-2 RevStrat\)/)
+  const r1BullInv = resBullInv.rules.find(r => r.id === 1)
+  assert.equal(r1BullInv.passed, false)
+  assert.match(r1BullInv.detail, /failed to close as Hammer \(rejection required for 1-3-2 RevStrat\)/)
 
   // Test 3: Valid Bearish 1-3-2 RevStrat:
   // p3: 200-210
@@ -4220,10 +4220,10 @@ test("Contradiction 7: 1-3-2 Rev Strat Canonical Validation (1-3-[Hammer/Shooter
     { timestamp: 4000, open: 198.5, high: 199, low: 197, close: 197.5 } // c0: 2d triggered at 198
   ]
   const resBear = Model.evaluateStratChecklist("QQQ", hourlyBearShooter, dailyBear, { regularMarketPrice: 197.5 })
-  const r2Bear = resBear.rules.find(r => r.id === 2)
-  assert.equal(r2Bear.passed, true)
+  const r1Bear = resBear.rules.find(r => r.id === 1)
+  assert.equal(r1Bear.passed, true)
   assert.match(resBear.signalName, /1-3-2 RevStrat Down/)
-  assert.match(r2Bear.detail, /Shooter/)
+  assert.match(r1Bear.detail, /Shooter/)
   // Stop is anchored to entry bar high + 0.01 (199 + 0.01 = 199.01), NOT the shooter wick at 212!
   assert.equal(resBear.stopPrice, 199.01)
   const r8Bear = resBear.rules.find(r => r.id === 8)
@@ -4238,9 +4238,9 @@ test("Contradiction 7: 1-3-2 Rev Strat Canonical Validation (1-3-[Hammer/Shooter
     { timestamp: 4000, open: 198.5, high: 199, low: 197, close: 197.5 } // c0: 2d
   ]
   const resBearInv = Model.evaluateStratChecklist("QQQ", hourlyBearInvalid, dailyBear, { regularMarketPrice: 197.5 })
-  const r2BearInv = resBearInv.rules.find(r => r.id === 2)
-  assert.equal(r2BearInv.passed, false)
-  assert.match(r2BearInv.detail, /failed to close as Shooter \(rejection required for 1-3-2 RevStrat\)/)
+  const r1BearInv = resBearInv.rules.find(r => r.id === 1)
+  assert.equal(r1BearInv.passed, false)
+  assert.match(r1BearInv.detail, /failed to close as Shooter \(rejection required for 1-3-2 RevStrat\)/)
 
   // Test 5: Sector query token "1-3-2" in matchesScenarioTokens
   // Matches valid bullish 1-3-2
@@ -4395,11 +4395,11 @@ test("Contradiction 15: Pivot Machine Gun (PMG) Usage & Target Resolution (Mothe
   // Take Action Window targetPrice binds to first untagged target
   assert.equal(chkPmg.takeActionWindow.targetPrice, chkPmg.targets[0].price)
 
-  // 5. Rule 2 PMG Signal Qualification
+  // 5. Question 1 PMG Signal Qualification
   assert.equal(chkPmg.isTriggered, true)
-  const r2 = chkPmg.rules.find(r => r.id === 2)
-  assert.equal(r2.passed, true)
-  assert.match(r2.detail, /PMG: \d+ Stacked Pivots/)
+  const r1 = chkPmg.rules.find(r => r.id === 1)
+  assert.equal(r1.passed, true)
+  assert.match(r1.detail, /PMG: \d+ Stacked Pivots/)
 })
 
 test("Contradiction 12: Broadening Formation Drawing & Zero Breach Tolerance (Truth #3)", () => {
@@ -4474,4 +4474,120 @@ test("Contradiction 12: Broadening Formation Drawing & Zero Breach Tolerance (Tr
   assert.equal(rayUnder.anchor2.index, 4)
   assert.equal(rayUnder.anchor2.price, 104)
   assert.equal(rayUnder.slope, 2.0)
+})
+
+test("Contradiction 8: Pre-Trade Checklist (Canonical 11 Questions vs 9 Rules)", () => {
+  // 1. All 11 rationales are present, structured, and contain no emojis
+  const rationales = Model.stratRuleRationales()
+  assert.equal(Object.keys(rationales).length, 11)
+  for (let i = 1; i <= 11; i++) {
+    assert.ok(rationales[i])
+    assert.equal(typeof rationales[i], "string")
+    assert.ok(rationales[i].length > 15)
+    assert.ok(!/[\u{1F300}-\u{1F9FF}]/u.test(rationales[i]))
+  }
+
+  // 2. Build full bullish setup (2-1-2 Bullish Continuation on 60m with Full FTFC)
+  const daily = [
+    { timestamp: 100, open: 140, high: 145, low: 138, close: 144 },
+    { timestamp: 200, open: 144, high: 152, low: 142, close: 150 }, // p1D High = 152 (Target T2)
+    { timestamp: 300, open: 148, high: 151, low: 147, close: 150.5 }
+  ]
+  const hourly = [
+    { timestamp: 1000, open: 145, high: 148, low: 144, close: 147.5 }, // p3
+    { timestamp: 2000, open: 147.5, high: 150, low: 146, close: 149 },  // p2: 2u
+    { timestamp: 3000, open: 149, high: 149.8, low: 148, close: 149.2 }, // p1: 1 (Inside bar, trig = 149.80, stop = 148.00)
+    { timestamp: 4000, open: 149.3, high: 150.6, low: 149.1, close: 150.2 } // c0: 2u triggered at 149.80
+  ]
+  const quote = { regularMarketPrice: 150.2 }
+
+  const res = Model.evaluateStratChecklist("AAPL", hourly, daily, quote)
+  assert.equal(res.totalRules, 11)
+  assert.equal(res.totalCount, 11)
+  assert.equal(res.rules.length, 11)
+  assert.equal(res.questions.length, 11)
+
+  // Verify all 11 Question keys and titles
+  const expectedKeys = [
+    "SIGNALS",
+    "CREATE_NEGATE",
+    "DIRECTION",
+    "MAGNITUDE",
+    "CONTINUITY_TYPE",
+    "MOMENTUM_RETRACEMENT",
+    "TIME_EXHAUSTION",
+    "STOP_DEFENSE",
+    "MANAGEMENT_PLAN",
+    "MARKET_SECTOR",
+    "BROADENING_STAGE"
+  ]
+  for (let idx = 0; idx < 11; idx++) {
+    const q = res.rules[idx]
+    assert.equal(q.id, idx + 1)
+    assert.equal(q.key, expectedKeys[idx])
+    assert.ok(q.title.length > 5)
+    assert.ok(q.shortTitle.length > 3)
+    assert.ok(q.detail.length > 0)
+    assert.ok(q.rationale.length > 10)
+  }
+
+  // Question 1: Actionable Signals
+  const q1 = res.rules.find(r => r.key === "SIGNALS")
+  assert.equal(q1.passed, true)
+  assert.match(q1.detail, /2-1-2 Up/)
+
+  // Question 2: Create & Negate
+  const q2 = res.rules.find(r => r.key === "CREATE_NEGATE")
+  assert.equal(q2.passed, true)
+  assert.match(q2.detail, /Works ➔ /)
+  assert.match(q2.detail, /Negated @ Stop \$148\.00/)
+
+  // Question 3: Direction of Control
+  const q3 = res.rules.find(r => r.key === "DIRECTION")
+  assert.equal(q3.passed, true)
+
+  // Question 4: Magnitude & Targets
+  const q4 = res.rules.find(r => r.key === "MAGNITUDE")
+  assert.equal(q4.passed, true)
+  assert.match(q4.detail, /T1:/)
+
+  // Question 5: Full vs Partial FTFC
+  const q5 = res.rules.find(r => r.key === "CONTINUITY_TYPE")
+  assert.equal(q5.passed, true)
+  assert.match(q5.detail, /Full 4\/4 Continuity \(Full Size\)/)
+
+  // Question 6: Momentum vs Retracement (One-Bar Test)
+  const q6 = res.rules.find(r => r.key === "MOMENTUM_RETRACEMENT")
+  assert.equal(q6.passed, true)
+  assert.match(q6.detail, /Momentum/)
+
+  // Question 7: Time Exhaustion
+  const q7 = res.rules.find(r => r.key === "TIME_EXHAUSTION")
+  assert.equal(q7.passed, true)
+
+  // Question 8: Level of Defense
+  const q8 = res.rules.find(r => r.key === "STOP_DEFENSE")
+  assert.equal(q8.passed, true)
+  assert.match(q8.detail, /Stop-Loss: \$148\.00/)
+
+  // Question 9: Management Plan (Roadmap)
+  const q9 = res.rules.find(r => r.key === "MANAGEMENT_PLAN")
+  assert.equal(q9.passed, true)
+  assert.match(q9.detail, /Enter @ Trig \$149\.80 ➔ Scale @ T1 \$152\.00/)
+  assert.match(q9.detail, /Exit @ Stop \$148\.00 \[In-Force\]/)
+
+  // Question 10: Sector & Market Context
+  const q10 = res.rules.find(r => r.key === "MARKET_SECTOR")
+  assert.equal(q10.passed, true)
+
+  // Question 11: Broadening Formation Stage
+  const q11 = res.rules.find(r => r.key === "BROADENING_STAGE")
+  assert.equal(q11.passed, true)
+  assert.match(q11.detail, /Standard Range/)
+
+  // Tradeability & Badge formatting
+  assert.equal(res.passedCount, 11)
+  assert.equal(res.isTradeable, true)
+  assert.equal(res.badgeText, "11/11")
+  assert.match(res.statusTag, /TRADEABLE.*All 11 Questions Verified/)
 })
