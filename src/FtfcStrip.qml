@@ -40,7 +40,7 @@ Row {
 
             Text {
                 textFormat: Text.PlainText
-                text: modelData
+                text: modelData + (controller.timeframeColor(root.quote, modelData) === controller.upColor ? "▲" : (controller.timeframeColor(root.quote, modelData) === controller.downColor ? "▼" : ""))
                 color: controller.timeframeColor(root.quote, modelData)
                 font.family: controller.contentFontFamily
                 font.pixelSize: Style.font.bodySmall

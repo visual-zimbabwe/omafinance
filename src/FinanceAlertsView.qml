@@ -475,7 +475,7 @@ Column {
 
                 MouseArea {
                     anchors.fill: parent
-                    anchors.margins: -4
+                    anchors.margins: Style.space(-4)
                     cursorShape: Qt.PointingHandCursor
                     onClicked: controller.triggerWatchlistStratScan()
                 }

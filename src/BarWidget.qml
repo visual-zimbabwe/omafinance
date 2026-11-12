@@ -94,7 +94,7 @@ BarWidget {
         useActiveColor: false
         tooltipText: root.alertsMuted && panelLoader.item ? (panelLoader.item.alertsMuteStatus + " · right-click to unmute") : ""
         horizontalMargin: 8.75
-        verticalPadding: 8.75
+        verticalPadding: Style.space(9)
         Accessible.role: Accessible.Button
         Accessible.name: panelLoader.item ? qsTr("Omafinance: %1").arg(button.text) : qsTr("Omafinance")
 

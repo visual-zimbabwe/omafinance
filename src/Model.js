@@ -7578,8 +7578,10 @@ function isLightColor(color) {
 
 function accessibleSemanticColor(tone, bgColor) {
   var lightBg = isLightColor(bgColor);
-  if (tone === "up") return lightBg ? "#136f3a" : "#4ade80";
-  if (tone === "down") return lightBg ? "#b91c1c" : "#f87171";
+  if (tone === "up" || tone === "success") return lightBg ? "#136f3a" : "#4ade80";
+  if (tone === "down" || tone === "error") return lightBg ? "#b91c1c" : "#f87171";
+  if (tone === "warning") return lightBg ? "#92400e" : "#fbbf24";
+  if (tone === "info") return lightBg ? "#1d4ed8" : "#60a5fa";
   return lightBg ? "#475569" : "#94a3b8";
 }
 

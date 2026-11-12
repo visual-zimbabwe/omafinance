@@ -1476,176 +1476,51 @@ FloatingWindow {
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
-                        // 2u Metric
-                        Row {
-                            spacing: Style.space(3)
-                            anchors.verticalCenter: parent.verticalCenter
+                        Repeater {
+                            model: [
+                                { label: "2u", pct: root.breadthMetrics.pct2u, count: root.breadthMetrics.count2u, valColor: root.breadthMetrics.isSimultaneous2u ? root.upColor : root.foreground },
+                                { label: "2d", pct: root.breadthMetrics.pct2d, count: root.breadthMetrics.count2d, valColor: root.breadthMetrics.isSimultaneous2d ? root.downColor : root.foreground },
+                                { label: "1", pct: root.breadthMetrics.pct1 || 0, count: root.breadthMetrics.count1 || 0, valColor: root.foreground },
+                                { label: "3", pct: root.breadthMetrics.pct3 || 0, count: root.breadthMetrics.count3 || 0, valColor: root.foreground },
+                                { label: "2u Red", pct: root.breadthMetrics.pctF2u || 0, count: root.breadthMetrics.countF2u || 0, valColor: (root.breadthMetrics.pctF2u || 0) >= 20 ? root.downColor : root.foreground },
+                                { label: "2d Green", pct: root.breadthMetrics.pctF2d || 0, count: root.breadthMetrics.countF2d || 0, valColor: (root.breadthMetrics.pctF2d || 0) >= 20 ? root.upColor : root.foreground }
+                            ]
 
-                            Text {
-                                textFormat: Text.PlainText
-                                text: "2u: " + Math.round(root.breadthMetrics.pct2u) + "%"
-                                color: root.breadthMetrics.isSimultaneous2u ? root.upColor : root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                font.bold: true
-                            }
+                            Row {
+                                required property var modelData
+                                required property int index
+                                spacing: Style.space(8)
+                                anchors.verticalCenter: parent.verticalCenter
 
-                            Text {
-                                textFormat: Text.PlainText
-                                text: root.breadthMetrics.count2u + "/" + root.breadthMetrics.totalHoldings
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                            }
-                        }
+                                Text {
+                                    visible: parent.index > 0
+                                    textFormat: Text.PlainText
+                                    text: "|"
+                                    color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.3)
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
 
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "|"
-                            color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.3)
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
+                                Row {
+                                    spacing: Style.space(3)
+                                    anchors.verticalCenter: parent.verticalCenter
 
-                        // 2d Metric
-                        Row {
-                            spacing: Style.space(3)
-                            anchors.verticalCenter: parent.verticalCenter
+                                    Text {
+                                        textFormat: Text.PlainText
+                                        text: modelData.label + ": " + Math.round(modelData.pct) + "%"
+                                        color: modelData.valColor
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                        font.bold: true
+                                    }
 
-                            Text {
-                                textFormat: Text.PlainText
-                                text: "2d: " + Math.round(root.breadthMetrics.pct2d) + "%"
-                                color: root.breadthMetrics.isSimultaneous2d ? root.downColor : root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                font.bold: true
-                            }
-
-                            Text {
-                                textFormat: Text.PlainText
-                                text: root.breadthMetrics.count2d + "/" + root.breadthMetrics.totalHoldings
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                            }
-                        }
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "|"
-                            color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.3)
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        // 1 Metric (Inside Bar)
-                        Row {
-                            spacing: Style.space(3)
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Text {
-                                textFormat: Text.PlainText
-                                text: "1: " + Math.round(root.breadthMetrics.pct1 || 0) + "%"
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                font.bold: true
-                            }
-
-                            Text {
-                                textFormat: Text.PlainText
-                                text: (root.breadthMetrics.count1 || 0) + "/" + root.breadthMetrics.totalHoldings
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                            }
-                        }
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "|"
-                            color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.3)
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        // 3 Metric (Outside Bar)
-                        Row {
-                            spacing: Style.space(3)
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Text {
-                                textFormat: Text.PlainText
-                                text: "3: " + Math.round(root.breadthMetrics.pct3 || 0) + "%"
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                font.bold: true
-                            }
-
-                            Text {
-                                textFormat: Text.PlainText
-                                text: (root.breadthMetrics.count3 || 0) + "/" + root.breadthMetrics.totalHoldings
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                            }
-                        }
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "|"
-                            color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.3)
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        // 2u Red Metric (Failed 2u Reversal / Bearish Evidence)
-                        Row {
-                            spacing: Style.space(3)
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Text {
-                                textFormat: Text.PlainText
-                                text: "2u Red: " + Math.round(root.breadthMetrics.pctF2u || 0) + "%"
-                                color: (root.breadthMetrics.pctF2u || 0) >= 20 ? root.downColor : root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                font.bold: true
-                            }
-
-                            Text {
-                                textFormat: Text.PlainText
-                                text: (root.breadthMetrics.countF2u || 0) + "/" + root.breadthMetrics.totalHoldings
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                            }
-                        }
-
-                        Text {
-                            textFormat: Text.PlainText
-                            text: "|"
-                            color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.3)
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-
-                        // 2d Green Metric (Failed 2d Reversal / Bullish Evidence)
-                        Row {
-                            spacing: Style.space(3)
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Text {
-                                textFormat: Text.PlainText
-                                text: "2d Green: " + Math.round(root.breadthMetrics.pctF2d || 0) + "%"
-                                color: (root.breadthMetrics.pctF2d || 0) >= 20 ? root.upColor : root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                font.bold: true
-                            }
-
-                            Text {
-                                textFormat: Text.PlainText
-                                text: (root.breadthMetrics.countF2d || 0) + "/" + root.breadthMetrics.totalHoldings
-                                color: root.dim
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
+                                    Text {
+                                        textFormat: Text.PlainText
+                                        text: modelData.count + "/" + root.breadthMetrics.totalHoldings
+                                        color: root.dim
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                    }
+                                }
                             }
                         }
                     }
@@ -1675,6 +1550,7 @@ FloatingWindow {
 
         // 1px Hairline Divider + Parallel Fetch Progress Bar
         Item {
+            id: headerDivider
             width: parent.width
             height: 2
 
@@ -1699,7 +1575,7 @@ FloatingWindow {
         Item {
             id: mainContainer
             width: parent.width
-            height: parent.height - masterHeader.height - 1
+            height: parent.height - masterHeader.height - headerDivider.height
 
             // 1. DYNAMIC FLEX 1X1 GRID VIEWPORT (Visible when !inDrillDown)
             Item {
