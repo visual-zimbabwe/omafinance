@@ -338,8 +338,11 @@ Item {
             Row {
                 anchors.left: parent.left
                 anchors.leftMargin: Style.space(8)
+                anchors.right: (stratTagItem.visible && stratTagItem.width > 0) ? stratTagItem.left : parent.right
+                anchors.rightMargin: Style.space(6)
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(8)
+                clip: true
 
                 // Symbol Tag
                 Text {
@@ -365,68 +368,27 @@ Item {
                 }
 
                 // Collapsible/Expandable Timeframe Indicator
-                Item {
-                    id: tfContainer
-                    implicitWidth: root.tfExpanded ? expandedTfRow.implicitWidth : activeTfLabel.implicitWidth
-                    implicitHeight: Math.max(activeTfLabel.implicitHeight, expandedTfRow.implicitHeight)
+                InlineExpandSelector {
+                    model: ["30", "60", "1D", "1W", "1M", "1Y"]
+                    currentValue: root.timeframe
+                    expanded: root.tfExpanded
+                    activeColor: root.foreground
+                    dimColor: root.dim
+                    fontFamily: root.fontFamily
+                    spacing: Style.space(4)
+                    optionMargin: Style.space(2)
                     anchors.verticalCenter: parent.verticalCenter
-
-                    Text {
-                        id: activeTfLabel
-                        visible: !root.tfExpanded
-                        anchors.verticalCenter: parent.verticalCenter
-                        textFormat: Text.PlainText
-                        text: root.timeframe
-                        color: root.foreground
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -Style.space(4)
-                            cursorShape: Qt.PointingHandCursor
-                            hoverEnabled: true
-                            onClicked: {
-                                root.forceActiveFocus();
-                                root.focusRequested(root.cellIndex);
-                                root.tfExpanded = true;
-                            }
-                        }
+                    onExpandRequested: {
+                        root.forceActiveFocus();
+                        root.focusRequested(root.cellIndex);
+                        root.tfExpanded = true;
                     }
-
-                    Row {
-                        id: expandedTfRow
-                        visible: root.tfExpanded
-                        spacing: Style.space(4)
-                        anchors.verticalCenter: parent.verticalCenter
-
-                        Repeater {
-                            model: ["30", "60", "1D", "1W", "1M", "1Y"]
-
-                            Text {
-                                required property string modelData
-                                textFormat: Text.PlainText
-                                text: modelData
-                                color: modelData === root.timeframe ? root.foreground : Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                font.bold: modelData === root.timeframe
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    anchors.margins: -Style.space(2)
-                                    cursorShape: Qt.PointingHandCursor
-                                    hoverEnabled: true
-                                    onClicked: {
-                                        root.forceActiveFocus();
-                                        root.focusRequested(root.cellIndex);
-                                        root.timeframeChangedManually(root.cellIndex, modelData);
-                                        root.tfExpanded = false;
-                                    }
-                                }
-                            }
-                        }
+                    onCollapsed: root.tfExpanded = false
+                    onSelected: function (value) {
+                        root.forceActiveFocus();
+                        root.focusRequested(root.cellIndex);
+                        root.timeframeChangedManually(root.cellIndex, value);
+                        root.tfExpanded = false;
                     }
                 }
 
@@ -468,12 +430,16 @@ Item {
 
             // Active Candle Strat Tag (Right-aligned in header, always visible)
             Item {
+                id: stratTagItem
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.activeCandle !== null
+                width: stratTagText.visible ? stratTagText.implicitWidth : 0
+                height: stratTagText.implicitHeight
 
                 Text {
+                    id: stratTagText
                     anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
                     visible: root.activeCandle && root.activeCandle.strat && root.activeCandle.strat !== "-"

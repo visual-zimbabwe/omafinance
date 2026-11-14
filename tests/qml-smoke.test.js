@@ -24,7 +24,8 @@ const qmlFiles = [
   "FtfcStrip.qml",
   "FinanceSurface.qml",
   "FinanceLayoutsView.qml",
-  "StratChecklistPopup.qml"
+  "StratChecklistPopup.qml",
+  "InlineExpandSelector.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
@@ -298,9 +299,7 @@ test("grid window provides 2x2, 2+3, and 1x1 layouts with zero grid lines", () =
   const gridCell = fs.readFileSync(source("GridCell.qml"), "utf8")
 
   assert.match(gridWin, /property bool gridExpanded:\s*false/)
-  assert.match(gridWin, /id:\s*activeGridLabel/)
-  assert.match(gridWin, /id:\s*expandedGridRow/)
-  assert.match(gridWin, /model:\s*\["2x2",\s*"2\+3",\s*"1x1"\]/)
+  assert.match(gridWin, /InlineExpandSelector\s*\{[\s\S]*?model:\s*\["2x2",\s*"2\+3",\s*"1x1"\]/)
   assert.match(gridWin, /SYM\s*"\s*\+\s*\(root\.syncSymbol/)
   assert.match(gridWin, /CROSS\s*"\s*\+\s*\(root\.syncCrosshair/)
   assert.match(gridWin, /TIME\s*"\s*\+\s*\(root\.syncTime/)
@@ -329,8 +328,7 @@ test("candlestick chart provides pure logarithmic right price scale without R/L 
   assert.match(cell, /property bool changingInterval:\s*false/)
   assert.match(cell, /function startIntervalInput\(/)
   assert.match(cell, /id:\s*intervalOverlay/)
-  assert.match(cell, /id:\s*activeTfLabel/)
-  assert.match(cell, /id:\s*expandedTfRow/)
+  assert.match(cell, /InlineExpandSelector\s*\{[\s\S]*?model:\s*\["30",\s*"60",\s*"1D",\s*"1W",\s*"1M",\s*"1Y"\]/)
   assert.match(grid, /function getActiveCellItem\(\)/)
 })
 
@@ -688,5 +686,21 @@ test("shared feedback primitives provide interactive, loading, status, empty-sta
   assert.match(sectorWin, /FinanceLoader\s*\{/)
   assert.match(sectorWin, /FinanceStatusBanner\s*\{/)
 })
+
+test("grid window and cell headers adapt or constrain controls without overlapping", () => {
+  const gridWin = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const gridCell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const selector = fs.readFileSync(source("InlineExpandSelector.qml"), "utf8")
+
+  assert.match(gridWin, /id:\s*masterHeader[\s\S]*?height:\s*Style\.space\(36\)/)
+  assert.match(gridWin, /readonly property bool compactSync:/)
+  assert.match(gridWin, /id:\s*leftControlsRow[\s\S]*?anchors\.right:\s*rightControlsRow\.left/)
+  assert.match(gridWin, /QQC\.Popup\s*\{\s*id:\s*syncPopup/)
+  assert.match(gridWin, /InlineExpandSelector\s*\{/)
+  assert.match(gridCell, /anchors\.right:\s*\(stratTagItem\.visible\s*&&\s*stratTagItem\.width\s*>\s*0\)\s*\?\s*stratTagItem\.left\s*:\s*parent\.right/)
+  assert.match(gridCell, /InlineExpandSelector\s*\{/)
+  assert.match(selector, /HoverHandler\s*\{/)
+})
+
 
 
