@@ -462,7 +462,7 @@ Column {
 
             MouseArea {
                 id: holdingsHeaderMouseArea
-                anchors.fill: holdingsTitleText
+                anchors.fill: holdingsHeaderLeft
                 hoverEnabled: true
             }
 

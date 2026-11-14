@@ -17,6 +17,7 @@ FinanceSurface {
     property bool unfocusOnNavKeys: false
     property bool uppercase: false
     property int liveDebounceMs: 0
+    property bool _skipBlurCommit: false
 
     property string fontFamily: Style.font.family
     property int fontPixelSize: Style.font.caption
@@ -41,6 +42,12 @@ FinanceSurface {
     function clearText() {
         debounceTimer.stop();
         textInput.text = "";
+    }
+
+    onValueChanged: {
+        if (!textInput.activeFocus && textInput.text !== root.value) {
+            textInput.text = root.value;
+        }
     }
 
     elevation: 0
@@ -88,8 +95,10 @@ FinanceSurface {
 
         onAccepted: {
             debounceTimer.stop();
+            root._skipBlurCommit = true;
             root.committed(text.trim());
             root.unfocusRequested();
+            root._skipBlurCommit = false;
         }
 
         onActiveFocusChanged: {
@@ -97,7 +106,7 @@ FinanceSurface {
                 selectAll();
             } else {
                 debounceTimer.stop();
-                if (root.commitOnBlur) {
+                if (root.commitOnBlur && !root._skipBlurCommit) {
                     root.committed(text.trim());
                 }
                 text = root.value;
@@ -107,8 +116,10 @@ FinanceSurface {
         Keys.onPressed: function (ev) {
             if (ev.key === Qt.Key_Escape) {
                 debounceTimer.stop();
+                root._skipBlurCommit = true;
                 text = root.value;
                 root.unfocusRequested();
+                root._skipBlurCommit = false;
                 ev.accepted = true;
             } else if (root.unfocusOnNavKeys && (ev.key === Qt.Key_Down || ev.key === Qt.Key_Tab)) {
                 root.unfocusRequested();
@@ -117,11 +128,16 @@ FinanceSurface {
         }
     }
 
-    Binding {
-        target: textInput
-        property: "text"
-        value: root.value
-        when: !textInput.activeFocus
+    MouseArea {
+        anchors.fill: parent
+        z: 1
+        enabled: !textInput.activeFocus
+        acceptedButtons: Qt.LeftButton
+        cursorShape: Qt.IBeamCursor
+        onClicked: {
+            textInput.forceActiveFocus();
+            textInput.selectAll();
+        }
     }
 
     MouseArea {
