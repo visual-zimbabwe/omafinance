@@ -199,9 +199,9 @@ FloatingWindow {
     }
 
     function notifyCacheKeyUpdated(key) {
-        if (!key) return;
-        var sep = key.lastIndexOf("_");
-        var sym = sep >= 0 ? key.slice(0, sep) : "";
+        var k = String(key || "");
+        var sep = k.lastIndexOf("_");
+        var sym = sep >= 0 ? k.slice(0, sep) : "";
         var count = root.gridMode === "2x2" ? 4 : 5;
         for (var i = 0; i < count; i++) {
             var cSym = root.symbolForCell(i);
@@ -210,6 +210,9 @@ FloatingWindow {
             }
         }
     }
+
+    onChartCacheChanged: root.notifyCacheKeyUpdated("")
+    onQuotesChanged: root.notifyCacheKeyUpdated("")
 
     function notifyQuotesUpdated(changedSymbols) {
         if (!Array.isArray(changedSymbols) || changedSymbols.length === 0) return;
@@ -350,18 +353,15 @@ FloatingWindow {
 
                 if (parsed.symbol) {
                     var existingQuote = root.quotes[root.currentFetchSymbol];
+                    var mergedQuote = Model.mergeChartQuote(existingQuote, parsed);
                     if (!existingQuote) {
-                        root.quotes[root.currentFetchSymbol] = parsed;
+                        root.quotes[root.currentFetchSymbol] = mergedQuote;
                         root.notifyQuotesUpdated([root.currentFetchSymbol]);
                         var singleQuoteMap = ({});
-                        singleQuoteMap[root.currentFetchSymbol] = parsed;
+                        singleQuoteMap[root.currentFetchSymbol] = mergedQuote;
                         root.evaluateActivePriceLevelAlerts(singleQuoteMap);
                     } else if (parsed.ftfc || parsed.bar60) {
-                        var enriched = Object.assign({}, existingQuote);
-                        if (parsed.ftfc) enriched.ftfc = parsed.ftfc;
-                        if (parsed.bar60) enriched.bar60 = parsed.bar60;
-                        if (parsed.closes && (!enriched.closes || enriched.closes.length === 0)) enriched.closes = parsed.closes;
-                        root.quotes[root.currentFetchSymbol] = enriched;
+                        root.quotes[root.currentFetchSymbol] = mergedQuote;
                         root.notifyQuotesUpdated([root.currentFetchSymbol]);
                     }
                 }

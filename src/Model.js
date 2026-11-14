@@ -7406,8 +7406,14 @@ function sortSectorHoldings(holdings, sortField, sortDirection, quotesMap) {
     } else if (field === "change" || field === "change %") {
       var qa2 = quotesMap ? quotesMap[a.symbol] : null;
       var qb2 = quotesMap ? quotesMap[b.symbol] : null;
-      var ca = Number(qa2 && qa2.regularMarketChangePercent) || 0;
-      var cb = Number(qb2 && qb2.regularMarketChangePercent) || 0;
+      var ca = qa2 ? finiteOrNull(qa2.regularMarketChangePercent) : null;
+      if (ca === null && qa2) ca = finiteOrNull(qa2.changePercent);
+      if (ca === null && qa2) ca = finiteOrNull(qa2.regularChangePercent);
+      if (ca === null) ca = 0;
+      var cb = qb2 ? finiteOrNull(qb2.regularMarketChangePercent) : null;
+      if (cb === null && qb2) cb = finiteOrNull(qb2.changePercent);
+      if (cb === null && qb2) cb = finiteOrNull(qb2.regularChangePercent);
+      if (cb === null) cb = 0;
       if (ca !== cb) return (ca - cb) * sign;
     } else if (field === "atr" || field === "atr %") {
       var aa = Number(a.atrPercent || 0);
@@ -7691,6 +7697,23 @@ function pruneChartCache(cache, maxEntries, accessTimes, protectedKeys) {
   return pruned;
 }
 
+function mergeChartQuote(existingQuote, chartParsed) {
+  if (!chartParsed || !chartParsed.symbol) return existingQuote || null;
+  var hasExisting = Boolean(existingQuote && typeof existingQuote === "object" && (existingQuote.price !== undefined || existingQuote.regularPrice !== undefined || existingQuote.regularMarketPrice !== undefined));
+  if (hasExisting) {
+    var enriched = Object.assign({}, existingQuote);
+    if (chartParsed.ftfc) enriched.ftfc = chartParsed.ftfc;
+    if (chartParsed.bar60) enriched.bar60 = chartParsed.bar60;
+    if (chartParsed.closes && (!enriched.closes || enriched.closes.length === 0)) enriched.closes = chartParsed.closes;
+    if (chartParsed.name && !enriched.name) enriched.name = chartParsed.name;
+    if (enriched.candles !== undefined) delete enriched.candles;
+    return enriched;
+  }
+  var fresh = Object.assign({}, chartParsed);
+  if (fresh.candles !== undefined) delete fresh.candles;
+  return fresh;
+}
+
 var Z_LAYER = {
   TILE_BORDER: 5,
   HEADER: 10,
@@ -7870,6 +7893,7 @@ if (typeof module !== "undefined") {
     updateDevelopingCandle: updateDevelopingCandle,
     updateCachedDevelopingCandles: updateCachedDevelopingCandles,
     pruneChartCache: pruneChartCache,
+    mergeChartQuote: mergeChartQuote,
     SIMULTANEOUS_BREAK_THRESHOLD: SIMULTANEOUS_BREAK_THRESHOLD,
     stratSpread: stratSpread,
     MIN_BAR_COUNT: MIN_BAR_COUNT,

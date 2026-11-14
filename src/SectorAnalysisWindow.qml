@@ -22,8 +22,8 @@ FloatingWindow {
         }
         var s = (sectorTickers.length === 1) ? sectorTickers[0] : root.sectorSymbol;
         var q = root.quotes[s];
-        if (q && (q.shortName || q.longName)) {
-            return q.shortName || q.longName;
+        if (q && (q.shortName || q.longName || q.name)) {
+            return q.shortName || q.longName || q.name;
         }
         return "";
     }
@@ -95,7 +95,7 @@ FloatingWindow {
         }
         if (!breadthUpdateTimer.running)
             breadthUpdateTimer.start();
-        if (((root.scenarioFilter || "").trim() !== "" || root.sortField !== "weight") && !tileModelSyncTimer.running)
+        if (!tileModelSyncTimer.running)
             tileModelSyncTimer.start();
     }
 
@@ -140,6 +140,8 @@ FloatingWindow {
         root.clearLockStack();
         root.reloadSector(root.sectorSymbol);
     }
+
+    onSectorTickersChanged: syncTileModel()
 
     function getTierHoldingsCount(tierIdx) {
         if (!root.lockStack || tierIdx < 0 || tierIdx >= root.lockStack.length)
@@ -286,6 +288,7 @@ FloatingWindow {
     function loadHoldingsForSector(sym) {
         root.holdings = [];
         root.holdingsFetchSymbol = sym;
+        syncTileModel();
         if (holdingsProc.running) {
             holdingsProc.signal(9);
         }
@@ -328,10 +331,12 @@ FloatingWindow {
         var targetHoldings = [];
         var labelSym = root.sectorSymbol;
         var labelName = root.sectorFullName;
+        var tickers = Model.parseSectorTickers(root.sectorSymbol);
+        var isMulti = tickers.length > 1;
 
-        if (root.isMultiTicker) {
-            for (var i = 0; i < root.sectorTickers.length; i++) {
-                var sym = root.sectorTickers[i];
+        if (isMulti) {
+            for (var i = 0; i < tickers.length; i++) {
+                var sym = tickers[i];
                 targetHoldings.push({
                     symbol: sym
                 });
@@ -374,11 +379,13 @@ FloatingWindow {
         var list = [];
         var filterQuery = (root.scenarioFilter || "").trim();
         var lockedSyms = root.activeLockedSymbols;
+        var tickers = Model.parseSectorTickers(root.sectorSymbol);
+        var isMulti = tickers.length > 1;
 
-        if (root.isMultiTicker) {
+        if (isMulti) {
             var matchedMulti = [];
-            for (var m = 0; m < root.sectorTickers.length; m++) {
-                var sym = root.sectorTickers[m];
+            for (var m = 0; m < tickers.length; m++) {
+                var sym = tickers[m];
                 if (lockedSyms && lockedSyms.indexOf(sym) === -1)
                     continue;
 
@@ -408,7 +415,7 @@ FloatingWindow {
         }
 
         // Single Ticker Mode: Sector ETF Benchmark Tile Candidate
-        var etfSymbol = (root.sectorTickers.length === 1) ? root.sectorTickers[0] : root.sectorSymbol;
+        var etfSymbol = (tickers.length === 1) ? tickers[0] : root.sectorSymbol;
         var etfInUniverse = (!lockedSyms || lockedSyms.indexOf(etfSymbol) !== -1);
         if (etfInUniverse) {
             var etfCandles = root.getCandles(etfSymbol, root.timeframe);
@@ -420,7 +427,7 @@ FloatingWindow {
             if (etfMatches) {
                 list.push({
                     symbol: etfSymbol,
-                    name: root.sectorFullName ? (root.sectorFullName + " (Sector ETF)") : (etfQuote ? (etfQuote.shortName || etfQuote.longName || etfSymbol) : etfSymbol),
+                    name: root.sectorFullName ? (root.sectorFullName + " (Sector ETF)") : (etfQuote ? (etfQuote.shortName || etfQuote.longName || etfQuote.name || etfSymbol) : etfSymbol),
                     isEtf: true,
                     pctVal: 100,
                     valUSD: 0
@@ -706,9 +713,10 @@ FloatingWindow {
                     root.chartDataReceived(k, parsed.candles, parsed.symbol ? parsed : null);
 
                     if (parsed.symbol && !root.quotes[sym]) {
-                        root.quotes[sym] = parsed;
+                        var freshQuote = Model.mergeChartQuote(null, parsed);
+                        root.quotes[sym] = freshQuote;
                         var singleMap = ({});
-                        singleMap[sym] = parsed;
+                        singleMap[sym] = freshQuote;
                         root.quotesReceived(singleMap);
                         root.notifyQuotesUpdated([sym]);
                     }

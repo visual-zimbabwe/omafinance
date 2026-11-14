@@ -4595,3 +4595,68 @@ test("QML QVariantList non-Array sequence compatibility for breadth, scenario fi
   assert.equal(Array.isArray(updated), true)
   assert.equal(updated[updated.length - 1].close, 120)
 })
+
+test("mergeChartQuote preserves real-time 1D spark quote fields and strips candles array", () => {
+  const sparkQuote = {
+    symbol: "NVDA",
+    name: "NVIDIA Corp",
+    price: 140.5,
+    change: 3.5,
+    changePercent: 2.55,
+    previousClose: 137.0,
+    regularPrice: 140.5,
+    regularChangePercent: 2.55,
+    closes: [138, 139, 140.5]
+  }
+  const chartParsed1W = {
+    symbol: "NVDA",
+    name: "NVIDIA Corp",
+    price: 140.5,
+    change: 95.5,
+    changePercent: 212.22,
+    previousClose: 45.0,
+    regularPrice: 140.5,
+    regularChangePercent: 212.22,
+    ftfc: { D: "up", W: "up", M: "up" },
+    bar60: { scenario: "2u", isGreen: true },
+    closes: [45, 80, 140.5],
+    candles: [{ timestamp: 1, open: 45, high: 141, low: 44, close: 140.5 }]
+  }
+
+  const merged = Model.mergeChartQuote(sparkQuote, chartParsed1W)
+  assert.equal(merged.symbol, "NVDA")
+  assert.equal(merged.price, 140.5)
+  assert.equal(merged.change, 3.5)
+  assert.equal(merged.changePercent, 2.55)
+  assert.equal(merged.previousClose, 137.0)
+  assert.equal(merged.regularChangePercent, 2.55)
+  assert.deepEqual(merged.ftfc, { D: "up", W: "up", M: "up" })
+  assert.deepEqual(merged.bar60, { scenario: "2u", isGreen: true })
+  assert.deepEqual(merged.closes, [138, 139, 140.5])
+  assert.equal(merged.candles, undefined)
+
+  const fresh = Model.mergeChartQuote(null, chartParsed1W)
+  assert.equal(fresh.symbol, "NVDA")
+  assert.equal(fresh.price, 140.5)
+  assert.deepEqual(fresh.ftfc, { D: "up", W: "up", M: "up" })
+  assert.equal(fresh.candles, undefined)
+})
+
+test("sortSectorHoldings sorts accurately by change % across parseSpark and Yahoo quote formats", () => {
+  const holdings = [
+    { symbol: "AAPL", pctVal: 10 },
+    { symbol: "NVDA", pctVal: 20 },
+    { symbol: "AMD", pctVal: 5 }
+  ]
+  const sparkQuotes = {
+    AAPL: { price: 200, changePercent: 0.5, regularChangePercent: 0.5 },
+    NVDA: { price: 140, changePercent: 4.2, regularChangePercent: 4.2 },
+    AMD: { price: 150, changePercent: -1.8, regularChangePercent: -1.8 }
+  }
+
+  const desc = Model.sortSectorHoldings(holdings, "change", "desc", sparkQuotes)
+  assert.deepEqual(desc.map(h => h.symbol), ["NVDA", "AAPL", "AMD"])
+
+  const asc = Model.sortSectorHoldings(holdings, "change", "asc", sparkQuotes)
+  assert.deepEqual(asc.map(h => h.symbol), ["AMD", "AAPL", "NVDA"])
+})

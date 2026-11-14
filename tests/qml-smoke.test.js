@@ -25,7 +25,11 @@ const qmlFiles = [
   "FinanceSurface.qml",
   "FinanceLayoutsView.qml",
   "StratChecklistPopup.qml",
-  "InlineExpandSelector.qml"
+  "InlineExpandSelector.qml",
+  "FinanceInputBox.qml",
+  "FinanceChipButton.qml",
+  "FinanceLoader.qml",
+  "FinanceStatusBanner.qml"
 ]
 
 test("all plugin QML files parse with qmlformat", () => {
@@ -743,5 +747,37 @@ test("sector breadth and chartCache lifecycle preserve JS arrays and recompute o
   // FinanceStatusBanner must import Model.js
   assert.match(banner, /import\s+"Model\.js"\s+as\s+Model/)
 })
+
+test("regression guards: multi-ticker sync, chart quote protection, FinanceInputBox commit/selectAll, GridWindow wildcard cache key, and FinanceDetailView anchor", () => {
+  const sectorWin = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
+  const panelSrc = fs.readFileSync(source("Panel.qml"), "utf8")
+  const inputBox = fs.readFileSync(source("FinanceInputBox.qml"), "utf8")
+  const gridWin = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const detailView = fs.readFileSync(source("FinanceDetailView.qml"), "utf8")
+
+  // 1. SectorAnalysisWindow derives tickers directly from Model.parseSectorTickers(root.sectorSymbol) in computeFilteredTiles & recomputeBreadthMetrics
+  assert.match(sectorWin, /function recomputeBreadthMetrics\(\)\s*\{[\s\S]*?var tickers = Model\.parseSectorTickers\(root\.sectorSymbol\)/)
+  assert.match(sectorWin, /function computeFilteredTiles\(\)\s*\{[\s\S]*?var tickers = Model\.parseSectorTickers\(root\.sectorSymbol\)/)
+  assert.match(sectorWin, /onSectorTickersChanged:\s*syncTileModel\(\)/)
+  assert.match(sectorWin, /function loadHoldingsForSector\(sym\)\s*\{[\s\S]*?syncTileModel\(\)/)
+  assert.match(sectorWin, /q\.shortName \|\| q\.longName \|\| q\.name/)
+
+  // 2. Panel.updateSharedCandles uses Model.mergeChartQuote so 1W/1M/60m charts never clobber 1D spark quotes
+  assert.match(panelSrc, /function updateSharedCandles[\s\S]*?Model\.mergeChartQuote\(existing,\s*quoteEnriched\)/)
+  assert.doesNotMatch(panelSrc, /function updateSharedCandles[\s\S]*?Object\.assign\(\{\},\s*existing,\s*quoteEnriched\)/)
+
+  // 3. FinanceInputBox avoids Binding race on blur, prevents double-commit on Enter, and selects all on first click
+  assert.doesNotMatch(inputBox, /Binding\s*\{\s*target:\s*textInput/)
+  assert.match(inputBox, /property bool _skipBlurCommit:\s*false/)
+  assert.match(inputBox, /enabled:\s*!textInput\.activeFocus[\s\S]*?textInput\.forceActiveFocus\(\)[\s\S]*?textInput\.selectAll\(\)/)
+
+  // 4. GridWindow.notifyCacheKeyUpdated supports "" wildcard key
+  assert.match(gridWin, /function notifyCacheKeyUpdated\(key\)\s*\{\s*var k = String\(key \|\| ""\);/)
+  assert.doesNotMatch(gridWin, /function notifyCacheKeyUpdated\(key\)\s*\{\s*if \(!key\)\s*return;/)
+
+  // 5. FinanceDetailView holdingsHeaderMouseArea anchors to sibling holdingsHeaderLeft, not nested child
+  assert.doesNotMatch(detailView, /anchors\.fill:\s*holdingsTitleText/)
+})
+
 
 

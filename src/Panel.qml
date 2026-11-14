@@ -1498,8 +1498,8 @@ Panel {
         root.chartCacheAccess[key] = Date.now();
         root.candleCacheUpdated(key);
         if (quoteEnriched && quoteEnriched.symbol) {
-            var existing = root.quotes[quoteEnriched.symbol] || ({});
-            var enriched = Object.assign({}, existing, quoteEnriched);
+            var existing = root.quotes[quoteEnriched.symbol] || null;
+            var enriched = Model.mergeChartQuote(existing, quoteEnriched);
             if (root.opened || root.showBarQuote) {
                 var nextQuotes = Object.assign({}, root.quotes);
                 nextQuotes[quoteEnriched.symbol] = enriched;
