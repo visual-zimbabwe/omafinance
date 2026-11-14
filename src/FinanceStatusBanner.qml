@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
+import "Model.js" as Model
 
 // Shared inline status banner, transient toast, and centered empty-state card.
 FinanceSurface {

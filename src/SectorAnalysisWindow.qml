@@ -64,10 +64,9 @@ FloatingWindow {
     property int drillDownDataRev: 0
 
     function notifyCacheKeyUpdated(key) {
-        if (!key)
-            return;
-        var sep = key.lastIndexOf("_");
-        var sym = sep >= 0 ? key.slice(0, sep) : "";
+        var k = String(key || "");
+        var sep = k.lastIndexOf("_");
+        var sym = sep >= 0 ? k.slice(0, sep) : "";
         if (sym) {
             root.symbolDataUpdated(sym);
             if (root.inDrillDown && sym === root.drillDownSymbol)
@@ -177,6 +176,12 @@ FloatingWindow {
         return root.matchingHoldingsCount < root.activeLockedHoldingsCount;
     }
 
+    function clearScenarioFilter() {
+        root.scenarioFilter = "";
+        if (typeof scenarioBox !== "undefined")
+            scenarioBox.clearText();
+    }
+
     function pushLockTier() {
         var symbols = Model.extractSymbols(root.filteredTiles);
         if (symbols.length === 0)
@@ -185,10 +190,7 @@ FloatingWindow {
         nextStack.push(symbols);
         root.lockStack = nextStack;
         root.activeTileIndex = 0;
-        if (typeof scenarioField !== "undefined") {
-            scenarioField.text = "";
-            root.scenarioFilter = "";
-        }
+        clearScenarioFilter();
     }
 
     function copyFilteredTickers() {
@@ -209,10 +211,7 @@ FloatingWindow {
     function clearLockStack() {
         root.lockStack = [];
         root.activeTileIndex = 0;
-        if (typeof scenarioField !== "undefined") {
-            scenarioField.text = "";
-            root.scenarioFilter = "";
-        }
+        clearScenarioFilter();
     }
 
     onTimeframeChanged: {
@@ -527,6 +526,16 @@ FloatingWindow {
 
     onHoldingsChanged: {
         syncTileModel();
+        recomputeBreadthMetrics();
+    }
+    onChartCacheChanged: {
+        syncTileModel();
+        recomputeBreadthMetrics();
+        root.symbolDataUpdated("");
+        if (root.inDrillDown)
+            root.drillDownDataRev++;
+    }
+    onQuotesChanged: {
         recomputeBreadthMetrics();
     }
     onSortFieldChanged: syncTileModel()
@@ -885,7 +894,7 @@ FloatingWindow {
                     event.accepted = true;
                     return;
                 }
-                if (scenarioField.activeFocus) {
+                if (scenarioBox.inputActiveFocus) {
                     keyboardListener.forceActiveFocus();
                     event.accepted = true;
                     return;
@@ -967,93 +976,27 @@ FloatingWindow {
                         }
 
                         // Sector Ticker Switcher
-                        FinanceSurface {
+                        FinanceInputBox {
                             id: sectorBox
-                            elevation: 0
-                            radiusToken: "sm"
-                            sheen: false
-                            active: sectorInput.activeFocus
-                            foregroundColor: root.foreground
-                            surfaceColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-                            width: Math.max(Style.space(60), Math.min(Style.space(260), sectorInput.contentWidth + Style.space(16)))
-                            height: Style.space(24)
+                            value: root.sectorSymbol
+                            width: Math.max(Style.space(60), Math.min(Style.space(260), inputContentWidth + Style.space(16)))
                             anchors.verticalCenter: parent.verticalCenter
-                            clip: true
-
-                            TextInput {
-                                id: sectorInput
-                                anchors.fill: parent
-                                anchors.leftMargin: Style.space(6)
-                                anchors.rightMargin: Style.space(6)
-                                horizontalAlignment: (contentWidth > (width - Style.space(12))) ? TextInput.AlignLeft : TextInput.AlignHCenter
-                                verticalAlignment: TextInput.AlignVCenter
-                                clip: true
-                                text: root.sectorSymbol
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                font.bold: true
-                                font.capitalization: Font.AllUppercase
-                                inputMethodHints: Qt.ImhUppercaseOnly | Qt.ImhNoPredictiveText
-                                selectByMouse: true
-
-                                onTextEdited: {
-                                    var curPos = cursorPosition;
-                                    var upper = text.toUpperCase();
-                                    if (text !== upper) {
-                                        text = upper;
-                                        cursorPosition = curPos;
-                                    }
-                                }
-
-                                onAccepted: {
-                                    var val = text.trim().toUpperCase();
-                                    if (val.length > 0) {
-                                        root.setSector(val);
-                                    }
-                                    text = root.sectorSymbol;
-                                    keyboardListener.forceActiveFocus();
-                                }
-
-                                onActiveFocusChanged: {
-                                    if (!activeFocus) {
-                                        var val = text.trim().toUpperCase();
-                                        if (val.length > 0) {
-                                            root.setSector(val);
-                                        }
-                                        text = root.sectorSymbol;
-                                    } else {
-                                        selectAll();
-                                    }
-                                }
-
-                                Keys.onPressed: function (event) {
-                                    if (event.key === Qt.Key_Escape) {
-                                        text = root.sectorSymbol;
-                                        keyboardListener.forceActiveFocus();
-                                        event.accepted = true;
-                                    }
-                                }
+                            foregroundColor: root.foreground
+                            dimColor: root.dim
+                            fontFamily: root.fontFamily
+                            fontPixelSize: Style.font.bodySmall
+                            fontBold: true
+                            uppercase: true
+                            allowRightClick: true
+                            inputMethodHints: Qt.ImhUppercaseOnly | Qt.ImhNoPredictiveText
+                            horizontalAlignment: (inputContentWidth > (width - Style.space(12))) ? TextInput.AlignLeft : TextInput.AlignHCenter
+                            onCommitted: function (text) {
+                                var val = text.toUpperCase();
+                                if (val.length > 0)
+                                    root.setSector(val);
                             }
-
-                            Binding {
-                                target: sectorInput
-                                property: "text"
-                                value: root.sectorSymbol
-                                when: !sectorInput.activeFocus
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                z: 2
-                                acceptedButtons: Qt.RightButton
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: function (mouse) {
-                                    if (mouse.button === Qt.RightButton) {
-                                        root.toggleSector();
-                                    }
-                                }
-                            }
+                            onRightClicked: root.toggleSector()
+                            onUnfocusRequested: keyboardListener.forceActiveFocus()
                         }
 
                         // Sector Full Name
@@ -1201,116 +1144,26 @@ FloatingWindow {
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
-                            // Scenario Filter Input Box (Mirrors sectorBox implementation)
-                            FinanceSurface {
+                            // Scenario Filter Input Box (commit on Enter/blur, no mid-typing debounce)
+                            FinanceInputBox {
                                 id: scenarioBox
-                                elevation: 0
-                                radiusToken: "sm"
-                                sheen: false
-                                active: scenarioField.activeFocus
-                                foregroundColor: root.foreground
-                                surfaceColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
                                 width: Style.space(200)
-                                height: Style.space(24)
                                 anchors.verticalCenter: parent.verticalCenter
-                                clip: true
-
-                                TextInput {
-                                    id: scenarioField
-                                    anchors.fill: parent
-                                    anchors.leftMargin: Style.space(6)
-                                    anchors.rightMargin: Style.space(22)
-                                    verticalAlignment: TextInput.AlignVCenter
-                                    clip: true
-                                    text: root.scenarioFilter
-                                    color: root.foreground
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.caption
-                                    selectByMouse: true
-
-                                    onTextChanged: {
-                                        if (activeFocus)
-                                            scenarioDebounceTimer.restart();
-                                    }
-
-                                    onAccepted: {
-                                        scenarioDebounceTimer.stop();
-                                        root.scenarioFilter = text.trim();
-                                        keyboardListener.forceActiveFocus();
-                                    }
-
-                                    onActiveFocusChanged: {
-                                        if (!activeFocus) {
-                                            scenarioDebounceTimer.stop();
-                                            root.scenarioFilter = text.trim();
-                                        } else {
-                                            selectAll();
-                                        }
-                                    }
-
-                                    Keys.onPressed: function (ev) {
-                                        if (ev.key === Qt.Key_Escape) {
-                                            text = root.scenarioFilter;
-                                            keyboardListener.forceActiveFocus();
-                                            ev.accepted = true;
-                                        } else if (ev.key === Qt.Key_Down || ev.key === Qt.Key_Tab) {
-                                            keyboardListener.forceActiveFocus();
-                                            ev.accepted = true;
-                                        }
-                                    }
+                                value: root.scenarioFilter
+                                placeholderText: "1, 2uh, 3s, !r..."
+                                clearable: true
+                                allowRightClick: true
+                                unfocusOnNavKeys: true
+                                foregroundColor: root.foreground
+                                dimColor: root.dim
+                                fontFamily: root.fontFamily
+                                fontPixelSize: Style.font.caption
+                                onCommitted: function (text) {
+                                    root.scenarioFilter = text;
                                 }
-
-                                Binding {
-                                    target: scenarioField
-                                    property: "text"
-                                    value: root.scenarioFilter
-                                    when: !scenarioField.activeFocus
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    z: 2
-                                    acceptedButtons: Qt.RightButton
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: function (mouse) {
-                                        if (mouse.button === Qt.RightButton) {
-                                            scenarioField.text = "";
-                                            root.scenarioFilter = "";
-                                        }
-                                    }
-                                }
-
-                                Text {
-                                    visible: root.scenarioFilter.length === 0 && !scenarioField.activeFocus
-                                    text: "1, 2uh, 3s, !r..."
-                                    color: Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.5)
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.caption
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: Style.space(6)
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                Text {
-                                    visible: root.scenarioFilter.length > 0
-                                    text: "✕"
-                                    color: root.dim
-                                    font.pixelSize: Style.font.caption
-                                    anchors.right: parent.right
-                                    anchors.rightMargin: Style.space(6)
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    z: 3
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        anchors.margins: -Style.space(4)
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
-                                            scenarioField.text = "";
-                                            root.scenarioFilter = "";
-                                        }
-                                    }
-                                }
+                                onCleared: root.scenarioFilter = ""
+                                onRightClicked: root.clearScenarioFilter()
+                                onUnfocusRequested: keyboardListener.forceActiveFocus()
                             }
                         }
 
@@ -1503,85 +1356,38 @@ FloatingWindow {
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
-                        FinanceSurface {
+                        FinanceInputBox {
                             id: barsBox
-                            readonly property int parsedBars: parseInt(barsInput.text, 10)
-                            readonly property bool barsOutOfRange: barsInput.activeFocus && barsInput.text.length > 0 && (isNaN(parsedBars) || parsedBars < Model.MIN_BAR_COUNT || parsedBars > Model.MAX_BAR_COUNT)
+                            readonly property int parsedBars: parseInt(inputText, 10)
+                            readonly property bool barsOutOfRange: inputActiveFocus && inputText.length > 0 && (isNaN(parsedBars) || parsedBars < Model.MIN_BAR_COUNT || parsedBars > Model.MAX_BAR_COUNT)
 
-                            elevation: 0
-                            radiusToken: "sm"
-                            sheen: false
-                            active: barsInput.activeFocus
+                            width: Style.space(48)
+                            anchors.verticalCenter: parent.verticalCenter
+                            value: root.globalBarCount < 0 ? "ALL" : ("" + root.globalBarCount)
+                            commitOnBlur: false
+                            liveDebounceMs: 120
                             foregroundColor: root.foreground
+                            dimColor: root.dim
                             borderColorOverride: barsOutOfRange ? Color.urgent : "transparent"
-                            surfaceColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
-
+                            fontFamily: root.fontFamily
+                            fontPixelSize: Style.font.caption
+                            horizontalAlignment: TextInput.AlignHCenter
+                            leftPadding: Style.space(4)
+                            rightPadding: Style.space(4)
+                            inputMethodHints: Qt.ImhDigitsOnly
+                            validator: RegularExpressionValidator {
+                                regularExpression: /[0-9]*/
+                            }
                             QQC.ToolTip.visible: barsBox.barsOutOfRange
                             QQC.ToolTip.text: "Bars clamped to " + Model.MIN_BAR_COUNT + "–" + Model.MAX_BAR_COUNT
-                            width: Style.space(48)
-                            height: Style.space(24)
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            TextInput {
-                                id: barsInput
-                                anchors.fill: parent
-                                anchors.leftMargin: Style.space(4)
-                                anchors.rightMargin: Style.space(4)
-                                horizontalAlignment: TextInput.AlignHCenter
-                                verticalAlignment: TextInput.AlignVCenter
-                                text: root.globalBarCount < 0 ? "ALL" : ("" + root.globalBarCount)
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                selectByMouse: true
-                                inputMethodHints: Qt.ImhDigitsOnly
-                                validator: RegularExpressionValidator {
-                                    regularExpression: /[0-9]*/
-                                }
-
-                                onTextChanged: {
-                                    if (activeFocus) {
-                                        barDebounceTimer.restart();
-                                    }
-                                }
-
-                                onActiveFocusChanged: {
-                                    if (activeFocus) {
-                                        selectAll();
-                                    } else {
-                                        barsInput.text = root.globalBarCount < 0 ? "ALL" : ("" + root.globalBarCount);
-                                    }
-                                }
-
-                                Keys.onPressed: function (ev) {
-                                    if (ev.key === Qt.Key_Return || ev.key === Qt.Key_Enter) {
-                                        barDebounceTimer.stop();
-                                        root.setGlobalBarCount(barsInput.text.trim());
-                                        keyboardListener.forceActiveFocus();
-                                        ev.accepted = true;
-                                    } else if (ev.key === Qt.Key_Escape) {
-                                        keyboardListener.forceActiveFocus();
-                                        ev.accepted = true;
-                                    }
-                                }
+                            onLiveDebounced: function (text) {
+                                if (text.length > 0)
+                                    root.setGlobalBarCount(text);
                             }
-
-                            Binding {
-                                target: barsInput
-                                property: "text"
-                                value: root.globalBarCount < 0 ? "ALL" : ("" + root.globalBarCount)
-                                when: !barsInput.activeFocus
+                            onCommitted: function (text) {
+                                root.setGlobalBarCount(text);
                             }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.IBeamCursor
-                                enabled: !barsInput.activeFocus
-                                onClicked: {
-                                    barsInput.forceActiveFocus();
-                                    barsInput.selectAll();
-                                }
-                            }
+                            onUnfocusRequested: keyboardListener.forceActiveFocus()
                         }
                     }
                 }
@@ -1818,8 +1624,7 @@ FloatingWindow {
                     dimColor: root.dim
                     onActionTriggered: {
                         if (root.scenarioFilter !== "") {
-                            root.scenarioFilter = "";
-                            scenarioField.text = "";
+                            root.clearScenarioFilter();
                         } else if (root.lockStack.length > 0) {
                             root.clearLockStack();
                         }
@@ -2001,28 +1806,6 @@ FloatingWindow {
             if (root.pendingGlobalBarCount !== -2) {
                 root.setGlobalBarCount(root.pendingGlobalBarCount);
                 root.pendingGlobalBarCount = -2;
-            }
-        }
-    }
-
-    Timer {
-        id: barDebounceTimer
-        interval: 120
-        repeat: false
-        onTriggered: {
-            var raw = barsInput.text.trim();
-            if (raw.length > 0)
-                root.setGlobalBarCount(raw);
-        }
-    }
-
-    Timer {
-        id: scenarioDebounceTimer
-        interval: 150
-        repeat: false
-        onTriggered: {
-            if (typeof scenarioField !== "undefined") {
-                root.scenarioFilter = scenarioField.text.trim();
             }
         }
     }

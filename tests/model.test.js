@@ -4536,3 +4536,62 @@ test("updateCachedDevelopingCandles updates only matching cached timeframes in-p
   assert.ok(prunedLru["AAPL_1M"])
   assert.ok(prunedLru["AAPL_1W"])
 })
+
+test("QML QVariantList non-Array sequence compatibility for breadth, scenario filter, and developing candles", () => {
+  function asQmlList(arr) {
+    const obj = { length: arr.length }
+    for (let i = 0; i < arr.length; i++) obj[i] = arr[i]
+    return obj
+  }
+
+  const cNvda = asQmlList([
+    { timestamp: 1000, open: 100, high: 105, low: 98, close: 104 },
+    { timestamp: 2000, open: 104, high: 112, low: 102, close: 110 },
+    { timestamp: 3000, open: 110, high: 118, low: 109, close: 117 }
+  ])
+  const cAmd = asQmlList([
+    { timestamp: 1000, open: 100, high: 105, low: 98, close: 99 },
+    { timestamp: 2000, open: 99, high: 100, low: 92, close: 93 },
+    { timestamp: 3000, open: 93, high: 94, low: 85, close: 86 }
+  ])
+  const qmlHoldings = asQmlList([
+    { symbol: "NVDA", name: "NVIDIA", pctVal: 20 },
+    { symbol: "AMD", name: "AMD", pctVal: 10 }
+  ])
+
+  assert.equal(Array.isArray(cNvda), false)
+  assert.equal(Array.isArray(qmlHoldings), false)
+  assert.equal(Model.isArrayLike(cNvda), true)
+
+  const metrics = Model.computeBasketAttackMetrics(
+    "SMH",
+    "Semiconductors",
+    "Sector",
+    qmlHoldings,
+    { NVDA: cNvda, AMD: cAmd },
+    {},
+    "1W"
+  )
+  assert.equal(metrics.totalHoldings, 2)
+  assert.equal(metrics.count2u, 1)
+  assert.equal(metrics.count2d, 1)
+  assert.equal(metrics.pct2u, 50)
+  assert.equal(metrics.pct2d, 50)
+
+  assert.equal(Model.matchesScenarioQuery(cNvda, null, "2ug"), true)
+  assert.equal(Model.matchesScenarioQuery(cAmd, null, "2dr"), true)
+  assert.equal(Model.detectStratAttack(cNvda, null).direction, "bullish")
+
+  const sorted = Model.sortSectorHoldings(qmlHoldings, "weight", "asc", {})
+  assert.equal(sorted.length, 2)
+  assert.equal(sorted[0].symbol, "AMD")
+
+  const updated = Model.updateDevelopingCandle(
+    cNvda,
+    { regularPrice: 120, session: "regular" },
+    "1D",
+    new Date(3000 * 1000)
+  )
+  assert.equal(Array.isArray(updated), true)
+  assert.equal(updated[updated.length - 1].close, 120)
+})

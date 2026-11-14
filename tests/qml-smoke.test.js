@@ -633,9 +633,11 @@ test("sector analysis window supports multi-tier recursive locking, 4-worker cha
   assert.match(cell, /hideStratBadge/)
   assert.match(win, /readonly property var sectorTickers:\s*Model\.parseSectorTickers/)
   assert.match(win, /readonly property bool isMultiTicker:\s*sectorTickers\.length > 1/)
-  assert.match(win, /font\.capitalization:\s*Font\.AllUppercase/)
-  assert.match(win, /id:\s*sectorBox[\s\S]*?clip:\s*true/)
-  assert.match(win, /onTextEdited:[\s\S]*?text\.toUpperCase\(\)/)
+  const inputBox = fs.readFileSync(source("FinanceInputBox.qml"), "utf8")
+  assert.match(win, /id:\s*sectorBox[\s\S]*?uppercase:\s*true/)
+  assert.match(inputBox, /font\.capitalization:[\s\S]*?Font\.AllUppercase/)
+  assert.match(inputBox, /clip:\s*true/)
+  assert.match(inputBox, /onTextEdited:[\s\S]*?text\.toUpperCase\(\)/)
   assert.match(win, /label:\s*"1",\s*pct:\s*root\.breadthMetrics\.pct1/)
   assert.match(win, /label:\s*"3",\s*pct:\s*root\.breadthMetrics\.pct3/)
   assert.match(win, /label:\s*"2u Red",\s*pct:\s*root\.breadthMetrics\.pctF2u/)
@@ -702,5 +704,44 @@ test("grid window and cell headers adapt or constrain controls without overlappi
   assert.match(selector, /HoverHandler\s*\{/)
 })
 
+test("sector analysis toolbar inputs share FinanceInputBox and scenario filter commits without debounce", () => {
+  const inputBox = fs.readFileSync(source("FinanceInputBox.qml"), "utf8")
+  const sectorWin = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
+
+  assert.match(inputBox, /FinanceSurface\s*\{/)
+  assert.match(inputBox, /property int liveDebounceMs:\s*0/)
+  assert.match(inputBox, /signal committed\(string text\)/)
+  assert.match(inputBox, /if\s*\(activeFocus && root\.liveDebounceMs > 0\)/)
+  assert.match(sectorWin, /FinanceInputBox\s*\{\s*id:\s*sectorBox/)
+  assert.match(sectorWin, /FinanceInputBox\s*\{\s*id:\s*scenarioBox/)
+  assert.match(sectorWin, /FinanceInputBox\s*\{\s*id:\s*barsBox/)
+  assert.doesNotMatch(sectorWin, /scenarioDebounceTimer/)
+  assert.doesNotMatch(sectorWin, /barDebounceTimer/)
+})
+
+test("sector breadth and chartCache lifecycle preserve JS arrays and recompute on cache changes", () => {
+  const modelSrc = fs.readFileSync(source("Model.js"), "utf8")
+  const panelSrc = fs.readFileSync(source("Panel.qml"), "utf8")
+  const sectorWin = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
+  const banner = fs.readFileSync(source("FinanceStatusBanner.qml"), "utf8")
+
+  // Model.js must use QVariantList-safe isArrayLike for candle/holding sequences
+  assert.match(modelSrc, /function isArrayLike\(v\)/)
+  assert.match(modelSrc, /function computeBasketAttackMetrics[\s\S]*?if \(!isArrayLike\(candles\)/)
+  assert.match(modelSrc, /function buildScenarioContext[\s\S]*?if \(!isArrayLike\(candles\)/)
+
+  // Panel.qml must emit candleCacheUpdated on disk load and assign chartCache after createObject
+  assert.match(panelSrc, /id:\s*candleCacheFile[\s\S]*?root\.candleCacheUpdated\(""\)/)
+  assert.match(panelSrc, /root\.chartCache\[key\]\s*=\s*Model\.toArray\(candles\)/)
+  assert.match(panelSrc, /function openSectorAnalysisWindow[\s\S]*?win\.chartCache\s*=\s*root\.chartCache/)
+  assert.doesNotMatch(panelSrc, /sectorAnalysisComponent\.createObject\(root,\s*\{[\s\S]*?chartCache:\s*root\.chartCache/)
+
+  // SectorAnalysisWindow must recompute breadth on chartCache and quotes changes
+  assert.match(sectorWin, /onChartCacheChanged:\s*\{[\s\S]*?recomputeBreadthMetrics\(\)/)
+  assert.match(sectorWin, /onQuotesChanged:\s*\{[\s\S]*?recomputeBreadthMetrics\(\)/)
+
+  // FinanceStatusBanner must import Model.js
+  assert.match(banner, /import\s+"Model\.js"\s+as\s+Model/)
+})
 
 
