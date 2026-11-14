@@ -7208,15 +7208,46 @@ function parseScenarioQuery(query) {
   for (var i = 0; i < clauses.length; i++) {
     var raw = clauses[i].trim();
     if (!raw) continue;
-    var tokens = raw.split(/\s+/).filter(function(t) { return t.length > 0; });
+    var parts = raw.split(/\s+/).filter(function(t) { return t.length > 0; });
+    var tokens = [];
+    for (var j = 0; j < parts.length; j++) {
+      var tok = parts[j].toLowerCase();
+      if ((tok === "!" || tok === "-") && j + 1 < parts.length) {
+        tokens.push(tok + parts[j + 1].toLowerCase());
+        j++;
+      } else {
+        tokens.push(tok);
+      }
+    }
     if (tokens.length > 0) {
-      result.push(tokens.map(function(t) { return t.toLowerCase(); }));
+      result.push(tokens);
     }
   }
   return result;
 }
 
-var COMPOSITE_SCENARIO_REGEX = /^(1|2u|2d|2|3)?(green|red|[gr])?([hsd]|hammer|shooter|doji)?$/;
+function buildSingleBarDescriptor(cCur, cPrev) {
+  var open = Number(cCur.open);
+  var close = Number(cCur.close);
+  var prevHigh = Number(cPrev.high);
+  var prevLow = Number(cPrev.low);
+  var sc = stratScenario(cCur, cPrev);
+  var baseSc = (sc === "2u" || sc === "2d") ? "2" : sc;
+  var isGreen = close >= open;
+  var isRed = close < open;
+  var inForce = false;
+  if (sc === "2u" && close >= prevHigh) inForce = true;
+  if (sc === "2d" && close <= prevLow) inForce = true;
+  var shapeInfo = detectCandleShape(cCur, cPrev);
+  return {
+    sc: sc,
+    baseSc: baseSc,
+    isGreen: isGreen,
+    isRed: isRed,
+    inForce: inForce,
+    shapeInfo: shapeInfo
+  };
+}
 
 function buildScenarioContext(candles, quote) {
   if (!isArrayLike(candles) || candles.length < 2) return null;
@@ -7234,73 +7265,123 @@ function buildScenarioContext(candles, quote) {
     if (cLast.low === null || livePx < cLast.low) cLast.low = livePx;
   }
 
-  var open = Number(cLast.open);
-  var high = Number(cLast.high);
-  var low = Number(cLast.low);
-  var close = Number(cLast.close);
-  var prevHigh = Number(cPrev.high);
-  var prevLow = Number(cPrev.low);
+  var bars = [];
+  for (var i = 1; i < n; i++) {
+    var curCandle = (i === n - 1) ? cLast : candles[i];
+    bars.push(buildSingleBarDescriptor(curCandle, candles[i - 1]));
+  }
 
-  var sc = stratScenario(cLast, cPrev);
-  var scPrev = cTwo ? stratScenario(cPrev, cTwo) : null;
-  var scP2 = (cTwo && cThree) ? stratScenario(cTwo, cThree) : null;
-
-  var isGreen = close >= open;
-  var isRed = close < open;
-  var inForce = false;
-  if (sc === "2u" && close >= prevHigh) inForce = true;
-  if (sc === "2d" && close <= prevLow) inForce = true;
-
-  var shapeInfo = detectCandleShape(cLast, cPrev);
-  var shapePrev = cTwo ? detectCandleShape(cPrev, cTwo) : null;
-
-  var baseSc = (sc === "2u" || sc === "2d") ? "2" : sc;
-  var basePrev = (scPrev === "2u" || scPrev === "2d") ? "2" : scPrev;
-  var baseP2 = (scP2 === "2u" || scP2 === "2d") ? "2" : scP2;
+  var lastBar = bars[bars.length - 1];
+  var prevBar = bars.length >= 2 ? bars[bars.length - 2] : null;
+  var p2Bar = bars.length >= 3 ? bars[bars.length - 3] : null;
 
   return {
-    sc: sc,
-    scPrev: scPrev,
-    scP2: scP2,
-    baseSc: baseSc,
-    basePrev: basePrev,
-    baseP2: baseP2,
-    isGreen: isGreen,
-    isRed: isRed,
-    inForce: inForce,
-    shapeInfo: shapeInfo,
-    shapePrev: shapePrev
+    sc: lastBar.sc,
+    scPrev: prevBar ? prevBar.sc : null,
+    scP2: p2Bar ? p2Bar.sc : null,
+    baseSc: lastBar.baseSc,
+    basePrev: prevBar ? prevBar.baseSc : null,
+    baseP2: p2Bar ? p2Bar.baseSc : null,
+    isGreen: lastBar.isGreen,
+    isRed: lastBar.isRed,
+    inForce: lastBar.inForce,
+    shapeInfo: lastBar.shapeInfo,
+    shapePrev: prevBar ? prevBar.shapeInfo : null,
+    bars: bars
   };
 }
 
-function matchSingleScenarioToken(ctx, t) {
-  // Named aliases & states
-  if (t === "inside") return ctx.sc === "1";
-  if (t === "outside") return ctx.sc === "3";
-  if (t === "if" || t === "inforce") return ctx.inForce;
-  if (t === "f2u") return ctx.sc === "2u" && ctx.isRed;
-  if (t === "f2d") return ctx.sc === "2d" && ctx.isGreen;
-  if (t === "engulfing") return ctx.shapeInfo.isEngulfing;
+var ATOMIC_BAR_PREFIX_REGEX = /^(f2u|f2d|f2|2u|2d|1|2|3|inside|outside)?(.*)$/;
+var ATOMIC_BAR_MODIFIER_REGEX = /^(green|red|hammer|shooter|doji|engulfing|inforce|if|[grhsde])/;
 
-  // Multi-Bar Sequences
-  if (t === "2-1-2") return ctx.basePrev === "1" && ctx.baseSc === "2";
-  if (t === "2-1-2u") return ctx.basePrev === "1" && ctx.sc === "2u";
-  if (t === "2-1-2d") return ctx.basePrev === "1" && ctx.sc === "2d";
-  if (t === "2-2") return ctx.basePrev === "2" && ctx.baseSc === "2";
-  if (t === "2-2u") return ctx.basePrev === "2" && ctx.sc === "2u";
-  if (t === "2-2d") return ctx.basePrev === "2" && ctx.sc === "2d";
-  if (t === "2u-2u") return ctx.scPrev === "2u" && ctx.sc === "2u";
-  if (t === "2d-2d") return ctx.scPrev === "2d" && ctx.sc === "2d";
-  if (t === "2u-2d") return ctx.scPrev === "2u" && ctx.sc === "2d";
-  if (t === "2d-2u") return ctx.scPrev === "2d" && ctx.sc === "2u";
-  if (t === "3-2") return ctx.basePrev === "3" && ctx.baseSc === "2";
-  if (t === "3-2u") return ctx.basePrev === "3" && ctx.sc === "2u";
-  if (t === "3-2d") return ctx.basePrev === "3" && ctx.sc === "2d";
-  if (t === "3-1-2") return ctx.baseP2 === "3" && ctx.basePrev === "1" && ctx.baseSc === "2";
-  if (t === "3-1-2u") return ctx.baseP2 === "3" && ctx.basePrev === "1" && ctx.sc === "2u";
-  if (t === "3-1-2d") return ctx.baseP2 === "3" && ctx.basePrev === "1" && ctx.sc === "2d";
-  if (t === "1-3") return ctx.basePrev === "1" && ctx.sc === "3";
+function parseAtomicBarStep(rawStep) {
+  if (!rawStep || typeof rawStep !== "string") return null;
+  var s = rawStep;
+  var negated = false;
+  if (s.charAt(0) === "!") {
+    negated = true;
+    s = s.substring(1);
+  }
+  if (!s) return null;
+
+  var m = s.match(ATOMIC_BAR_PREFIX_REGEX);
+  if (!m) return null;
+  var reqSc = m[1] || null;
+  var rest = m[2] || "";
+
+  var spec = {
+    negated: negated,
+    reqSc: reqSc,
+    reqGreen: false,
+    reqRed: false,
+    reqHammer: false,
+    reqShooter: false,
+    reqDoji: false,
+    reqEngulfing: false,
+    reqInForce: false
+  };
+
+  var hasModifier = false;
+  while (rest.length > 0) {
+    var modMatch = rest.match(ATOMIC_BAR_MODIFIER_REGEX);
+    if (!modMatch) return null;
+    var mod = modMatch[1];
+    hasModifier = true;
+    if (mod === "g" || mod === "green") spec.reqGreen = true;
+    else if (mod === "r" || mod === "red") spec.reqRed = true;
+    else if (mod === "h" || mod === "hammer") spec.reqHammer = true;
+    else if (mod === "s" || mod === "shooter") spec.reqShooter = true;
+    else if (mod === "d" || mod === "doji") spec.reqDoji = true;
+    else if (mod === "e" || mod === "engulfing") spec.reqEngulfing = true;
+    else if (mod === "if" || mod === "inforce") spec.reqInForce = true;
+    rest = rest.substring(mod.length);
+  }
+
+  if (!reqSc && !hasModifier) return null;
+  return spec;
+}
+
+function matchBarDescriptor(bar, spec) {
+  if (!bar || !spec) return false;
+  var matched = true;
+
+  if (spec.reqSc) {
+    if (spec.reqSc === "1" || spec.reqSc === "inside") {
+      if (bar.sc !== "1") matched = false;
+    } else if (spec.reqSc === "3" || spec.reqSc === "outside") {
+      if (bar.sc !== "3") matched = false;
+    } else if (spec.reqSc === "2") {
+      if (bar.baseSc !== "2") matched = false;
+    } else if (spec.reqSc === "2u" || spec.reqSc === "2d") {
+      if (bar.sc !== spec.reqSc) matched = false;
+    } else if (spec.reqSc === "f2u") {
+      if (bar.sc !== "2u" || !bar.isRed) matched = false;
+    } else if (spec.reqSc === "f2d") {
+      if (bar.sc !== "2d" || !bar.isGreen) matched = false;
+    } else if (spec.reqSc === "f2") {
+      if (!((bar.sc === "2u" && bar.isRed) || (bar.sc === "2d" && bar.isGreen))) matched = false;
+    }
+  }
+
+  if (matched && spec.reqGreen && !bar.isGreen) matched = false;
+  if (matched && spec.reqRed && !bar.isRed) matched = false;
+  if (matched && spec.reqInForce && !bar.inForce) matched = false;
+  if (matched && spec.reqHammer && !(bar.shapeInfo && bar.shapeInfo.isHammer)) matched = false;
+  if (matched && spec.reqShooter && !(bar.shapeInfo && bar.shapeInfo.isShooter)) matched = false;
+  if (matched && spec.reqDoji && !(bar.shapeInfo && bar.shapeInfo.isDoji)) matched = false;
+  if (matched && spec.reqEngulfing && !(bar.shapeInfo && bar.shapeInfo.isEngulfing)) matched = false;
+
+  return spec.negated ? !matched : matched;
+}
+
+function matchSingleScenarioToken(ctx, t) {
+  if (!ctx || !t || typeof t !== "string") return null;
+
+  // Canonical domain aliases
   if (t === "revstrat") return (ctx.basePrev === "1" && ctx.sc === "3") || (ctx.basePrev === "3" && ctx.baseSc === "2");
+  if (t === "2-1-2" && ctx.baseP2 === null) return ctx.basePrev === "1" && ctx.baseSc === "2";
+  if (t === "2-1-2u" && ctx.baseP2 === null) return ctx.basePrev === "1" && ctx.sc === "2u";
+  if (t === "2-1-2d" && ctx.baseP2 === null) return ctx.basePrev === "1" && ctx.sc === "2d";
   if (t === "1-3-2") {
     if (ctx.basePrev !== "3" || ctx.baseSc !== "2" || ctx.baseP2 !== "1") return false;
     if (!ctx.shapePrev) return false;
@@ -7309,37 +7390,33 @@ function matchSingleScenarioToken(ctx, t) {
     return true;
   }
 
-  // Atomic Composite Grammar: [scenario][color?][shape?]
-  // Handles: h, s, 2uh, 2us, 2dh, 2ds, 3h, 3s, 1h, 1s, 2ug, 2ur, 2dg, 2dr, 1, 2, 3, etc.
-  var m = t.match(COMPOSITE_SCENARIO_REGEX);
-  if (m && (m[1] || m[2] || m[3])) {
-    var reqSc = m[1];
-    var reqCol = m[2];
-    var reqShape = m[3];
-
-    if (reqSc) {
-      if (reqSc === "2") {
-        if (ctx.baseSc !== "2") return false;
-      } else if (ctx.sc !== reqSc) {
-        return false;
-      }
-    }
-    if (reqCol) {
-      if ((reqCol === "g" || reqCol === "green") && !ctx.isGreen) return false;
-      if ((reqCol === "r" || reqCol === "red") && !ctx.isRed) return false;
-    }
-    if (reqShape) {
-      var isH = (reqShape === "h" || reqShape === "hammer");
-      var isS = (reqShape === "s" || reqShape === "shooter");
-      var isD = (reqShape === "d" || reqShape === "doji");
-      if (isH && !ctx.shapeInfo.isHammer) return false;
-      if (isS && !ctx.shapeInfo.isShooter) return false;
-      if (isD && !ctx.shapeInfo.isDoji) return false;
-    }
-    return true;
+  var rawParts = t.split("-");
+  var specs = [];
+  for (var i = 0; i < rawParts.length; i++) {
+    if (!rawParts[i]) return null;
+    var spec = parseAtomicBarStep(rawParts[i]);
+    if (!spec) return null;
+    specs.push(spec);
   }
 
-  return null;
+  var bars = ctx.bars;
+  if (!bars) {
+    bars = [];
+    if (ctx.scP2) bars.push({ sc: ctx.scP2, baseSc: ctx.baseP2 });
+    if (ctx.scPrev) bars.push({ sc: ctx.scPrev, baseSc: ctx.basePrev, shapeInfo: ctx.shapePrev });
+    if (ctx.sc) bars.push({ sc: ctx.sc, baseSc: ctx.baseSc, isGreen: ctx.isGreen, isRed: ctx.isRed, inForce: ctx.inForce, shapeInfo: ctx.shapeInfo });
+  }
+
+  var k = specs.length;
+  if (bars.length < k) return false;
+
+  var startIdx = bars.length - k;
+  for (var j = 0; j < k; j++) {
+    if (!matchBarDescriptor(bars[startIdx + j], specs[j])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function evaluateScenarioToken(ctx, token) {
@@ -7370,11 +7447,39 @@ function matchesScenarioTokens(candles, quote, tokens) {
   return true;
 }
 
+function isPureExclusionClause(tokens) {
+  if (!tokens || tokens.length === 0) return false;
+  for (var i = 0; i < tokens.length; i++) {
+    var c = tokens[i].charAt(0);
+    if (c !== "!" && c !== "-") return false;
+  }
+  return true;
+}
+
 function matchesScenarioQuery(candles, quote, query) {
   var clauses = parseScenarioQuery(query);
   if (clauses.length === 0) return true;
+
+  var inclusionClauses = [];
+  var exclusionClauses = [];
   for (var i = 0; i < clauses.length; i++) {
-    if (matchesScenarioTokens(candles, quote, clauses[i])) {
+    if (isPureExclusionClause(clauses[i])) {
+      exclusionClauses.push(clauses[i]);
+    } else {
+      inclusionClauses.push(clauses[i]);
+    }
+  }
+
+  for (var e = 0; e < exclusionClauses.length; e++) {
+    if (!matchesScenarioTokens(candles, quote, exclusionClauses[e])) {
+      return false;
+    }
+  }
+
+  if (inclusionClauses.length === 0) return true;
+
+  for (var p = 0; p < inclusionClauses.length; p++) {
+    if (matchesScenarioTokens(candles, quote, inclusionClauses[p])) {
       return true;
     }
   }

@@ -4660,3 +4660,96 @@ test("sortSectorHoldings sorts accurately by change % across parseSpark and Yaho
   const asc = Model.sortSectorHoldings(holdings, "change", "asc", sparkQuotes)
   assert.deepEqual(asc.map(h => h.symbol), ["AMD", "AAPL", "NVDA"])
 })
+
+test("universal scenario filter: arbitrary N-bar sequences, per-bar modifiers, and ! exclusions", () => {
+  // 1. 1-2dh: Inside bar (1) followed by 2d Hammer (2dh)
+  const seq1_2dh = [
+    { open: 100, high: 120, low: 90, close: 110 },  // c0: motherbar
+    { open: 108, high: 115, low: 95, close: 102 },  // c1: 1 (inside c0, red)
+    { open: 109, high: 112, low: 85, close: 111 }   // c2: 2d (broke 95 -> 85, high 112 <= 115), green hammer (body 109-111 in top 33% of 85..112)
+  ]
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "1-2dh"), true)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "1r-2dh"), true)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "1-2dgh"), true)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "1-2dhg"), true)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "1-2d"), true)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "1-2ds"), false)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "2-2dh"), false)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "!1-2dh"), false)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "!3-1-3"), true)
+
+  // 2. 3-1-3: Outside (3) -> Inside (1) -> Outside (3)
+  const seq3_1_3 = [
+    { open: 100, high: 110, low: 95, close: 105 },  // c0
+    { open: 98, high: 115, low: 90, close: 112 },   // c1: 3 (115 > 110, 90 < 95)
+    { open: 105, high: 110, low: 95, close: 100 },  // c2: 1 (110 <= 115, 95 >= 90, red)
+    { open: 96, high: 114, low: 92, close: 112 }    // c3: 3 (114 > 110, 92 < 95, green)
+  ]
+  assert.equal(Model.matchesScenarioQuery(seq3_1_3, null, "3-1-3"), true)
+  assert.equal(Model.matchesScenarioQuery(seq3_1_3, null, "3-1r-3g"), true)
+  assert.equal(Model.matchesScenarioQuery(seq3_1_3, null, "3-1g-3g"), false)
+  assert.equal(Model.matchesScenarioQuery(seq3_1_3, null, "1-3"), true)
+  assert.equal(Model.matchesScenarioQuery(seq3_1_3, null, "!3-1-3"), false)
+  assert.equal(Model.matchesScenarioQuery(seq3_1_3, null, "!1"), true)
+
+  // 3. 2d-2d-2d-2dg: 4-bar sequence (requires 5 candles)
+  const seq4_2dg = [
+    { open: 145, high: 150, low: 140, close: 142 }, // c0
+    { open: 141, high: 145, low: 130, close: 132 }, // c1: 2d (r)
+    { open: 131, high: 135, low: 120, close: 122 }, // c2: 2d (r)
+    { open: 121, high: 125, low: 110, close: 112 }, // c3: 2d (r)
+    { open: 106, high: 118, low: 100, close: 115 }  // c4: 2dg (broke 110 -> 100, high 118 <= 125, close 115 > open 106)
+  ]
+  assert.equal(Model.matchesScenarioQuery(seq4_2dg, null, "2d-2d-2d-2dg"), true)
+  assert.equal(Model.matchesScenarioQuery(seq4_2dg, null, "2-2-2-2g"), true)
+  assert.equal(Model.matchesScenarioQuery(seq4_2dg, null, "2dr-2dr-2dr-2dg"), true)
+  assert.equal(Model.matchesScenarioQuery(seq4_2dg, null, "2d-2d-2d-2dr"), false)
+  assert.equal(Model.matchesScenarioQuery(seq4_2dg, null, "2d-2d-2d-2d-2dg"), false) // 5-bar sequence on 5 candles (only 4 transitions) -> false
+  assert.equal(Model.matchesScenarioQuery(seq4_2dg, null, "!2d-2d-2d-2dg"), false)
+  assert.equal(Model.matchesScenarioQuery(seq4_2dg, null, "!2d-2d-2d-2dr"), true)
+
+  // 4. 3-1-2dh: Outside (3) -> Inside (1) -> 2d Hammer (2dh)
+  const seq3_1_2dh = [
+    { open: 100, high: 110, low: 95, close: 105 },  // c0
+    { open: 108, high: 120, low: 85, close: 90 },   // c1: 3
+    { open: 95, high: 110, low: 92, close: 105 },   // c2: 1g
+    { open: 107, high: 109, low: 80, close: 108 }   // c3: 2dh (range 80..109 = 29, bodyBot 107 >= 99.33, upperWick 1 <= 2.9)
+  ]
+  assert.equal(Model.matchesScenarioQuery(seq3_1_2dh, null, "3-1-2dh"), true)
+  assert.equal(Model.matchesScenarioQuery(seq3_1_2dh, null, "3-1g-2dh"), true)
+  assert.equal(Model.matchesScenarioQuery(seq3_1_2dh, null, "3-1r-2dh"), false)
+
+  // 5. 3-1r and 3-1g: Outside (3) -> Inside Red (1r) or Inside Green (1g)
+  const seq3_1r = [
+    { open: 100, high: 110, low: 95, close: 105 },  // c0
+    { open: 96, high: 120, low: 85, close: 115 },   // c1: 3
+    { open: 110, high: 115, low: 90, close: 95 }    // c2: 1r (inside c1, close 95 < open 110)
+  ]
+  const seq3_1g = [
+    { open: 100, high: 110, low: 95, close: 105 },  // c0
+    { open: 96, high: 120, low: 85, close: 115 },   // c1: 3
+    { open: 95, high: 115, low: 90, close: 110 }    // c2: 1g (inside c1, close 110 > open 95)
+  ]
+  assert.equal(Model.matchesScenarioQuery(seq3_1r, null, "3-1r"), true)
+  assert.equal(Model.matchesScenarioQuery(seq3_1r, null, "3-1g"), false)
+  assert.equal(Model.matchesScenarioQuery(seq3_1g, null, "3-1g"), true)
+  assert.equal(Model.matchesScenarioQuery(seq3_1g, null, "3-1r"), false)
+
+  // 6. Exclusions (!): single, whitespace-separated, comma-separated, and mixed with inclusions
+  // seq3_1r ends on a 1r bar; seq3_1_3 ends on a 3g bar; seq1_2dh ends on a 2dh bar
+  assert.equal(Model.matchesScenarioQuery(seq3_1r, null, "!1"), false)
+  assert.equal(Model.matchesScenarioQuery(seq3_1r, null, "! 1"), false)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "!1"), true)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "! 1"), true)
+
+  // Multiple comma-separated exclusions (!1, !3) must exclude BOTH 1 and 3
+  assert.equal(Model.matchesScenarioQuery(seq3_1r, null, "!1, !3"), false)
+  assert.equal(Model.matchesScenarioQuery(seq3_1_3, null, "!1, !3"), false)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "!1, !3"), true)
+
+  // Mixed positive OR clauses with global comma exclusion (e.g. "1, 2dh, !r")
+  assert.equal(Model.matchesScenarioQuery(seq3_1r, null, "1, 2dh, !r"), false)  // matches 1, but excluded by !r
+  assert.equal(Model.matchesScenarioQuery(seq3_1g, null, "1, 2dh, !r"), true)   // matches 1 and is green (!r)
+  assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "1, 2dh, !r"), true)  // matches 2dh and is green (!r)
+  assert.equal(Model.matchesScenarioQuery(seq3_1_3, null, "1, 2dh, !r"), false) // neither 1 nor 2dh
+})
