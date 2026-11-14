@@ -23,6 +23,10 @@ Panel {
     property int pinIndex: 0
     property var quotes: ({})
     property var chartCache: ({})
+    property var chartCacheAccess: ({})
+    property bool candleCacheDirty: false
+    signal candleCacheUpdated(string key)
+    signal quotesUpdated(var changedSymbols)
     property int selectedIndex: 0
     property bool cursorActive: false
     property string view: "list"
@@ -1423,34 +1427,94 @@ Panel {
         }
     }
 
+    function collectProtectedCacheKeys() {
+        var prot = ({});
+        var tfs = ["30", "60", "1D", "1W", "1M"];
+        var wl = root.watchlist || [];
+        for (var i = 0; i < wl.length; i++) {
+            for (var ti = 0; ti < tfs.length; ti++) {
+                prot[Model.cacheKey(wl[i], tfs[ti])] = true;
+            }
+        }
+        var gWins = root.activeGridWindows || [];
+        for (var gi = 0; gi < gWins.length; gi++) {
+            var gw = gWins[gi];
+            if (!gw || !gw.visible)
+                continue;
+            var syms = gw.cellSymbols || [];
+            var gtfs = gw.cellTimeframes || [];
+            for (var ci = 0; ci < syms.length; ci++) {
+                var cs = syms[ci];
+                if (!cs)
+                    continue;
+                if (gtfs[ci])
+                    prot[Model.cacheKey(cs, gtfs[ci])] = true;
+                prot[Model.cacheKey(cs, "60")] = true;
+                prot[Model.cacheKey(cs, "1D")] = true;
+            }
+        }
+        var sWins = root.activeSectorWindows || [];
+        for (var si = 0; si < sWins.length; si++) {
+            var sw = sWins[si];
+            if (!sw || !sw.visible || typeof sw.getAllSymbols !== "function")
+                continue;
+            var sSyms = sw.getAllSymbols() || [];
+            for (var sj = 0; sj < sSyms.length; sj++) {
+                var ss = sSyms[sj];
+                if (!ss)
+                    continue;
+                prot[Model.cacheKey(ss, sw.timeframe)] = true;
+                prot[Model.cacheKey(ss, "1D")] = true;
+                prot[Model.cacheKey(ss, "60")] = true;
+            }
+        }
+        return prot;
+    }
+
+    function flushCandleCache() {
+        if (!root.candleCacheDirty)
+            return;
+        root.candleCacheDirty = false;
+        try {
+            var diskCache = Model.pruneChartCache(root.chartCache, 600, root.chartCacheAccess, root.collectProtectedCacheKeys());
+            candleCacheFile.setText(JSON.stringify(diskCache));
+        } catch (e) {}
+    }
+
     Timer {
         id: candleCacheSaveTimer
-        interval: 5000
+        interval: 30000
         repeat: false
-        onTriggered: {
-            try {
-                candleCacheFile.setText(JSON.stringify(root.chartCache));
-            } catch (e) {}
-        }
+        onTriggered: root.flushCandleCache()
     }
 
     function updateSharedCandles(key, candles, quoteEnriched) {
         if (!key || !candles)
             return;
-        var nextCache = Object.assign({}, root.chartCache);
-        nextCache[key] = candles;
-        root.chartCache = nextCache;
+        if (!root.chartCache)
+            root.chartCache = ({});
+        root.chartCache[key] = candles;
+        root.chartCacheAccess[key] = Date.now();
+        root.candleCacheUpdated(key);
         if (quoteEnriched && quoteEnriched.symbol) {
             var existing = root.quotes[quoteEnriched.symbol] || ({});
             var enriched = Object.assign({}, existing, quoteEnriched);
-            var nextQuotes = Object.assign({}, root.quotes);
-            nextQuotes[quoteEnriched.symbol] = enriched;
-            root.quotes = nextQuotes;
+            if (root.opened || root.showBarQuote) {
+                var nextQuotes = Object.assign({}, root.quotes);
+                nextQuotes[quoteEnriched.symbol] = enriched;
+                root.quotes = nextQuotes;
+            } else {
+                root.quotes[quoteEnriched.symbol] = enriched;
+            }
+            root.quotesUpdated([quoteEnriched.symbol]);
         }
-        candleCacheSaveTimer.restart();
+        root.candleCacheDirty = true;
+        if (!candleCacheSaveTimer.running)
+            candleCacheSaveTimer.start();
     }
 
     Component.onCompleted: mkdirProc.running = true
+    Component.onDestruction: root.flushCandleCache()
 
     Process {
         id: barMoveProc
@@ -1486,6 +1550,7 @@ Panel {
             var parsed = exitCode === 0 && raw ? Model.parseSpark(raw) : ({});
             if (Object.keys(parsed).length > 0) {
                 root.quotes = Model.mergeQuotes(root.quotes, parsed);
+                root.quotesUpdated(Object.keys(parsed));
                 root.quoteFailureCount = 0;
                 root.quoteError = "";
                 root.quotesUpdatedAt = Date.now();
@@ -2336,14 +2401,29 @@ Panel {
         GridWindow {
             id: gridWin
             visible: true
-            quotes: root.quotes
-            chartCache: root.chartCache
             discordWebhook: root.discordWebhook
             alertsMuted: root.alertsMuted
             alertsMuteStatus: root.alertsMuteStatus
 
+            Connections {
+                target: root
+                function onCandleCacheUpdated(key) {
+                    if (gridWin.chartCache !== root.chartCache)
+                        gridWin.chartCache = root.chartCache;
+                    if (typeof gridWin.notifyCacheKeyUpdated === "function")
+                        gridWin.notifyCacheKeyUpdated(key);
+                }
+                function onQuotesUpdated(changedSymbols) {
+                    if (gridWin.quotes !== root.quotes)
+                        gridWin.quotes = root.quotes;
+                    if (typeof gridWin.notifyQuotesUpdated === "function")
+                        gridWin.notifyQuotesUpdated(changedSymbols);
+                }
+            }
+
             onQuotesReceived: function (incoming) {
                 root.quotes = Model.mergeQuotes(root.quotes, incoming);
+                root.quotesUpdated(Object.keys(incoming || ({})));
                 root.evaluateWatchlistPriceAlerts(incoming);
             }
 
@@ -2479,14 +2559,29 @@ Panel {
         SectorAnalysisWindow {
             id: secWin
             visible: true
-            quotes: root.quotes
-            chartCache: root.chartCache
             discordWebhook: root.discordWebhook
             alertsMuted: root.alertsMuted
             alertsMuteStatus: root.alertsMuteStatus
 
+            Connections {
+                target: root
+                function onCandleCacheUpdated(key) {
+                    if (secWin.chartCache !== root.chartCache)
+                        secWin.chartCache = root.chartCache;
+                    if (typeof secWin.notifyCacheKeyUpdated === "function")
+                        secWin.notifyCacheKeyUpdated(key);
+                }
+                function onQuotesUpdated(changedSymbols) {
+                    if (secWin.quotes !== root.quotes)
+                        secWin.quotes = root.quotes;
+                    if (typeof secWin.notifyQuotesUpdated === "function")
+                        secWin.notifyQuotesUpdated(changedSymbols);
+                }
+            }
+
             onQuotesReceived: function (incoming) {
                 root.quotes = Model.mergeQuotes(root.quotes, incoming);
+                root.quotesUpdated(Object.keys(incoming || ({})));
                 root.evaluateWatchlistPriceAlerts(incoming);
             }
 

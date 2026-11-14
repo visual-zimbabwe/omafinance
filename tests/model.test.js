@@ -4501,3 +4501,38 @@ test("WCAG contrast, theme-adaptive dim/semantic colors, and quotedFontFamily", 
   assert.equal(Model.quotedFontFamily("JetBrainsMono Nerd Font"), '"JetBrainsMono Nerd Font"')
   assert.equal(Model.quotedFontFamily("monospace"), "monospace")
 })
+
+test("updateCachedDevelopingCandles updates only matching cached timeframes in-place and pruneChartCache keeps newest entries", () => {
+  const nowDate = new Date("2026-04-10T15:00:00Z")
+  const baseTs = Math.floor(new Date("2026-04-10T13:30:00Z").getTime() / 1000)
+  const cache = {
+    "NVDA_1D": [{ timestamp: baseTs, open: 100, high: 102, low: 99, close: 101, volume: 1000 }],
+    "NVDA_60": [{ timestamp: baseTs, open: 100, high: 102, low: 99, close: 101, volume: 500 }],
+    "OLD_1D": [{ timestamp: 1000, open: 10, high: 11, low: 9, close: 10, volume: 10 }],
+    "MID_1D": [{ timestamp: 2000, open: 20, high: 21, low: 19, close: 20, volume: 10 }]
+  }
+  const changed = Model.updateCachedDevelopingCandles(cache, "NVDA", { price: 105, dayHigh: 105, dayLow: 98 }, ["1D", "60", "1D", "1W"], nowDate)
+  assert.deepEqual(changed, ["NVDA_1D", "NVDA_60"])
+  assert.equal(cache["NVDA_1D"][cache["NVDA_1D"].length - 1].close, 105)
+  assert.equal(cache["NVDA_60"][cache["NVDA_60"].length - 1].close, 105)
+
+  const pruned = Model.pruneChartCache(cache, 2)
+  assert.equal(Object.keys(pruned).length, 2)
+  assert.ok(pruned["NVDA_1D"])
+  assert.ok(pruned["NVDA_60"])
+  assert.equal(pruned["OLD_1D"], undefined)
+
+  // Protected keys & LRU accessTimes preserve 1W/1M charts even when candle timestamps are older
+  const mixedCache = {
+    "AAPL_1M": [{ timestamp: 500, open: 100, high: 101, low: 99, close: 100, volume: 10 }],
+    "AAPL_1W": [{ timestamp: 900, open: 100, high: 101, low: 99, close: 100, volume: 10 }],
+    "TSLA_60": [{ timestamp: 99999, open: 200, high: 201, low: 199, close: 200, volume: 10 }],
+    "MSFT_60": [{ timestamp: 99998, open: 300, high: 301, low: 299, close: 300, volume: 10 }]
+  }
+  const accessTimes = { "AAPL_1W": 500000, "TSLA_60": 100000, "MSFT_60": 200000 }
+  const protectedKeys = { "AAPL_1M": true }
+  const prunedLru = Model.pruneChartCache(mixedCache, 2, accessTimes, protectedKeys)
+  assert.equal(Object.keys(prunedLru).length, 2)
+  assert.ok(prunedLru["AAPL_1M"])
+  assert.ok(prunedLru["AAPL_1W"])
+})
