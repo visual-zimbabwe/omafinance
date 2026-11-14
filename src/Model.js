@@ -40,8 +40,18 @@ function finiteOrNull(value) {
   return isFinite(n) ? n : null
 }
 
+function isArrayLike(v) {
+  return Boolean(v && typeof v === "object" && typeof v.length === "number" && v.length >= 0)
+}
+
+function toArray(v) {
+  if (Array.isArray(v)) return v
+  if (!isArrayLike(v)) return []
+  return Array.prototype.slice.call(v)
+}
+
 function normalizeTimeframeList(raw) {
-  if (!Array.isArray(raw) || raw.length === 0) return null
+  if (!isArrayLike(raw) || raw.length === 0) return null
   var valid = ["30", "60", "1D", "1W", "1M", "1Y", "All"]
   var out = []
   for (var i = 0; i < raw.length; i++) {
@@ -63,7 +73,7 @@ function clampBarCount(count, fallback) {
 }
 
 function normalizeZoomList(raw) {
-  if (!Array.isArray(raw) || raw.length === 0) return null
+  if (!isArrayLike(raw) || raw.length === 0) return null
   var out = []
   for (var i = 0; i < raw.length; i++) {
     var n = parseInt(raw[i], 10)
@@ -2169,7 +2179,7 @@ function detectCandleShape(candle, prevCandle) {
 
 function detectPivotMachineGun(candles, isLong) {
   var empty = { isPMG: false, count: 0, pivots: [], topTarget: null, triggerPrice: null }
-  if (!Array.isArray(candles) || candles.length < 6) return empty
+  if (!isArrayLike(candles) || candles.length < 6) return empty
   var n = candles.length
   var p1 = candles[n - 2]
   if (!p1) return empty
@@ -2253,7 +2263,7 @@ function detectPivotMachineGun(candles, isLong) {
 
 function detectKickerPattern(candles, livePrice) {
   var empty = { isKicker: false, direction: null, gapType: null, triggerPrice: null, stopPrice: null, label: null }
-  if (!Array.isArray(candles) || candles.length < 2) return empty
+  if (!isArrayLike(candles) || candles.length < 2) return empty
   var n = candles.length
   var p1 = candles[n - 2]
   var cur = candles[n - 1]
@@ -3188,8 +3198,8 @@ function parseNportXml(xml, targetSymbol, customMap) {
 }
 
 function sortHoldings(holdings, sortKey, sortAsc, stratMap) {
-  if (!Array.isArray(holdings)) return []
-  var list = holdings.slice()
+  if (!isArrayLike(holdings)) return []
+  var list = toArray(holdings).slice()
   var asc = !!sortAsc
   var sk = String(sortKey || "weight").toLowerCase()
 
@@ -3303,7 +3313,7 @@ function computeHoldingStratMatrix(symbol, preparedCandles, hourlyCandlesMap, li
 
 function computeHoldingsStratMap(holdings, hourlyCandlesMap, dailyCandlesMap, liveQuotesMap, preparedCandles) {
   var prepared = preparedCandles || prepareConstituentCandles(dailyCandlesMap)
-  var list = Array.isArray(holdings) ? holdings : []
+  var list = isArrayLike(holdings) ? holdings : []
   var map = {}
   for (var i = 0; i < list.length; i++) {
     var h = list[i]
@@ -3324,7 +3334,7 @@ function detectStratAttack(candles, liveQuote) {
     triggerPrice: null,
     label: "-"
   }
-  if (!Array.isArray(candles) || candles.length < 2) return emptyResult
+  if (!isArrayLike(candles) || candles.length < 2) return emptyResult
 
   var n = candles.length
   var c0 = Object.assign({}, candles[n - 1])
@@ -3397,7 +3407,7 @@ var SIMULTANEOUS_BREAK_THRESHOLD = 80
 
 function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings, dailyCandlesMap, liveQuotesMap, timeframe) {
   var tf = timeframe || "1D"
-  var list = Array.isArray(holdings) ? holdings : []
+  var list = isArrayLike(holdings) ? holdings : []
   var total = 0
   var count1 = 0
   var count2u = 0
@@ -3417,7 +3427,7 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     if (!sym) continue
 
     var candles = dailyCandlesMap ? dailyCandlesMap[sym] : null
-    if (!Array.isArray(candles) || candles.length < 2) continue
+    if (!isArrayLike(candles) || candles.length < 2) continue
 
     total++
     var quote = liveQuotesMap ? liveQuotesMap[sym] : null
@@ -3546,7 +3556,7 @@ function stratRuleRationales() {
 }
 
 function resolveDominoHtfSignal(tfLabel, isLong, candles) {
-  if (!Array.isArray(candles) || candles.length < 2) return null
+  if (!isArrayLike(candles) || candles.length < 2) return null
   var n = candles.length
   var p1 = candles[n - 2]
   var p2 = n >= 3 ? candles[n - 3] : null
@@ -3618,9 +3628,9 @@ function resolveDominoHtfSignal(tfLabel, isLong, candles) {
 }
 
 function resolveUntaggedHtfTargets(isLong, setupTf, daily, weekly, monthly, entryBaseline, priorTodayExtreme) {
-  var dList = Array.isArray(daily) ? daily : []
-  var wList = Array.isArray(weekly) ? weekly : []
-  var mList = Array.isArray(monthly) ? monthly : []
+  var dList = toArray(daily)
+  var wList = toArray(weekly)
+  var mList = toArray(monthly)
 
   var bound = finiteOrNull(entryBaseline)
   var todayExt = finiteOrNull(priorTodayExtreme)
@@ -3924,7 +3934,7 @@ function detectMotherbarProblem(candles, isLong, triggerPrice, livePrice) {
     nearEdge: false,
     detail: ""
   }
-  if (!Array.isArray(candles) || candles.length < 4) return empty
+  if (!isArrayLike(candles) || candles.length < 4) return empty
   var n = candles.length
   var cur = candles[n - 1]
   var curHigh = Number(cur.high)
@@ -3978,7 +3988,7 @@ function detectMotherbarProblem(candles, isLong, triggerPrice, livePrice) {
 }
 
 function classifyMomentumOrRetracement(candles, isLong, isFailed2) {
-  if (!Array.isArray(candles) || candles.length < 3) {
+  if (!isArrayLike(candles) || candles.length < 3) {
     return { style: "MOMENTUM", label: "Momentum (Continuation)" }
   }
   var n = candles.length
@@ -4016,7 +4026,7 @@ function classifyMomentumOrRetracement(candles, isLong, isFailed2) {
 }
 
 function resolvePatternMagnitude(setupTf, candles, isLong, entryBaseline) {
-  if (!Array.isArray(candles) || candles.length < 3) return null
+  if (!isArrayLike(candles) || candles.length < 3) return null
   var n = candles.length
   var p1 = candles[n - 2]
   var p2 = candles[n - 3]
@@ -4061,7 +4071,7 @@ function resolvePatternMagnitude(setupTf, candles, isLong, entryBaseline) {
 }
 
 function resolveMeasuredMoveTarget(setupTf, candles, isLong, triggerPrice) {
-  if (!Array.isArray(candles) || candles.length < 3) return null
+  if (!isArrayLike(candles) || candles.length < 3) return null
   var n = candles.length
   var p1 = candles[n - 2]
   var p2 = candles[n - 3]
@@ -4137,7 +4147,7 @@ function classifyTimeframeContinuity(col1M, col1W, col1D, colSetup, bar1D) {
 }
 
 function sortAndDeduplicateTargets(rawTargets, isLong, entryBaseline, maxCount) {
-  if (!Array.isArray(rawTargets) || rawTargets.length === 0) return []
+  if (!isArrayLike(rawTargets) || rawTargets.length === 0) return []
   var base = finiteOrNull(entryBaseline)
   var valid = []
   for (var i = 0; i < rawTargets.length; i++) {
@@ -4207,8 +4217,8 @@ function sortAndDeduplicateTargets(rawTargets, isLong, entryBaseline, maxCount) 
 
 function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, nowDate, options) {
   var sym = normalizeSymbol(symbol)
-  var hourly = Array.isArray(hourlyCandles) ? hourlyCandles : []
-  var daily = Array.isArray(dailyCandles) ? dailyCandles : []
+  var hourly = toArray(hourlyCandles)
+  var daily = toArray(dailyCandles)
   var weekly = mergePeriodCandles(daily, "1W")
   var monthly = mergePeriodCandles(daily, "1M")
 
@@ -4235,7 +4245,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var bar60 = stratBarState(c60, p60, currentPrice, nowSec, bar60Duration)
 
   var opts = (options && typeof options === "object") ? options : ({})
-  var use30m = (String(opts.activeTimeframe || "") === "30" && Array.isArray(opts.activeCandles) && opts.activeCandles.length >= 3)
+  var use30m = (String(opts.activeTimeframe || "") === "30" && isArrayLike(opts.activeCandles) && opts.activeCandles.length >= 3)
   var setupCandles = use30m ? opts.activeCandles : hourly
   var setupTf = use30m ? "30" : "60"
   var setupLabel = use30m ? "30m" : "60m"
@@ -6293,15 +6303,15 @@ function periodStartUtc(ts, tf) {
 }
 
 function buildReplayCandles(tf, rawCandles, ltf30Candles, htf60Candles, dailyCandles, cutoffTs, subCandles) {
-  if (!Array.isArray(rawCandles) || rawCandles.length === 0) return []
+  if (!isArrayLike(rawCandles) || rawCandles.length === 0) return []
   var cutoff = finiteOrNull(cutoffTs)
   if (cutoff === null || cutoff <= 0) return rawCandles
 
   var range = String(tf || "1D")
-  var sub = Array.isArray(subCandles) ? subCandles : []
-  var ltf30 = Array.isArray(ltf30Candles) ? ltf30Candles : []
-  var htf60 = Array.isArray(htf60Candles) ? htf60Candles : []
-  var daily = Array.isArray(dailyCandles) ? dailyCandles : []
+  var sub = isArrayLike(subCandles) ? subCandles : []
+  var ltf30 = isArrayLike(ltf30Candles) ? ltf30Candles : []
+  var htf60 = isArrayLike(htf60Candles) ? htf60Candles : []
+  var daily = isArrayLike(dailyCandles) ? dailyCandles : []
   var intradaySrc = sub.length > 0 ? sub : (ltf30.length > 0 ? ltf30 : htf60)
   var out = []
 
@@ -6561,10 +6571,10 @@ function buildReplayCandles(tf, rawCandles, ltf30Candles, htf60Candles, dailyCan
 function buildReplayQuote(liveQuote, ltf30Candles, htf60Candles, dailyCandles, cutoffTs, subCandles) {
   var cutoff = finiteOrNull(cutoffTs)
   if (cutoff === null || cutoff <= 0) return liveQuote
-  var sub = Array.isArray(subCandles) ? subCandles : []
-  var ltf30 = Array.isArray(ltf30Candles) ? ltf30Candles : []
-  var htf60 = Array.isArray(htf60Candles) ? htf60Candles : []
-  var daily = Array.isArray(dailyCandles) ? dailyCandles : []
+  var sub = isArrayLike(subCandles) ? subCandles : []
+  var ltf30 = isArrayLike(ltf30Candles) ? ltf30Candles : []
+  var htf60 = isArrayLike(htf60Candles) ? htf60Candles : []
+  var daily = isArrayLike(dailyCandles) ? dailyCandles : []
   var intradaySrc = sub.length > 0 ? sub : (ltf30.length > 0 ? ltf30 : (htf60.length > 0 ? htf60 : daily))
 
   var lastBar = null
@@ -6592,7 +6602,7 @@ function buildReplayQuote(liveQuote, ltf30Candles, htf60Candles, dailyCandles, c
 }
 
 function stepReplayCutoff(rawCandles, currentCutoffTs, direction) {
-  if (!Array.isArray(rawCandles) || rawCandles.length < 2) return 0
+  if (!isArrayLike(rawCandles) || rawCandles.length < 2) return 0
   var cutoff = finiteOrNull(currentCutoffTs)
   var dir = direction < 0 ? -1 : 1
   if (cutoff === null || cutoff <= 0) {
@@ -6622,14 +6632,14 @@ function formatReplayBadgeTime(cutoffTs, stepCandlesOrLtf30, ltf30OrHtf60, htf60
   var htf60 = []
   var daily = []
   if (arguments.length >= 5) {
-    step = Array.isArray(stepCandlesOrLtf30) ? stepCandlesOrLtf30 : []
-    ltf30 = Array.isArray(ltf30OrHtf60) ? ltf30OrHtf60 : []
-    htf60 = Array.isArray(htf60OrDaily) ? htf60OrDaily : []
-    daily = Array.isArray(maybeDaily) ? maybeDaily : []
+    step = isArrayLike(stepCandlesOrLtf30) ? stepCandlesOrLtf30 : []
+    ltf30 = isArrayLike(ltf30OrHtf60) ? ltf30OrHtf60 : []
+    htf60 = isArrayLike(htf60OrDaily) ? htf60OrDaily : []
+    daily = isArrayLike(maybeDaily) ? maybeDaily : []
   } else {
-    ltf30 = Array.isArray(stepCandlesOrLtf30) ? stepCandlesOrLtf30 : []
-    htf60 = Array.isArray(ltf30OrHtf60) ? ltf30OrHtf60 : []
-    daily = Array.isArray(htf60OrDaily) ? htf60OrDaily : []
+    ltf30 = isArrayLike(stepCandlesOrLtf30) ? stepCandlesOrLtf30 : []
+    htf60 = isArrayLike(ltf30OrHtf60) ? ltf30OrHtf60 : []
+    daily = isArrayLike(htf60OrDaily) ? htf60OrDaily : []
   }
   var src = step.length > 0 ? step : (ltf30.length > 0 ? ltf30 : (htf60.length > 0 ? htf60 : daily))
   var activeTs = null
@@ -7209,7 +7219,7 @@ function parseScenarioQuery(query) {
 var COMPOSITE_SCENARIO_REGEX = /^(1|2u|2d|2|3)?(green|red|[gr])?([hsd]|hammer|shooter|doji)?$/;
 
 function buildScenarioContext(candles, quote) {
-  if (!Array.isArray(candles) || candles.length < 2) return null;
+  if (!isArrayLike(candles) || candles.length < 2) return null;
 
   var n = candles.length;
   var cLast = Object.assign({}, candles[n - 1]);
@@ -7372,8 +7382,8 @@ function matchesScenarioQuery(candles, quote, query) {
 }
 
 function sortSectorHoldings(holdings, sortField, sortDirection, quotesMap) {
-  if (!Array.isArray(holdings)) return [];
-  var list = holdings.slice();
+  if (!isArrayLike(holdings)) return [];
+  var list = toArray(holdings).slice();
   var field = (sortField || "weight").toLowerCase();
   var isAsc = (sortDirection || "desc").toLowerCase() === "asc";
   var sign = isAsc ? 1 : -1;
@@ -7423,7 +7433,7 @@ function isBasketSector(symbol) {
 
 function chunkSymbols(symbols, chunkSize) {
   var size = Math.max(1, parseInt(chunkSize, 10) || 20);
-  var list = Array.isArray(symbols) ? symbols.slice() : [];
+  var list = isArrayLike(symbols) ? toArray(symbols).slice() : [];
   var chunks = [];
   for (var i = 0; i < list.length; i += size) {
     chunks.push(list.slice(i, i + size));
@@ -7441,7 +7451,7 @@ function marketDateEt(timestampSec) {
 }
 
 function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
-  if (!Array.isArray(candles) || candles.length === 0) return candles || [];
+  if (!isArrayLike(candles) || candles.length === 0) return candles || [];
   if (!quote) return candles;
 
   // Suspend developing candle mutations during extended hours (pre/post market) or closed sessions.
@@ -7455,7 +7465,7 @@ function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
   var price = finiteOrNull(rawPrice);
   if (price === null) return candles;
 
-  var list = candles.slice();
+  var list = toArray(candles).slice();
   var lastIdx = list.length - 1;
   var last = Object.assign({}, list[lastIdx]);
   var range = String(rangeKey || "1D");
@@ -7619,7 +7629,7 @@ function quotedFontFamily(family) {
 }
 
 function updateCachedDevelopingCandles(cache, sym, quote, timeframes, nowDate) {
-  if (!cache || !sym || !quote || !Array.isArray(timeframes)) return [];
+  if (!cache || !sym || !quote || !isArrayLike(timeframes)) return [];
   var changedKeys = [];
   var seen = {};
   var tsNow = nowDate || new Date();
@@ -7664,7 +7674,7 @@ function pruneChartCache(cache, maxEntries, accessTimes, protectedKeys) {
       score = access[k];
     } else {
       var list = cache[k];
-      if (Array.isArray(list) && list.length > 0) {
+      if (isArrayLike(list) && list.length > 0) {
         var last = list[list.length - 1];
         if (last && isFinite(last.timestamp)) score = last.timestamp;
       }
@@ -7694,6 +7704,8 @@ var Z_LAYER = {
 
 if (typeof module !== "undefined") {
   module.exports = {
+    isArrayLike: isArrayLike,
+    toArray: toArray,
     defaultWatchlist: defaultWatchlist,
     defaultPinned: defaultPinned,
     defaultState: defaultState,

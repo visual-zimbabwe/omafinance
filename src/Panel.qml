@@ -1421,6 +1421,7 @@ Panel {
                     var parsed = JSON.parse(raw);
                     if (parsed && typeof parsed === "object") {
                         root.chartCache = Object.assign({}, parsed, root.chartCache);
+                        root.candleCacheUpdated("");
                     }
                 }
             } catch (e) {}
@@ -1493,7 +1494,7 @@ Panel {
             return;
         if (!root.chartCache)
             root.chartCache = ({});
-        root.chartCache[key] = candles;
+        root.chartCache[key] = Model.toArray(candles);
         root.chartCacheAccess[key] = Date.now();
         root.candleCacheUpdated(key);
         if (quoteEnriched && quoteEnriched.symbol) {
@@ -2368,8 +2369,6 @@ Panel {
             mainSymbol: sym,
             watchlist: root.watchlist,
             pinned: root.pinned,
-            quotes: root.quotes,
-            chartCache: root.chartCache,
             gridMode: currentMode,
             previousGridMode: baseMode,
             syncSymbol: root.gridSync ? root.gridSync.symbol !== false : true,
@@ -2391,6 +2390,10 @@ Panel {
         });
 
         if (win) {
+            win.quotes = root.quotes;
+            win.chartCache = root.chartCache;
+            if (typeof win.notifyCacheKeyUpdated === "function")
+                win.notifyCacheKeyUpdated("");
             nextWindows.push(win);
             root.activeGridWindows = nextWindows;
         }
@@ -2540,8 +2543,6 @@ Panel {
 
         var win = sectorAnalysisComponent.createObject(root, {
             sectorSymbol: sym,
-            quotes: root.quotes,
-            chartCache: root.chartCache,
             discordWebhook: root.discordWebhook,
             alertsMuted: root.alertsMuted,
             alertsMuteStatus: root.alertsMuteStatus,
@@ -2549,6 +2550,8 @@ Panel {
         });
 
         if (win) {
+            win.quotes = root.quotes;
+            win.chartCache = root.chartCache;
             nextWindows.push(win);
             root.activeSectorWindows = nextWindows;
         }
