@@ -7618,6 +7618,69 @@ function quotedFontFamily(family) {
   return f;
 }
 
+function updateCachedDevelopingCandles(cache, sym, quote, timeframes, nowDate) {
+  if (!cache || !sym || !quote || !Array.isArray(timeframes)) return [];
+  var changedKeys = [];
+  var seen = {};
+  var tsNow = nowDate || new Date();
+  for (var i = 0; i < timeframes.length; i++) {
+    var tf = timeframes[i];
+    if (!tf || seen[tf]) continue;
+    seen[tf] = true;
+    var k = cacheKey(sym, tf);
+    var existing = cache[k];
+    if (existing && existing.length > 0) {
+      var updated = updateDevelopingCandle(existing, quote, tf, tsNow);
+      if (updated !== existing) {
+        cache[k] = updated;
+        changedKeys.push(k);
+      }
+    }
+  }
+  return changedKeys;
+}
+
+function pruneChartCache(cache, maxEntries, accessTimes, protectedKeys) {
+  if (!cache || typeof cache !== "object") return {};
+  var cap = (isFinite(maxEntries) && maxEntries > 0) ? Math.floor(maxEntries) : 600;
+  var keys = Object.keys(cache);
+  if (keys.length <= cap) return cache;
+
+  var access = (accessTimes && typeof accessTimes === "object") ? accessTimes : null;
+  var prot = (protectedKeys && typeof protectedKeys === "object") ? protectedKeys : null;
+  var pruned = {};
+  var kept = 0;
+  var ranked = [];
+
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    if (prot && prot[k]) {
+      pruned[k] = cache[k];
+      kept++;
+      continue;
+    }
+    var score = 0;
+    if (access && isFinite(access[k])) {
+      score = access[k];
+    } else {
+      var list = cache[k];
+      if (Array.isArray(list) && list.length > 0) {
+        var last = list[list.length - 1];
+        if (last && isFinite(last.timestamp)) score = last.timestamp;
+      }
+    }
+    ranked.push({ key: k, score: score });
+  }
+
+  ranked.sort(function (a, b) { return b.score - a.score; });
+  var remaining = Math.max(0, cap - kept);
+  for (var j = 0; j < remaining && j < ranked.length; j++) {
+    var rk = ranked[j].key;
+    pruned[rk] = cache[rk];
+  }
+  return pruned;
+}
+
 var Z_LAYER = {
   TILE_BORDER: 5,
   HEADER: 10,
@@ -7793,6 +7856,8 @@ if (typeof module !== "undefined") {
     isBasketSector: isBasketSector,
     chunkSymbols: chunkSymbols,
     updateDevelopingCandle: updateDevelopingCandle,
+    updateCachedDevelopingCandles: updateCachedDevelopingCandles,
+    pruneChartCache: pruneChartCache,
     SIMULTANEOUS_BREAK_THRESHOLD: SIMULTANEOUS_BREAK_THRESHOLD,
     stratSpread: stratSpread,
     MIN_BAR_COUNT: MIN_BAR_COUNT,

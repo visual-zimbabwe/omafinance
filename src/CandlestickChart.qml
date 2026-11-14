@@ -348,10 +348,24 @@ Item {
         isSyncing = false;
     }
 
+    property var _cachedCandlesSource: null
+    property int _cachedCandlesLen: -1
+    property string _cachedLastCandleSig: ""
+    property var _cachedValidCandles: []
+    property var _cachedBfValidRef: null
+    property string _cachedBfAnchor: ""
+    property var _cachedBfResult: null
+
     function validCandles() {
         var src = root.candles || [];
+        var srcLen = src.length;
+        var last = srcLen > 0 ? src[srcLen - 1] : null;
+        var lastSig = last ? (last.timestamp + ":" + last.open + ":" + last.high + ":" + last.low + ":" + last.close) : "";
+        if (src === root._cachedCandlesSource && srcLen === root._cachedCandlesLen && lastSig === root._cachedLastCandleSig) {
+            return root._cachedValidCandles;
+        }
         var out = [];
-        for (var i = 0; i < src.length; i++) {
+        for (var i = 0; i < srcLen; i++) {
             var c = src[i];
             if (!c)
                 continue;
@@ -360,16 +374,26 @@ Item {
             var l = Number(c.low);
             var cl = Number(c.close);
             if (isFinite(o) && isFinite(h) && isFinite(l) && isFinite(cl)) {
-                out.push({
+                var prevValid = out.length > 0 ? out[out.length - 1] : null;
+                var item = {
                     timestamp: c.timestamp,
                     open: o,
                     high: h,
                     low: l,
                     close: cl,
-                    volume: c.volume || 0
-                });
+                    volume: c.volume || 0,
+                    strat: ""
+                };
+                item.strat = Model.stratScenario(item, prevValid);
+                out.push(item);
             }
         }
+        root._cachedCandlesSource = src;
+        root._cachedCandlesLen = srcLen;
+        root._cachedLastCandleSig = lastSig;
+        root._cachedValidCandles = out;
+        root._cachedBfValidRef = null;
+        root._cachedBfResult = null;
         return out;
     }
 
@@ -436,11 +460,7 @@ Item {
 
         var strats = [];
         for (var si = 0; si < list.length; si++) {
-            var globalIdx = vStart + si;
-            var prev = globalIdx > 0 ? all[globalIdx - 1] : null;
-            var st = Model.stratScenario(list[si], prev);
-            list[si].strat = st;
-            strats.push(st);
+            strats.push(list[si].strat || "");
         }
 
         var min = list[0].low;
@@ -632,7 +652,14 @@ Item {
         var bf = null;
         if (root.showBroadening && (isThirtyMinChart || isDailyChart || isHourlyChart || isWeeklyChart || isMonthlyChart) && all && all.length >= 3 && innerW > 0) {
             var anchorMode = isThirtyMinChart ? "day" : (isHourlyChart ? "week" : (isWeeklyChart ? "quarter" : (isMonthlyChart ? "year" : "month")));
-            bf = Model.computeActiveBroadening(all, null, anchorMode);
+            if (root._cachedBfValidRef === all && root._cachedBfAnchor === anchorMode) {
+                bf = root._cachedBfResult;
+            } else {
+                bf = Model.computeActiveBroadening(all, null, anchorMode);
+                root._cachedBfValidRef = all;
+                root._cachedBfAnchor = anchorMode;
+                root._cachedBfResult = bf;
+            }
         }
 
         return {
@@ -693,6 +720,8 @@ Item {
 
         // Check if cursor is hovering over the right price scale gutter or psychological tick levels
         if (root.showPriceScale && px >= g.right) {
+            var prevHoveringScale = hoveringScale;
+            var prevHoveredTick = hoveredTickIndex;
             hoveringScale = true;
             hovering = true;
             hoverIndex = -1;
@@ -721,7 +750,8 @@ Item {
                 hoverPrice = yToPrice(hoverY);
             }
 
-            canvas.requestPaint();
+            if (!prevHoveringScale || prevHoveredTick !== hoveredTickIndex)
+                canvas.requestPaint();
             if (!isSyncing)
                 root.crosshairMoved(-1, hoverPrice, null);
             return;
@@ -1305,11 +1335,18 @@ Item {
                     var isAtLatestBar = (root.dragStartViewStart + root.dragStartViewCount >= total - 1) || root.dragStartRatio >= 0.85;
                     var nextStart = isAtLatestBar ? Math.max(0, total - nextCount) : Math.max(0, Math.min(total - nextCount, Math.round(root.dragStartCenterIndex - nextCount * root.dragStartRatio)));
 
-                    root.viewCount = nextCount >= total ? -1 : nextCount;
-                    root.viewStart = nextCount >= total ? 0 : nextStart;
-                    root.followLatest = (nextCount >= total) || (nextStart >= Math.max(0, total - nextCount));
-                    root.refreshGeometry();
-                    root.zoomChangedManually(root.viewCount);
+                    var targetViewCount = nextCount >= total ? -1 : nextCount;
+                    var targetViewStart = nextCount >= total ? 0 : nextStart;
+                    var targetFollow = (nextCount >= total) || (nextStart >= Math.max(0, total - nextCount));
+                    if (targetViewCount !== root.viewCount || targetViewStart !== root.viewStart || targetFollow !== root.followLatest) {
+                        var zoomChanged = (targetViewCount !== root.viewCount);
+                        root.viewCount = targetViewCount;
+                        root.viewStart = targetViewStart;
+                        root.followLatest = targetFollow;
+                        root.refreshGeometry();
+                        if (zoomChanged)
+                            root.zoomChangedManually(root.viewCount);
+                    }
                 } else if (g.totalCandles > g.vCount) {
                     // Normal Drag = PAN (Move left/right through time)
                     var deltaX = mouse.x - root.dragStartX;
@@ -1428,11 +1465,18 @@ Item {
                     // Zoom OUT: increase visible bar count, expanding symmetrically or outward from right edge
                     var nextCount = Math.min(total, curCount + deltaBars);
                     var nextStart = isAtLatestBar ? Math.max(0, total - nextCount) : Math.max(0, Math.min(total - nextCount, Math.round(anchorBar - ratio * nextCount)));
-                    root.viewCount = nextCount >= total ? -1 : nextCount;
-                    root.viewStart = nextCount >= total ? 0 : nextStart;
-                    root.followLatest = (nextCount >= total) || (nextStart >= Math.max(0, total - nextCount));
-                    root.refreshGeometry();
-                    root.zoomChangedManually(root.viewCount);
+                    var targetViewCount = nextCount >= total ? -1 : nextCount;
+                    var targetViewStart = nextCount >= total ? 0 : nextStart;
+                    var targetFollow = (nextCount >= total) || (nextStart >= Math.max(0, total - nextCount));
+                    if (targetViewCount !== root.viewCount || targetViewStart !== root.viewStart || targetFollow !== root.followLatest) {
+                        var zoomChanged = (targetViewCount !== root.viewCount);
+                        root.viewCount = targetViewCount;
+                        root.viewStart = targetViewStart;
+                        root.followLatest = targetFollow;
+                        root.refreshGeometry();
+                        if (zoomChanged)
+                            root.zoomChangedManually(root.viewCount);
+                    }
                 }
             }
             wheel.accepted = true;
