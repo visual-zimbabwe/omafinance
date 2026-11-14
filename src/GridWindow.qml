@@ -814,183 +814,194 @@ FloatingWindow {
             anchors.fill: parent
             spacing: 0
 
-            // Master Text Control Header (Zero-Chrome)
+            // Master Text Control Header (Zero-Chrome, Single-Row TradingView-Style)
             Item {
                 id: masterHeader
                 width: parent.width
                 height: Style.space(36)
 
-                // Grid Layout Selector (Left-aligned, collapsible)
+                readonly property int syncActiveCount: (root.syncSymbol ? 1 : 0) + (root.syncTimeframe ? 1 : 0) + (root.syncCrosshair ? 1 : 0) + (root.syncTime ? 1 : 0)
+                readonly property var syncToggles: [
+                    {
+                        key: "sym",
+                        label: "SYM " + (root.syncSymbol ? "[ON]" : "[OFF]"),
+                        fullLabel: "Symbol",
+                        checked: root.syncSymbol,
+                        tooltip: "Sync symbol across all cells"
+                    },
+                    {
+                        key: "tf",
+                        label: "TF " + (root.syncTimeframe ? "[ON]" : "[OFF]"),
+                        fullLabel: "Timeframe",
+                        checked: root.syncTimeframe,
+                        tooltip: "Sync timeframe across all cells"
+                    },
+                    {
+                        key: "cross",
+                        label: "CROSS " + (root.syncCrosshair ? "[ON]" : "[OFF]"),
+                        fullLabel: "Crosshair",
+                        checked: root.syncCrosshair,
+                        tooltip: "Sync crosshair across all cells"
+                    },
+                    {
+                        key: "time",
+                        label: "TIME " + (root.syncTime ? "[ON]" : "[OFF]"),
+                        fullLabel: "Time Scroll",
+                        checked: root.syncTime,
+                        tooltip: "Sync time scroll across all cells"
+                    }
+                ]
+                readonly property real fullRightWidth: inlineSyncRow.implicitWidth + bfChip.implicitWidth + alertsMuteToggle.implicitWidth + (root.fetching ? Style.space(22) : 0) + Style.space(18)
+                readonly property bool compactSync: (leftControlsRow.implicitWidth + fullRightWidth + Style.space(40)) > width
+
+                function toggleSyncOption(key) {
+                    if (key === "sym") {
+                        root.syncSymbol = !root.syncSymbol;
+                        if (root.syncSymbol) {
+                            var currentSym = root.symbolForCell(root.activeCellIndex);
+                            root.mainSymbol = currentSym;
+                            var nextSymbols = [];
+                            for (var i = 0; i < 5; i++)
+                                nextSymbols.push(currentSym);
+                            root.cellSymbols = nextSymbols;
+                        }
+                        root.refreshQuotes();
+                        root.refreshAllCharts();
+                    } else if (key === "tf") {
+                        root.syncTimeframe = !root.syncTimeframe;
+                        if (root.syncTimeframe) {
+                            var currentTf = root.timeframeForCell(root.activeCellIndex);
+                            var nextTfs = [];
+                            for (var j = 0; j < 5; j++)
+                                nextTfs.push(currentTf);
+                            root.cellTimeframes = nextTfs;
+                        } else {
+                            root.cellTimeframes = Model.gridTimeframes(root.gridMode === "1x1" ? root.previousGridMode : root.gridMode);
+                        }
+                        root.refreshAllCharts();
+                    } else if (key === "cross") {
+                        root.syncCrosshair = !root.syncCrosshair;
+                    } else if (key === "time") {
+                        root.syncTime = !root.syncTime;
+                    }
+                    root.saveGridState();
+                }
+
+                component SyncChip: FinanceChipButton {
+                    foreground: root.foreground
+                    dimColor: root.dim
+                    fontFamily: root.fontFamily
+                }
+
+                // Left-aligned Grid & Replay Controls (clipped cleanly before right controls)
                 Row {
-                    id: gridLayoutRow
+                    id: leftControlsRow
                     anchors.left: parent.left
                     anchors.leftMargin: Style.space(12)
+                    anchors.right: rightControlsRow.left
+                    anchors.rightMargin: Style.space(8)
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(8)
+                    spacing: Style.space(20)
+                    clip: true
 
-                    Text {
-                        text: "GRID"
-                        color: root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-                    }
-
-                    Item {
-                        id: gridLayoutContainer
-                        implicitWidth: root.gridExpanded ? expandedGridRow.implicitWidth : activeGridLabel.implicitWidth
-                        implicitHeight: Math.max(activeGridLabel.implicitHeight, expandedGridRow.implicitHeight)
+                    // Grid Layout Selector (Left-aligned, collapsible)
+                    Row {
+                        id: gridLayoutRow
                         anchors.verticalCenter: parent.verticalCenter
+                        spacing: Style.space(8)
 
                         Text {
-                            id: activeGridLabel
-                            visible: !root.gridExpanded
-                            anchors.verticalCenter: parent.verticalCenter
-                            textFormat: Text.PlainText
-                            text: root.gridMode
-                            color: root.foreground
+                            text: "GRID"
+                            color: root.dim
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.bodySmall
                             font.bold: true
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        InlineExpandSelector {
+                            model: ["2x2", "2+3", "1x1"]
+                            currentValue: root.gridMode
+                            expanded: root.gridExpanded
+                            activeColor: root.foreground
+                            dimColor: root.dim
+                            fontFamily: root.fontFamily
+                            anchors.verticalCenter: parent.verticalCenter
+                            onExpandRequested: root.gridExpanded = true
+                            onCollapsed: root.gridExpanded = false
+                            onSelected: function (value) {
+                                if (value === "1x1" && root.gridMode !== "1x1") {
+                                    root.previousGridMode = root.gridMode;
+                                } else if (value !== "1x1") {
+                                    root.previousGridMode = value;
+                                }
+                                root.gridMode = value;
+                                if (!root.syncTimeframe) {
+                                    var defaults = Model.gridTimeframes(value);
+                                    var nextTfs = [];
+                                    for (var ti = 0; ti < 5; ti++) {
+                                        nextTfs.push((root.cellTimeframes && root.cellTimeframes[ti]) ? root.cellTimeframes[ti] : (defaults[ti] || "1D"));
+                                    }
+                                    root.cellTimeframes = nextTfs;
+                                }
+                                root.gridExpanded = false;
+                                root.refreshQuotes();
+                                root.refreshAllCharts();
+                                root.saveGridState();
+                            }
+                        }
+
+                        HoverHandler {
+                            onHoveredChanged: {
+                                if (!hovered)
+                                    root.gridExpanded = false;
+                            }
+                        }
+                    }
+
+                    // Replay Control (Center-Left, Zero-Chrome)
+                    Row {
+                        id: replayControlRow
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Style.space(6)
+
+                        readonly property color replayAmber: Qt.rgba(0.92, 0.65, 0.15, 1)
+                        readonly property string activeSym: root.symbolForCell(root.activeCellIndex)
+                        readonly property var replayStepCandles: {
+                            var stepTf = Model.mapReplayStepInterval(root.replayStepInterval);
+                            if (!stepTf)
+                                stepTf = root.timeframeForCell(root.activeCellIndex);
+                            return root.chartCache[root.cacheKey(activeSym, stepTf)] || root.chartCache[root.cacheKey(activeSym, "5")] || root.chartCache[root.cacheKey(activeSym, "30")] || [];
+                        }
+                        readonly property string badgeTime: Model.formatReplayBadgeTime(root.replayCutoffTs, replayStepCandles, root.chartCache[root.cacheKey(activeSym, "30")] || [], root.chartCache[root.cacheKey(activeSym, "60")] || [], root.chartCache[root.cacheKey(activeSym, "1D")] || [])
+
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            textFormat: Text.PlainText
+                            text: root.replayCutoffTs > 0 ? ("REPLAY [" + replayControlRow.badgeTime + "]") : "REPLAY [OFF]"
+                            color: root.replayCutoffTs > 0 ? replayControlRow.replayAmber : root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: root.replayCutoffTs > 0
 
                             MouseArea {
                                 anchors.fill: parent
                                 anchors.margins: -Style.space(4)
                                 cursorShape: Qt.PointingHandCursor
-                                hoverEnabled: true
                                 onClicked: {
-                                    root.gridExpanded = true;
+                                    if (root.replayCutoffTs > 0)
+                                        root.setReplayCutoff(0);
+                                    else
+                                        root.stepReplay(-1);
                                 }
                             }
                         }
-
-                        Row {
-                            id: expandedGridRow
-                            visible: root.gridExpanded
-                            spacing: Style.space(6)
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Repeater {
-                                model: ["2x2", "2+3", "1x1"]
-
-                                Text {
-                                    required property string modelData
-                                    textFormat: Text.PlainText
-                                    text: modelData
-                                    color: modelData === root.gridMode ? root.foreground : Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    font.bold: modelData === root.gridMode
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        anchors.margins: -Style.space(4)
-                                        cursorShape: Qt.PointingHandCursor
-                                        hoverEnabled: true
-                                        onClicked: {
-                                            if (modelData === "1x1" && root.gridMode !== "1x1") {
-                                                root.previousGridMode = root.gridMode;
-                                            } else if (modelData !== "1x1") {
-                                                root.previousGridMode = modelData;
-                                            }
-                                            root.gridMode = modelData;
-                                            if (!root.syncTimeframe) {
-                                                var defaults = Model.gridTimeframes(modelData);
-                                                var nextTfs = [];
-                                                for (var ti = 0; ti < 5; ti++) {
-                                                    nextTfs.push((root.cellTimeframes && root.cellTimeframes[ti]) ? root.cellTimeframes[ti] : (defaults[ti] || "1D"));
-                                                }
-                                                root.cellTimeframes = nextTfs;
-                                            }
-                                            root.gridExpanded = false;
-                                            root.refreshQuotes();
-                                            root.refreshAllCharts();
-                                            root.saveGridState();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    HoverHandler {
-                        id: gridLayoutHover
-                        onHoveredChanged: {
-                            if (!hovered)
-                                root.gridExpanded = false;
-                        }
-                    }
-                }
-
-                // Replay Control (Center-Left, Zero-Chrome)
-                Row {
-                    id: replayControlRow
-                    anchors.left: gridLayoutRow.right
-                    anchors.leftMargin: Style.space(20)
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(6)
-
-                    readonly property color replayAmber: Qt.rgba(0.92, 0.65, 0.15, 1)
-                    readonly property string activeSym: root.symbolForCell(root.activeCellIndex)
-                    readonly property var replayStepCandles: {
-                        var stepTf = Model.mapReplayStepInterval(root.replayStepInterval);
-                        if (!stepTf)
-                            stepTf = root.timeframeForCell(root.activeCellIndex);
-                        return root.chartCache[root.cacheKey(activeSym, stepTf)] || root.chartCache[root.cacheKey(activeSym, "5")] || root.chartCache[root.cacheKey(activeSym, "30")] || [];
-                    }
-                    readonly property string badgeTime: Model.formatReplayBadgeTime(root.replayCutoffTs, replayStepCandles, root.chartCache[root.cacheKey(activeSym, "30")] || [], root.chartCache[root.cacheKey(activeSym, "60")] || [], root.chartCache[root.cacheKey(activeSym, "1D")] || [])
-
-                    Text {
-                        textFormat: Text.PlainText
-                        text: root.replayCutoffTs > 0 ? ("REPLAY [" + replayControlRow.badgeTime + "]") : "REPLAY [OFF]"
-                        color: root.replayCutoffTs > 0 ? replayControlRow.replayAmber : root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: root.replayCutoffTs > 0
-
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -Style.space(4)
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (root.replayCutoffTs > 0)
-                                    root.setReplayCutoff(0);
-                                else
-                                    root.stepReplay(-1);
-                            }
-                        }
-                    }
-
-                    Text {
-                        visible: root.replayCutoffTs > 0
-                        textFormat: Text.PlainText
-                        text: "◀"
-                        color: replayControlRow.replayAmber
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -Style.space(4)
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.stepReplay(-1)
-                        }
-                    }
-
-                    Item {
-                        id: replayStepContainer
-                        visible: root.replayCutoffTs > 0
-                        implicitWidth: root.replayIntervalExpanded ? expandedReplayStepRow.implicitWidth : activeReplayStepLabel.implicitWidth
-                        implicitHeight: Math.max(activeReplayStepLabel.implicitHeight, expandedReplayStepRow.implicitHeight)
-                        anchors.verticalCenter: parent.verticalCenter
 
                         Text {
-                            id: activeReplayStepLabel
-                            visible: !root.replayIntervalExpanded
+                            visible: root.replayCutoffTs > 0
                             anchors.verticalCenter: parent.verticalCenter
                             textFormat: Text.PlainText
-                            text: "[" + root.replayStepInterval + "]"
+                            text: "◀"
                             color: replayControlRow.replayAmber
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.bodySmall
@@ -1000,91 +1011,69 @@ FloatingWindow {
                                 anchors.fill: parent
                                 anchors.margins: -Style.space(4)
                                 cursorShape: Qt.PointingHandCursor
-                                hoverEnabled: true
-                                onClicked: {
-                                    root.replayIntervalExpanded = true;
-                                }
+                                onClicked: root.stepReplay(-1)
                             }
                         }
 
-                        Row {
-                            id: expandedReplayStepRow
-                            visible: root.replayIntervalExpanded
-                            spacing: Style.space(6)
+                        InlineExpandSelector {
+                            visible: root.replayCutoffTs > 0
+                            model: ["Auto", "1m", "5m", "15m", "30m", "60m", "1D"]
+                            currentValue: root.replayStepInterval
+                            collapsedText: "[" + root.replayStepInterval + "]"
+                            expanded: root.replayIntervalExpanded
+                            activeColor: replayControlRow.replayAmber
+                            dimColor: root.dim
+                            fontFamily: root.fontFamily
                             anchors.verticalCenter: parent.verticalCenter
-
-                            Repeater {
-                                model: ["Auto", "1m", "5m", "15m", "30m", "60m", "1D"]
-
-                                Text {
-                                    required property string modelData
-                                    textFormat: Text.PlainText
-                                    text: modelData
-                                    color: modelData === root.replayStepInterval ? replayControlRow.replayAmber : Qt.rgba(root.dim.r, root.dim.g, root.dim.b, 0.45)
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    font.bold: modelData === root.replayStepInterval
-
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        anchors.margins: -Style.space(4)
-                                        cursorShape: Qt.PointingHandCursor
-                                        hoverEnabled: true
-                                        onClicked: {
-                                            root.setReplayStepInterval(modelData);
-                                            root.replayIntervalExpanded = false;
-                                        }
-                                    }
-                                }
+                            onExpandRequested: root.replayIntervalExpanded = true
+                            onCollapsed: root.replayIntervalExpanded = false
+                            onSelected: function (value) {
+                                root.setReplayStepInterval(value);
+                                root.replayIntervalExpanded = false;
                             }
                         }
 
-                        HoverHandler {
-                            id: replayStepHover
-                            onHoveredChanged: {
-                                if (!hovered)
-                                    root.replayIntervalExpanded = false;
+                        Text {
+                            visible: root.replayCutoffTs > 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            textFormat: Text.PlainText
+                            text: "▶"
+                            color: replayControlRow.replayAmber
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: true
+
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.margins: -Style.space(4)
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.stepReplay(1)
                             }
                         }
-                    }
 
-                    Text {
-                        visible: root.replayCutoffTs > 0
-                        textFormat: Text.PlainText
-                        text: "▶"
-                        color: replayControlRow.replayAmber
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
+                        Text {
+                            visible: root.replayCutoffTs > 0
+                            anchors.verticalCenter: parent.verticalCenter
+                            textFormat: Text.PlainText
+                            text: "✕"
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: true
 
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -Style.space(4)
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.stepReplay(1)
-                        }
-                    }
-
-                    Text {
-                        visible: root.replayCutoffTs > 0
-                        textFormat: Text.PlainText
-                        text: "✕"
-                        color: root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
-
-                        MouseArea {
-                            anchors.fill: parent
-                            anchors.margins: -Style.space(4)
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.setReplayCutoff(0)
+                            MouseArea {
+                                anchors.fill: parent
+                                anchors.margins: -Style.space(4)
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.setReplayCutoff(0)
+                            }
                         }
                     }
                 }
 
-                // Sync Toggles (Right-aligned)
+                // Right-aligned Controls (inline when wide, compact SYNC dropdown when narrow)
                 Row {
+                    id: rightControlsRow
                     anchors.right: parent.right
                     anchors.rightMargin: Style.space(12)
                     anchors.verticalCenter: parent.verticalCenter
@@ -1097,97 +1086,87 @@ FloatingWindow {
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
-                    Text {
-                        text: "SYNC"
-                        color: root.dim
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        font.bold: true
+                    Row {
+                        id: inlineSyncRow
+                        visible: !masterHeader.compactSync
                         anchors.verticalCenter: parent.verticalCenter
-                    }
+                        spacing: Style.space(6)
 
-                    FinanceChipButton {
-                        text: "SYM " + (root.syncSymbol ? "[ON]" : "[OFF]")
-                        checked: root.syncSymbol
-                        foreground: root.foreground
-                        dimColor: root.dim
-                        fontFamily: root.fontFamily
-                        tooltipText: "Sync symbol across all cells"
-                        anchors.verticalCenter: parent.verticalCenter
-                        onClicked: {
-                            root.syncSymbol = !root.syncSymbol;
-                            if (root.syncSymbol) {
-                                var currentSym = root.symbolForCell(root.activeCellIndex);
-                                root.mainSymbol = currentSym;
-                                var nextSymbols = [];
-                                for (var i = 0; i < 5; i++)
-                                    nextSymbols.push(currentSym);
-                                root.cellSymbols = nextSymbols;
+                        Text {
+                            text: "SYNC"
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            font.bold: true
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        Repeater {
+                            model: masterHeader.syncToggles
+
+                            SyncChip {
+                                required property var modelData
+                                text: modelData.label
+                                checked: modelData.checked
+                                tooltipText: modelData.tooltip
+                                anchors.verticalCenter: parent.verticalCenter
+                                onClicked: masterHeader.toggleSyncOption(modelData.key)
                             }
-                            root.refreshQuotes();
-                            root.refreshAllCharts();
-                            root.saveGridState();
                         }
                     }
 
-                    FinanceChipButton {
-                        text: "TF " + (root.syncTimeframe ? "[ON]" : "[OFF]")
-                        checked: root.syncTimeframe
-                        foreground: root.foreground
-                        dimColor: root.dim
-                        fontFamily: root.fontFamily
-                        tooltipText: "Sync timeframe across all cells"
+                    SyncChip {
+                        id: compactSyncButton
+                        visible: masterHeader.compactSync
+                        text: "SYNC [" + masterHeader.syncActiveCount + "/4] ▾"
+                        checked: masterHeader.syncActiveCount > 0 || syncPopup.visible
+                        tooltipText: "Sync options across cells"
                         anchors.verticalCenter: parent.verticalCenter
                         onClicked: {
-                            root.syncTimeframe = !root.syncTimeframe;
-                            if (root.syncTimeframe) {
-                                var currentTf = root.timeframeForCell(root.activeCellIndex);
-                                var nextTfs = [];
-                                for (var i = 0; i < 5; i++)
-                                    nextTfs.push(currentTf);
-                                root.cellTimeframes = nextTfs;
-                            } else {
-                                root.cellTimeframes = Model.gridTimeframes(root.gridMode === "1x1" ? root.previousGridMode : root.gridMode);
+                            if (syncPopup.visible)
+                                syncPopup.close();
+                            else
+                                syncPopup.open();
+                        }
+
+                        QQC.Popup {
+                            id: syncPopup
+                            parent: compactSyncButton
+                            x: Math.min(0, compactSyncButton.width - width)
+                            y: compactSyncButton.height + Style.space(4)
+                            padding: Style.space(6)
+                            closePolicy: QQC.Popup.CloseOnEscape | QQC.Popup.CloseOnPressOutsideParent
+
+                            background: FinanceSurface {
+                                elevation: 3
+                                radiusToken: "md"
+                                foregroundColor: root.foreground
+                                surfaceColor: (Color.popups && Color.popups.background) ? Color.popups.background : Color.background
                             }
-                            root.refreshAllCharts();
-                            root.saveGridState();
+
+                            contentItem: Column {
+                                spacing: Style.space(4)
+
+                                Repeater {
+                                    model: masterHeader.syncToggles
+
+                                    SyncChip {
+                                        required property var modelData
+                                        width: Style.space(150)
+                                        text: modelData.fullLabel + " " + (modelData.checked ? "[ON]" : "[OFF]")
+                                        checked: modelData.checked
+                                        tooltipText: modelData.tooltip
+                                        onClicked: masterHeader.toggleSyncOption(modelData.key)
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    FinanceChipButton {
-                        text: "CROSS " + (root.syncCrosshair ? "[ON]" : "[OFF]")
-                        checked: root.syncCrosshair
-                        foreground: root.foreground
-                        dimColor: root.dim
-                        fontFamily: root.fontFamily
-                        tooltipText: "Sync crosshair across all cells"
-                        anchors.verticalCenter: parent.verticalCenter
-                        onClicked: {
-                            root.syncCrosshair = !root.syncCrosshair;
-                            root.saveGridState();
-                        }
-                    }
-
-                    FinanceChipButton {
-                        text: "TIME " + (root.syncTime ? "[ON]" : "[OFF]")
-                        checked: root.syncTime
-                        foreground: root.foreground
-                        dimColor: root.dim
-                        fontFamily: root.fontFamily
-                        tooltipText: "Sync time scroll across all cells"
-                        anchors.verticalCenter: parent.verticalCenter
-                        onClicked: {
-                            root.syncTime = !root.syncTime;
-                            root.saveGridState();
-                        }
-                    }
-
-                    FinanceChipButton {
+                    SyncChip {
+                        id: bfChip
                         text: "BF " + (root.showBroadening ? "[ON]" : "[OFF]")
                         checked: root.showBroadening
-                        foreground: root.foreground
-                        dimColor: root.dim
-                        fontFamily: root.fontFamily
                         tooltipText: "Toggle Broadening Formation lines"
                         anchors.verticalCenter: parent.verticalCenter
                         onClicked: {
@@ -1196,13 +1175,12 @@ FloatingWindow {
                         }
                     }
 
-                    FinanceChipButton {
+                    SyncChip {
                         id: alertsMuteToggle
                         text: "ALERTS " + (root.alertsMuted ? "[MUTED]" : "[ON]")
                         checked: true
                         foreground: root.alertsMuted ? Color.urgent : root.foreground
                         accentColor: root.alertsMuted ? Color.urgent : Color.accent
-                        fontFamily: root.fontFamily
                         tooltipText: root.alertsMuted ? (root.alertsMuteStatus + " · click to unmute") : "Click to mute alerts until the next market open"
                         anchors.verticalCenter: parent.verticalCenter
                         onClicked: root.alertsMuteToggleRequested()
