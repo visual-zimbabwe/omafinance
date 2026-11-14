@@ -1158,7 +1158,7 @@ FloatingWindow {
                                 width: Style.space(200)
                                 anchors.verticalCenter: parent.verticalCenter
                                 value: root.scenarioFilter
-                                placeholderText: "1, 2uh, 3s, !r..."
+                                placeholderText: "1-2dh, 3-1g, !1..."
                                 clearable: true
                                 allowRightClick: true
                                 unfocusOnNavKeys: true
