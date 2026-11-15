@@ -781,3 +781,8 @@ test("regression guards: multi-ticker sync, chart quote protection, FinanceInput
 
 
 
+test("SectorAnalysisWindow preserves and labels @ ticker presets", () => {
+  const win = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
+  assert.match(win, /function setSector\(sym\)\s*\{[\s\S]*?Model\.describeSectorInput\(sym\)[\s\S]*?Model\.normalizeSectorInput\(sym\)/)
+  assert.match(win, /readonly property string sectorFullName:\s*\{[\s\S]*?Model\.describeSectorInput\(root\.sectorSymbol\)/)
+})

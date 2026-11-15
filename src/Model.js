@@ -7166,17 +7166,101 @@ function getSectorInfo(symbol) {
   return sectorBaskets[sym] || null;
 }
 
+// Named ticker sets usable in the Analysis SECTOR input via an "@" prefix
+// (e.g. "@INDEX", "@SECTORS", "@INDEX,@SECTORS,SMH"). Plain tokens are never presets.
+var TICKER_PRESETS = {
+  "INDEX": { name: "Major Indexes", tickers: ["SPY", "QQQ", "IWM", "DIA"] },
+  "SECTORS": { name: "GICS Sectors", tickers: ["XLE", "XLB", "XLI", "XLY", "XLP", "XLV", "XLF", "XLK", "XLC", "XLU", "XLRE"] },
+  "MARKET": { name: "Indexes + Sectors", include: ["INDEX", "SECTORS"] }
+};
+var TICKER_PRESET_ALIASES = { "I": "INDEX", "INDEXES": "INDEX", "S": "SECTORS", "SECTOR": "SECTORS", "M": "MARKET" };
+
+function isPresetToken(token) {
+  return normalizeSymbol(token).charAt(0) === "@";
+}
+
+function presetKeyForToken(token) {
+  var s = normalizeSymbol(token);
+  if (s.charAt(0) !== "@") return null;
+  var key = s.slice(1).replace(/^\s+/, "");
+  if (TICKER_PRESET_ALIASES[key]) key = TICKER_PRESET_ALIASES[key];
+  return TICKER_PRESETS[key] ? key : null;
+}
+
+function resolveTickerPreset(token) {
+  var key = presetKeyForToken(token);
+  if (!key) return null;
+  var preset = TICKER_PRESETS[key];
+  var out = [];
+  var src = preset.tickers || [];
+  if (preset.include) {
+    src = [];
+    for (var i = 0; i < preset.include.length; i++) {
+      var sub = TICKER_PRESETS[preset.include[i]];
+      if (sub && sub.tickers) src = src.concat(sub.tickers);
+    }
+  }
+  for (var j = 0; j < src.length; j++) {
+    if (out.indexOf(src[j]) === -1) out.push(src[j]);
+  }
+  return out;
+}
+
 function parseSectorTickers(symbolString) {
   if (!symbolString || typeof symbolString !== "string") return [];
   var parts = symbolString.split(",");
   var res = [];
   for (var i = 0; i < parts.length; i++) {
     var s = normalizeSymbol(parts[i]);
+    if (s.charAt(0) === "@") {
+      var expanded = resolveTickerPreset(s) || [];
+      for (var k = 0; k < expanded.length; k++) {
+        if (res.indexOf(expanded[k]) === -1) res.push(expanded[k]);
+      }
+      continue;
+    }
     if (s.length > 0 && res.indexOf(s) === -1) {
       res.push(s);
     }
   }
   return res;
+}
+
+// Normalized raw input preserving preset tokens, e.g. " @index , smh " -> "@INDEX,SMH".
+// Unknown presets and empty tokens are dropped.
+function normalizeSectorInput(symbolString) {
+  if (!symbolString || typeof symbolString !== "string") return "";
+  var parts = symbolString.split(",");
+  var res = [];
+  for (var i = 0; i < parts.length; i++) {
+    var s = normalizeSymbol(parts[i]);
+    if (s.charAt(0) === "@") {
+      var key = presetKeyForToken(s);
+      if (!key) continue;
+      s = "@" + key;
+    }
+    if (s.length > 0 && res.indexOf(s) === -1) res.push(s);
+  }
+  return res.join(",");
+}
+
+// Human label for inputs containing presets, e.g. "Major Indexes + SMH"; null when no preset is used.
+function describeSectorInput(symbolString) {
+  if (!symbolString || typeof symbolString !== "string") return null;
+  var parts = normalizeSectorInput(symbolString).split(",");
+  var labels = [];
+  var hasPreset = false;
+  for (var i = 0; i < parts.length; i++) {
+    var p = parts[i];
+    if (!p) continue;
+    if (p.charAt(0) === "@") {
+      hasPreset = true;
+      labels.push(TICKER_PRESETS[p.slice(1)].name);
+    } else {
+      labels.push(p);
+    }
+  }
+  return hasPreset ? labels.join(" + ") : null;
 }
 
 function extractSymbols(items) {
@@ -7984,6 +8068,11 @@ if (typeof module !== "undefined") {
     sectorBaskets: sectorBaskets,
     getSectorInfo: getSectorInfo,
     parseSectorTickers: parseSectorTickers,
+    TICKER_PRESETS: TICKER_PRESETS,
+    isPresetToken: isPresetToken,
+    resolveTickerPreset: resolveTickerPreset,
+    normalizeSectorInput: normalizeSectorInput,
+    describeSectorInput: describeSectorInput,
     extractSymbols: extractSymbols,
     formatTickerList: formatTickerList,
     buildScenarioContext: buildScenarioContext,
