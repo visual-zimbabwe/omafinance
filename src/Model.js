@@ -7167,13 +7167,14 @@ function getSectorInfo(symbol) {
 }
 
 // Named ticker sets usable in the Analysis SECTOR input via an "@" prefix
-// (e.g. "@INDEX", "@SECTORS", "@INDEX,@SECTORS,SMH"). Plain tokens are never presets.
+// (e.g. "@INDEX", "@SECTORS", "@ENERGY", "@INDEX,@SECTORS,SMH"). Plain tokens are never presets.
 var TICKER_PRESETS = {
   "INDEX": { name: "Major Indexes", tickers: ["SPY", "QQQ", "IWM", "DIA"] },
   "SECTORS": { name: "GICS Sectors", tickers: ["XLE", "XLB", "XLI", "XLY", "XLP", "XLV", "XLF", "XLK", "XLC", "XLU", "XLRE"] },
+  "ENERGY": { name: "Energy", tickers: ["XLE", "XOP", "OIH", "XOM", "CVX", "OXY"] },
   "MARKET": { name: "Indexes + Sectors", include: ["INDEX", "SECTORS"] }
 };
-var TICKER_PRESET_ALIASES = { "I": "INDEX", "INDEXES": "INDEX", "S": "SECTORS", "SECTOR": "SECTORS", "M": "MARKET" };
+var TICKER_PRESET_ALIASES = { "I": "INDEX", "INDEXES": "INDEX", "S": "SECTORS", "SECTOR": "SECTORS", "E": "ENERGY", "M": "MARKET" };
 
 function isPresetToken(token) {
   return normalizeSymbol(token).charAt(0) === "@";

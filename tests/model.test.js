@@ -4784,3 +4784,13 @@ test("normalizeSectorInput and describeSectorInput preserve and label presets", 
   assert.equal(Model.describeSectorInput("SPY,QQQ"), null)
   assert.equal(Model.describeSectorInput(""), null)
 })
+
+test("@ENERGY preset expands, normalizes and labels", () => {
+  const EN = ["XLE", "XOP", "OIH", "XOM", "CVX", "OXY"]
+  assert.deepEqual(Model.parseSectorTickers("@ENERGY"), EN)
+  assert.deepEqual(Model.parseSectorTickers("@e"), EN)
+  assert.deepEqual(Model.parseSectorTickers("@ENERGY, SLB"), EN.concat(["SLB"]))
+  assert.equal(Model.normalizeSectorInput(" @e , slb "), "@ENERGY,SLB")
+  assert.equal(Model.describeSectorInput("@ENERGY"), "Energy")
+  assert.equal(Model.describeSectorInput("@INDEX,@ENERGY"), "Major Indexes + Energy")
+})
