@@ -4753,3 +4753,34 @@ test("universal scenario filter: arbitrary N-bar sequences, per-bar modifiers, a
   assert.equal(Model.matchesScenarioQuery(seq1_2dh, null, "1, 2dh, !r"), true)  // matches 2dh and is green (!r)
   assert.equal(Model.matchesScenarioQuery(seq3_1_3, null, "1, 2dh, !r"), false) // neither 1 nor 2dh
 })
+
+test("parseSectorTickers expands @-prefixed ticker presets", () => {
+  const IDX = ["SPY", "QQQ", "IWM", "DIA"]
+  const SEC = ["XLE", "XLB", "XLI", "XLY", "XLP", "XLV", "XLF", "XLK", "XLC", "XLU", "XLRE"]
+  assert.deepEqual(Model.parseSectorTickers("@INDEX"), IDX)
+  assert.deepEqual(Model.parseSectorTickers("@sectors"), SEC)
+  assert.deepEqual(Model.parseSectorTickers("@INDEX,@SECTORS"), IDX.concat(SEC))
+  assert.deepEqual(Model.parseSectorTickers("@MARKET"), IDX.concat(SEC))
+  assert.deepEqual(Model.parseSectorTickers("@m"), IDX.concat(SEC))
+  assert.deepEqual(Model.parseSectorTickers("@I, @S"), IDX.concat(SEC))
+  assert.deepEqual(Model.parseSectorTickers("@SECTORS, SMH, XLK"), SEC.concat(["SMH"]))
+  assert.deepEqual(Model.parseSectorTickers("SMH, @INDEX"), ["SMH"].concat(IDX))
+  // Plain words are real tickers, never presets; unknown presets are ignored
+  assert.deepEqual(Model.parseSectorTickers("ALL"), ["ALL"])
+  assert.deepEqual(Model.parseSectorTickers("@NOPE"), [])
+  assert.deepEqual(Model.parseSectorTickers("@NOPE, SPY"), ["SPY"])
+  assert.equal(Model.resolveTickerPreset("SECTORS"), null)
+  assert.equal(Model.isPresetToken(" @index"), true)
+  assert.equal(Model.isPresetToken("SPY"), false)
+})
+
+test("normalizeSectorInput and describeSectorInput preserve and label presets", () => {
+  assert.equal(Model.normalizeSectorInput(" @index , smh , @s "), "@INDEX,SMH,@SECTORS")
+  assert.equal(Model.normalizeSectorInput("@M,@NOPE"), "@MARKET")
+  assert.equal(Model.describeSectorInput("@INDEX"), "Major Indexes")
+  assert.equal(Model.describeSectorInput("@INDEX,@SECTORS"), "Major Indexes + GICS Sectors")
+  assert.equal(Model.describeSectorInput("@M"), "Indexes + Sectors")
+  assert.equal(Model.describeSectorInput("@SECTORS,SMH"), "GICS Sectors + SMH")
+  assert.equal(Model.describeSectorInput("SPY,QQQ"), null)
+  assert.equal(Model.describeSectorInput(""), null)
+})

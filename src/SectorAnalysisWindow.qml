@@ -15,6 +15,9 @@ FloatingWindow {
     readonly property var sectorInfo: (!root.isMultiTicker && sectorTickers.length > 0) ? Model.getSectorInfo(sectorTickers[0]) : null
     readonly property string sectorFullName: {
         if (root.isMultiTicker) {
+            var presetLabel = Model.describeSectorInput(root.sectorSymbol);
+            if (presetLabel)
+                return presetLabel + " · " + sectorTickers.length + " Tickers";
             return sectorTickers.length + " Tickers";
         }
         if (root.sectorInfo) {
@@ -239,7 +242,8 @@ FloatingWindow {
     function setSector(sym) {
         var parsed = Model.parseSectorTickers(sym);
         if (parsed.length > 0) {
-            var joined = parsed.join(",");
+            var presetLabel = Model.describeSectorInput(sym);
+            var joined = presetLabel ? Model.normalizeSectorInput(sym) : parsed.join(",");
             if (joined !== root.sectorSymbol) {
                 root.sectorSymbol = joined;
             }
