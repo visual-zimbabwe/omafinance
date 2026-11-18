@@ -4,6 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "HubRegistry.js" as HubRegistry
 
 Panel {
     id: root
@@ -136,13 +137,30 @@ Panel {
     readonly property bool showPrice: setting("showPrice", legacyShowOnBar) !== false
     readonly property bool showChange: setting("showChange", legacyShowOnBar) !== false
     readonly property bool showLastUpdated: setting("showLastUpdated", false) === true
+    readonly property bool liveStreaming: setting("liveStreaming", true) !== false
     readonly property bool showBarData: showTicker || showPrice || showChange
     readonly property bool showBarQuote: showPrice || showChange
     readonly property int changeStyleSettingsIndex: 3
     readonly property int refreshSettingsIndex: showChange ? 4 : 3
     readonly property int lastUpdatedSettingsIndex: showChange ? 5 : 4
     readonly property int barSectionSettingsIndex: showChange ? 6 : 5
-    readonly property int settingsLastIndex: barSectionSettingsIndex
+    readonly property int liveStreamingSettingsIndex: barSectionSettingsIndex + 1
+    readonly property int settingsLastIndex: liveStreamingSettingsIndex
+    property bool isStreamLeader: false
+    property bool streamReady: false
+    property bool streamConnected: false
+    property bool streamYahooConnected: false
+    property bool streamCoinbaseConnected: false
+    property bool streamHyperliquidConnected: false
+    property int streamFailureCount: 0
+    property string lastStreamSubKey: ""
+    property int streamReqSeq: 0
+    property var streamInFlightCharts: ({})
+    property var streamFetchedAt: ({})
+    property bool streamSparkInFlight: false
+    readonly property bool hasArmedPriceAlerts: Model.armedAlertSymbols(root.symbolLevels).length > 0
+    readonly property bool hasActiveWindows: (root.activeGridWindows && root.activeGridWindows.length > 0) || (root.activeSectorWindows && root.activeSectorWindows.length > 0)
+    readonly property bool shouldStreamLive: root.liveStreaming && (root.opened || root.hasActiveWindows || root.hasArmedPriceAlerts)
     readonly property int backgroundRefreshMs: Model.backoffDelay(refreshSeconds * 1000, quoteFailureCount, 3600000)
     readonly property int liveRefreshMs: Model.backoffDelay(2000, quoteFailureCount, 60000)
     readonly property int chartRefreshMs: Model.backoffDelay(15000, chartFailureCount, 120000)
@@ -442,6 +460,13 @@ Panel {
         });
     }
 
+    function setLiveStreaming(enabled) {
+        persistSettings({
+            liveStreaming: !!enabled
+        });
+        scheduleStreamSubSync();
+    }
+
     function setRefreshSeconds(value) {
         var n = Math.max(15, Math.min(3600, parseInt(value, 10) || 60));
         persistSettings({
@@ -678,6 +703,21 @@ Panel {
     function processNextBgStratFetch() {
         if (!root.bgScanQueue || root.bgScanQueue.length === 0)
             return;
+        if (streamProc.running && root.streamReady) {
+            var nowMs = Date.now();
+            while (root.bgScanQueue.length > 0) {
+                var item = root.bgScanQueue.shift();
+                var k = Model.cacheKey(item.symbol, item.rangeKey);
+                var lastTs = root.streamFetchedAt[k] || 0;
+                if (lastTs > 0 && (nowMs - lastTs) < 55000 && root.chartCache && root.chartCache[k] && root.chartCache[k].length > 0) {
+                    if (item.rangeKey === "1D")
+                        root.evaluateBgSymbolStrat(item.symbol);
+                    continue;
+                }
+                root.requestSharedChartFetch(item.symbol, item.rangeKey, true);
+            }
+            return;
+        }
         var next = root.bgScanQueue.shift();
         root.bgFetchSymbol = next.symbol;
         root.bgFetchRange = next.rangeKey;
@@ -688,8 +728,8 @@ Panel {
     function evaluateBgSymbolStrat(sym) {
         if (!sym)
             return;
-        var hCandles = root.bgCandleCache[sym + "_60"] || [];
-        var dCandles = root.bgCandleCache[sym + "_1D"] || [];
+        var hCandles = (root.chartCache && root.chartCache[Model.cacheKey(sym, "60")]) || root.bgCandleCache[sym + "_60"] || [];
+        var dCandles = (root.chartCache && root.chartCache[Model.cacheKey(sym, "1D")]) || root.bgCandleCache[sym + "_1D"] || [];
         if (hCandles.length < 3 || dCandles.length < 3)
             return;
         var q = root.quotes[sym] || null;
@@ -777,8 +817,23 @@ Panel {
             Qt.callLater(refresh);
     }
 
+    function symbolsForQuoteRefresh() {
+        var base = Array.isArray(quoteSymbols) ? quoteSymbols.slice() : [];
+        var alerts = Model.armedAlertSymbols(root.symbolLevels);
+        for (var i = 0; i < alerts.length; i++) {
+            if (base.indexOf(alerts[i]) === -1)
+                base.push(alerts[i]);
+        }
+        return base;
+    }
+
     function refresh() {
-        if (quoteSymbols.length === 0) {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            HubRegistry.leader().refresh();
+            return;
+        }
+        var targets = symbolsForQuoteRefresh();
+        if (targets.length === 0) {
             quoteRefreshPending = false;
             return;
         }
@@ -787,7 +842,22 @@ Panel {
             return;
         }
         quoteRefreshPending = false;
-        quoteProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.sparkUrl(quoteSymbols)];
+        var needsFullSpark = false;
+        var curHour = Math.floor(Date.now() / 3600000);
+        for (var i = 0; i < targets.length; i++) {
+            var q = root.quotes[targets[i]];
+            if (!q || !q.ftfcAnchors || q.ftfcAnchors.hourBucket !== curHour) {
+                needsFullSpark = true;
+                break;
+            }
+        }
+        var sameAsView = targets.length === quoteSymbols.length;
+        if (streamProc.running && root.streamReady) {
+            root.requestSharedSparkFetch(targets, !needsFullSpark);
+            return;
+        }
+        var url = needsFullSpark ? (sameAsView ? Model.sparkUrl(quoteSymbols) : Model.sparkUrl(targets)) : Model.sparkQuoteUrl(targets);
+        quoteProc.command = ["curl", "-fsS", "--compressed", "--max-time", "8", "-A", "Mozilla/5.0", url];
         quoteProc.running = true;
     }
 
@@ -1060,12 +1130,27 @@ Panel {
     function startChartFetch() {
         if (!detailSymbol)
             return;
+        var cachedKey = Model.cacheKey(detailSymbol, detailRange);
+        if (!detailQuote && root.chartCache && root.chartCache[cachedKey] && root.chartCache[cachedKey].length > 0) {
+            var cachedCandles = Model.toArray(root.chartCache[cachedKey]);
+            var existingQ = root.quotes[detailSymbol] || null;
+            var seedQuote = existingQ ? Object.assign({}, existingQ) : { symbol: detailSymbol };
+            seedQuote.chartRange = detailRange;
+            seedQuote.candles = cachedCandles;
+            var seedCloses = [];
+            for (var ci = 0; ci < cachedCandles.length; ci++)
+                seedCloses.push(cachedCandles[ci].close);
+            seedQuote.closes = seedCloses;
+            root.detailQuote = seedQuote;
+        }
         if (chartProc.running)
             return;
         chartFetchSymbol = detailSymbol;
         chartFetchRange = detailRange;
         chartRetryingYahoo = false;
         chartError = "";
+        if (root.streamReady && root.requestSharedChartFetch(chartFetchSymbol, chartFetchRange, true))
+            return;
         chartProc.command = Model.chartCommand(chartFetchSymbol, chartFetchRange);
         chartProc.running = true;
     }
@@ -1086,7 +1171,7 @@ Panel {
             return;
         insightsFetchSymbol = detailSymbol;
         insightsError = "";
-        insightsProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.insightsUrl(insightsFetchSymbol)];
+        insightsProc.command = ["curl", "-fsS", "--compressed", "--max-time", "8", "-A", "Mozilla/5.0", Model.insightsUrl(insightsFetchSymbol)];
         insightsProc.running = true;
     }
 
@@ -1221,7 +1306,7 @@ Panel {
         if (!searching || !searchPendingQuery)
             return;
         searchActiveQuery = searchPendingQuery;
-        searchProc.command = ["curl", "-fsS", "--max-time", "5", "-A", "Mozilla/5.0", Model.searchUrl(searchActiveQuery)];
+        searchProc.command = ["curl", "-fsS", "--compressed", "--max-time", "5", "-A", "Mozilla/5.0", Model.searchUrl(searchActiveQuery)];
         searchProc.running = true;
     }
 
@@ -1279,6 +1364,8 @@ Panel {
                 setShowChange(!showChange);
             else if (settingsCursor === lastUpdatedSettingsIndex)
                 setShowLastUpdated(!showLastUpdated);
+            else if (settingsCursor === liveStreamingSettingsIndex)
+                setLiveStreaming(!liveStreaming);
             return;
         }
         if (view === "detail") {
@@ -1340,6 +1427,8 @@ Panel {
                         i = 2;
                     i = Math.max(0, Math.min(2, i + dx));
                     setBarSection(sections[i]);
+                } else if (settingsCursor === liveStreamingSettingsIndex) {
+                    setLiveStreaming(dx > 0);
                 }
             }
             return;
@@ -1408,9 +1497,11 @@ Panel {
         }
     }
 
+    property bool useFallbackDiskCache: false
+
     FileView {
         id: candleCacheFile
-        path: Quickshell.env("HOME") + "/.cache/omafinance/candles.json"
+        path: root.useFallbackDiskCache ? (Quickshell.env("HOME") + "/.cache/omafinance/candles.json") : ""
         watchChanges: false
         atomicWrites: true
         printErrors: false
@@ -1420,7 +1511,16 @@ Panel {
                 if (raw && raw.length > 2) {
                     var parsed = JSON.parse(raw);
                     if (parsed && typeof parsed === "object") {
-                        root.chartCache = Object.assign({}, parsed, root.chartCache);
+                        var src = (parsed.version === 2 && parsed.entries && typeof parsed.entries === "object") ? parsed.entries : parsed;
+                        var unpackedMap = ({});
+                        var keys = Object.keys(src);
+                        for (var i = 0; i < keys.length; i++) {
+                            var k = keys[i];
+                            var arr = Model.unpackCandles(src[k]);
+                            if (arr && arr.length > 0)
+                                unpackedMap[k] = arr;
+                        }
+                        root.chartCache = Object.assign({}, unpackedMap, root.chartCache);
                         root.candleCacheUpdated("");
                     }
                 }
@@ -1472,13 +1572,51 @@ Panel {
         return prot;
     }
 
+    function pruneInMemoryChartCache(maxKeys) {
+        var cap = (isFinite(maxKeys) && maxKeys > 0) ? maxKeys : 300;
+        if (!root.chartCache || Object.keys(root.chartCache).length <= cap)
+            return;
+        var prot = root.collectProtectedCacheKeys();
+        var pruned = Model.pruneChartCache(root.chartCache, cap, root.chartCacheAccess, prot);
+        root.chartCache = pruned;
+        var nextAccess = ({});
+        var keptKeys = Object.keys(pruned);
+        for (var i = 0; i < keptKeys.length; i++) {
+            var k = keptKeys[i];
+            if (root.chartCacheAccess && root.chartCacheAccess[k])
+                nextAccess[k] = root.chartCacheAccess[k];
+        }
+        root.chartCacheAccess = nextAccess;
+    }
+
     function flushCandleCache() {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            HubRegistry.leader().flushCandleCache();
+            return;
+        }
+        var prot = root.collectProtectedCacheKeys();
+        root.pruneInMemoryChartCache(300);
         if (!root.candleCacheDirty)
             return;
         root.candleCacheDirty = false;
+        if (streamProc.running && root.streamReady) {
+            root.sendStreamCommand({
+                op: "cacheFlush",
+                protectedKeys: prot
+            });
+            return;
+        }
         try {
-            var diskCache = Model.pruneChartCache(root.chartCache, 600, root.chartCacheAccess, root.collectProtectedCacheKeys());
-            candleCacheFile.setText(JSON.stringify(diskCache));
+            root.useFallbackDiskCache = true;
+            var diskCache = Model.pruneChartCache(root.chartCache, 600, root.chartCacheAccess, prot);
+            var packed = ({});
+            var keys = Object.keys(diskCache);
+            for (var i = 0; i < keys.length; i++)
+                packed[keys[i]] = Model.packCandles(diskCache[keys[i]]);
+            candleCacheFile.setText(JSON.stringify({
+                version: 2,
+                entries: packed
+            }));
         } catch (e) {}
     }
 
@@ -1489,7 +1627,42 @@ Panel {
         onTriggered: root.flushCandleCache()
     }
 
-    function updateSharedCandles(key, candles, quoteEnriched) {
+    function applyLiveQuotesToDetailAndCache(changedSymbols) {
+        if (!Array.isArray(changedSymbols) || changedSymbols.length === 0)
+            return;
+        var nowDate = new Date();
+        var tfs = ["30", "60", "1D", "1W", "1M", "1Y"];
+        for (var i = 0; i < changedSymbols.length; i++) {
+            var sym = changedSymbols[i];
+            var q = sym ? root.quotes[sym] : null;
+            if (!q)
+                continue;
+            if (root.chartCache) {
+                var changedKeys = Model.updateCachedDevelopingCandles(root.chartCache, sym, q, tfs, nowDate);
+                if (changedKeys.length > 0) {
+                    for (var ci = 0; ci < changedKeys.length; ci++)
+                        root.chartCacheAccess[changedKeys[ci]] = nowDate.getTime();
+                }
+            }
+            if (root.view === "detail" && root.detailSymbol === sym && root.detailQuote && root.detailQuote.candles && root.detailQuote.candles.length > 0) {
+                var updatedDetailCandles = Model.updateDevelopingCandle(root.detailQuote.candles, q, root.detailRange, nowDate);
+                if (updatedDetailCandles !== root.detailQuote.candles) {
+                    var nextDetail = Object.assign({}, root.detailQuote, {
+                        candles: updatedDetailCandles,
+                        price: q.price !== undefined ? q.price : root.detailQuote.price,
+                        regularPrice: q.regularPrice !== undefined ? q.regularPrice : root.detailQuote.regularPrice,
+                        extendedPrice: q.extendedPrice !== undefined ? q.extendedPrice : root.detailQuote.extendedPrice,
+                        hasExtended: q.hasExtended !== undefined ? q.hasExtended : root.detailQuote.hasExtended,
+                        session: q.session || root.detailQuote.session,
+                        ftfc: q.ftfc || root.detailQuote.ftfc
+                    });
+                    root.detailQuote = nextDetail;
+                }
+            }
+        }
+    }
+
+    function updateSharedCandles(key, candles, quoteEnriched, skipDaemonPut) {
         if (!key || !candles)
             return;
         if (!root.chartCache)
@@ -1497,6 +1670,7 @@ Panel {
         root.chartCache[key] = Model.toArray(candles);
         root.chartCacheAccess[key] = Date.now();
         root.candleCacheUpdated(key);
+        HubRegistry.broadcastCandleKey(root, root.chartCache, key);
         if (quoteEnriched && quoteEnriched.symbol) {
             var existing = root.quotes[quoteEnriched.symbol] || null;
             var enriched = Model.mergeChartQuote(existing, quoteEnriched);
@@ -1509,13 +1683,416 @@ Panel {
             }
             root.quotesUpdated([quoteEnriched.symbol]);
         }
+        if (!skipDaemonPut && root.streamReady) {
+            root.sendStreamCommand({
+                op: "cachePut",
+                key: key,
+                candles: root.chartCache[key]
+            });
+        }
         root.candleCacheDirty = true;
+        if (Object.keys(root.chartCache).length > 360)
+            root.pruneInMemoryChartCache(300);
         if (!candleCacheSaveTimer.running)
             candleCacheSaveTimer.start();
     }
 
-    Component.onCompleted: mkdirProc.running = true
-    Component.onDestruction: root.flushCandleCache()
+    function sendStreamCommand(cmd) {
+        if (!cmd)
+            return false;
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root)
+            return HubRegistry.leader().sendStreamCommand(cmd);
+        if (!streamProc.running)
+            return false;
+        try {
+            streamProc.write(JSON.stringify(cmd) + "\n");
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function collectStreamSymbols() {
+        var panels = HubRegistry.allPanels();
+        if (panels.length === 0)
+            panels = [root];
+        var anyWantsStream = false;
+        for (var pi = 0; pi < panels.length; pi++) {
+            if (panels[pi] && panels[pi].shouldStreamLive) {
+                anyWantsStream = true;
+                break;
+            }
+        }
+        if (!anyWantsStream)
+            return [];
+        var out = [];
+        var seen = ({});
+        function addSym(s) {
+            var norm = Model.normalizeSymbol(s);
+            if (norm && !seen[norm]) {
+                seen[norm] = true;
+                out.push(norm);
+            }
+        }
+        for (var pIdx = 0; pIdx < panels.length; pIdx++) {
+            var p = panels[pIdx];
+            if (!p)
+                continue;
+            var i;
+            if (p.showBarQuote) {
+                var pins = p.pinned || [];
+                for (i = 0; i < pins.length; i++)
+                    addSym(pins[i]);
+            }
+            if (p.opened) {
+                var wl = p.watchlist || [];
+                for (i = 0; i < wl.length; i++)
+                    addSym(wl[i]);
+                if (p.detailSymbol)
+                    addSym(p.detailSymbol);
+            }
+            var alerts = Model.armedAlertSymbols(p.symbolLevels);
+            for (i = 0; i < alerts.length; i++)
+                addSym(alerts[i]);
+
+            var gWins = p.activeGridWindows || [];
+            for (i = 0; i < gWins.length; i++) {
+                var gw = gWins[i];
+                if (!gw || !gw.visible || typeof gw.activeSymbols !== "function")
+                    continue;
+                var gSyms = gw.activeSymbols() || [];
+                for (var gi = 0; gi < gSyms.length; gi++)
+                    addSym(gSyms[gi]);
+            }
+
+            var sWins = p.activeSectorWindows || [];
+            for (i = 0; i < sWins.length; i++) {
+                var sw = sWins[i];
+                if (!sw || !sw.visible)
+                    continue;
+                var sSyms = (typeof sw.getSubscribedSymbols === "function") ? sw.getSubscribedSymbols() : (typeof sw.getAllSymbols === "function" ? sw.getAllSymbols() : []);
+                var cap = Math.min((sSyms || []).length, 60);
+                for (var si = 0; si < cap; si++)
+                    addSym(sSyms[si]);
+            }
+        }
+        return out;
+    }
+
+    function hydrateMissingQuoteMetadata(symbols) {
+        if (!streamProc.running || !root.streamReady)
+            return;
+        var list = Array.isArray(symbols) && symbols.length > 0 ? symbols : root.collectStreamSymbols();
+        if (list.length === 0)
+            return;
+        var needFull = [];
+        var needLight = [];
+        var curHour = Math.floor(Date.now() / 3600000);
+        for (var i = 0; i < list.length; i++) {
+            var s = list[i];
+            var q = root.quotes[s];
+            if (!q || q.previousClose === undefined || q.previousClose === null) {
+                needFull.push(s);
+            } else if (!q.ftfcAnchors || q.ftfcAnchors.hourBucket !== curHour) {
+                needFull.push(s);
+            }
+        }
+        var chunks = Model.chunkSymbols(needFull, 20);
+        for (var c = 0; c < chunks.length; c++)
+            root.requestSharedSparkFetch(chunks[c], false);
+        if (needLight.length > 0) {
+            var lChunks = Model.chunkSymbols(needLight, 20);
+            for (var lc = 0; lc < lChunks.length; lc++)
+                root.requestSharedSparkFetch(lChunks[lc], true);
+        }
+    }
+
+    function syncStreamSubscriptions() {
+        if (!streamProc.running || !root.streamReady)
+            return;
+        var syms = root.collectStreamSymbols();
+        var subKey = syms.slice().sort().join(",");
+        if (subKey === root.lastStreamSubKey)
+            return;
+        root.lastStreamSubKey = subKey;
+        root.sendStreamCommand({
+            op: "subscribe",
+            symbols: syms
+        });
+        if (syms.length > 0)
+            root.hydrateMissingQuoteMetadata(syms);
+    }
+
+    function scheduleStreamSubSync() {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            HubRegistry.leader().scheduleStreamSubSync();
+            return;
+        }
+        streamSubSyncTimer.restart();
+    }
+
+    function requestSharedSparkFetch(symbols, lightweight) {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root)
+            return HubRegistry.leader().requestSharedSparkFetch(symbols, lightweight);
+        if (!Array.isArray(symbols) || symbols.length === 0)
+            return false;
+        if (!streamProc.running || !root.streamReady)
+            return false;
+        root.streamReqSeq = root.streamReqSeq + 1;
+        return root.sendStreamCommand({
+            op: "fetchSpark",
+            id: "sp_" + root.streamReqSeq,
+            symbols: symbols,
+            lightweight: Boolean(lightweight)
+        });
+    }
+
+    function requestCachedKeys(keys) {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            HubRegistry.leader().requestCachedKeys(keys);
+            return;
+        }
+        if (!streamProc.running || !root.streamReady || !Array.isArray(keys) || keys.length === 0)
+            return;
+        var missing = [];
+        for (var i = 0; i < keys.length; i++) {
+            var k = keys[i];
+            if (k && (!root.chartCache || !root.chartCache[k] || root.chartCache[k].length === 0))
+                missing.push(k);
+        }
+        if (missing.length === 0)
+            return;
+        root.streamReqSeq = root.streamReqSeq + 1;
+        root.sendStreamCommand({
+            op: "cacheGet",
+            id: "cg_" + root.streamReqSeq,
+            keys: missing
+        });
+    }
+
+    function requestSharedChartFetch(sym, rangeKey, force) {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root)
+            return HubRegistry.leader().requestSharedChartFetch(sym, rangeKey, force);
+        var normSym = Model.normalizeSymbol(sym);
+        var rk = String(rangeKey || "1D");
+        if (!normSym)
+            return false;
+        var key = Model.cacheKey(normSym, rk);
+        if (!force && root.chartCache && root.chartCache[key] && root.chartCache[key].length > 0)
+            return true;
+        if (root.streamInFlightCharts[key])
+            return true;
+        if (!streamProc.running || !root.streamReady)
+            return false;
+        root.streamInFlightCharts[key] = Date.now();
+        root.streamReqSeq = root.streamReqSeq + 1;
+        return root.sendStreamCommand({
+            op: "fetchChart",
+            id: "ch_" + root.streamReqSeq,
+            symbol: normSym,
+            rangeKey: rk,
+            force: Boolean(force)
+        });
+    }
+
+    function handleStreamLine(line) {
+        var trimmed = String(line || "").trim();
+        if (!trimmed)
+            return;
+        var msg;
+        try {
+            msg = JSON.parse(trimmed);
+        } catch (e) {
+            return;
+        }
+        if (!msg || typeof msg !== "object")
+            return;
+
+        if (msg.type === "ready") {
+            root.streamReady = true;
+            root.streamFailureCount = 0;
+            root.lastStreamSubKey = "";
+            HubRegistry.broadcastStreamStatus(root, true, root.streamConnected, root.streamYahooConnected, root.streamCoinbaseConnected, root.streamHyperliquidConnected);
+            root.scheduleStreamSubSync();
+            // Pre-warm only watchlist + active window keys off-thread (never load all 600 keys into Qt RAM)
+            root.requestCachedKeys(Object.keys(root.collectProtectedCacheKeys()));
+            return;
+        }
+
+        if (msg.type === "cacheEntries" && msg.entries && typeof msg.entries === "object") {
+            var entryKeys = Object.keys(msg.entries);
+            if (entryKeys.length === 0)
+                return;
+            if (!root.chartCache)
+                root.chartCache = ({});
+            var nowTs = Date.now();
+            var loadedAny = false;
+            for (var ei = 0; ei < entryKeys.length; ei++) {
+                var ek = entryKeys[ei];
+                if (!root.chartCache[ek] || root.chartCache[ek].length === 0) {
+                    root.chartCache[ek] = Model.toArray(msg.entries[ek]);
+                    root.chartCacheAccess[ek] = nowTs;
+                    loadedAny = true;
+                }
+            }
+            if (loadedAny) {
+                root.candleCacheUpdated("");
+                HubRegistry.broadcastCandleKey(root, root.chartCache, "");
+            }
+            return;
+        }
+
+        if (msg.type === "streamStatus") {
+            root.streamYahooConnected = msg.yahoo === true;
+            root.streamCoinbaseConnected = msg.coinbase === true;
+            root.streamHyperliquidConnected = msg.hyperliquid === true;
+            root.streamConnected = msg.active === true;
+            HubRegistry.broadcastStreamStatus(root, root.streamReady, root.streamConnected, root.streamYahooConnected, root.streamCoinbaseConnected, root.streamHyperliquidConnected);
+            return;
+        }
+
+        if (msg.type === "ticks" && msg.quotes && typeof msg.quotes === "object") {
+            var tickSyms = Object.keys(msg.quotes);
+            if (tickSyms.length === 0)
+                return;
+            root.quotes = Model.mergeQuotes(root.quotes, msg.quotes);
+            root.applyLiveQuotesToDetailAndCache(tickSyms);
+            root.quotesUpdated(tickSyms);
+            root.quoteFailureCount = 0;
+            root.quoteError = "";
+            root.quotesUpdatedAt = Date.now();
+            HubRegistry.broadcastQuotes(root, root.quotes, tickSyms, root.quotesUpdatedAt);
+            root.evaluateWatchlistPriceAlerts(msg.quotes);
+            return;
+        }
+
+        if (msg.type === "sparkResult") {
+            var spQuotes = (msg.ok && msg.quotes && typeof msg.quotes === "object") ? msg.quotes : ({});
+            var spKeys = Object.keys(spQuotes);
+            if (spKeys.length > 0) {
+                root.quotes = Model.mergeQuotes(root.quotes, spQuotes);
+                root.applyLiveQuotesToDetailAndCache(spKeys);
+                root.quotesUpdated(spKeys);
+                root.quoteFailureCount = 0;
+                root.quoteError = "";
+                root.quotesUpdatedAt = Date.now();
+                HubRegistry.broadcastQuotes(root, root.quotes, spKeys, root.quotesUpdatedAt);
+                root.evaluateWatchlistPriceAlerts(spQuotes);
+            } else if (!msg.ok) {
+                root.quoteFailureCount = Math.min(10, root.quoteFailureCount + 1);
+                if (!root.streamConnected)
+                    root.quoteError = "Quotes unavailable";
+            }
+            return;
+        }
+
+        if (msg.type === "chartResult") {
+            var cKey = msg.key || Model.cacheKey(msg.symbol, msg.rangeKey);
+            if (cKey && root.streamInFlightCharts[cKey])
+                delete root.streamInFlightCharts[cKey];
+            if (msg.ok && Array.isArray(msg.candles) && msg.candles.length > 0) {
+                if (!msg.fromCache)
+                    root.streamFetchedAt[cKey] = Date.now();
+                root.updateSharedCandles(cKey, msg.candles, msg.quote || null, true);
+                var allP = HubRegistry.allPanels();
+                if (allP.length === 0)
+                    allP = [root];
+                for (var dpi = 0; dpi < allP.length; dpi++) {
+                    var dp = allP[dpi];
+                    if (dp && msg.symbol === dp.detailSymbol && msg.rangeKey === dp.detailRange) {
+                        var det = msg.quote ? Object.assign({}, msg.quote) : { symbol: msg.symbol };
+                        det.candles = Model.toArray(msg.candles);
+                        det.chartRange = dp.detailRange;
+                        if (dp.quotes[dp.detailSymbol] && dp.quotes[dp.detailSymbol].ftfc)
+                            det.ftfc = dp.quotes[dp.detailSymbol].ftfc;
+                        dp.detailQuote = det;
+                        dp.chartFailureCount = 0;
+                        dp.chartError = "";
+                        dp.chartUpdatedAt = Date.now();
+                    }
+                }
+                if (msg.rangeKey === "1D" && (root.watchlist || []).indexOf(msg.symbol) !== -1)
+                    root.evaluateBgSymbolStrat(msg.symbol);
+            } else if (msg.symbol === root.detailSymbol && msg.rangeKey === root.detailRange) {
+                root.chartFailureCount = Math.min(10, root.chartFailureCount + 1);
+                root.chartError = "Chart unavailable";
+            }
+            return;
+        }
+    }
+
+    onOpenedChanged: scheduleStreamSubSync()
+    onWatchlistChanged: scheduleStreamSubSync()
+    onPinnedChanged: scheduleStreamSubSync()
+    onDetailSymbolChanged: scheduleStreamSubSync()
+    onActiveGridWindowsChanged: scheduleStreamSubSync()
+    onActiveSectorWindowsChanged: scheduleStreamSubSync()
+    onSymbolLevelsChanged: scheduleStreamSubSync()
+    onShouldStreamLiveChanged: scheduleStreamSubSync()
+
+    Timer {
+        id: streamSubSyncTimer
+        interval: 60
+        repeat: false
+        onTriggered: root.syncStreamSubscriptions()
+    }
+
+    function promoteToStreamLeader() {
+        root.isStreamLeader = true;
+        if (!streamProc.running)
+            streamProc.running = true;
+        root.scheduleStreamSubSync();
+    }
+
+    Timer {
+        id: streamRestartTimer
+        interval: Model.backoffDelay(1500, root.streamFailureCount, 30000)
+        repeat: false
+        onTriggered: {
+            if (root.isStreamLeader && !streamProc.running)
+                streamProc.running = true;
+        }
+    }
+
+    Process {
+        id: streamProc
+        stdinEnabled: true
+        command: Model.nodeCommand(Quickshell.env("HOME") + "/.config/omarchy/plugins/mohamedmansour.finance/scripts/market-stream.js")
+        stdout: SplitParser {
+            onRead: function (line) {
+                root.handleStreamLine(line);
+            }
+        }
+        onExited: function (exitCode) {
+            root.streamReady = false;
+            root.streamConnected = false;
+            root.streamYahooConnected = false;
+            root.streamCoinbaseConnected = false;
+            root.streamHyperliquidConnected = false;
+            root.lastStreamSubKey = "";
+            root.streamInFlightCharts = ({});
+            HubRegistry.broadcastStreamStatus(root, false, false, false, false, false);
+            root.streamFailureCount = Math.min(10, root.streamFailureCount + 1);
+            if (root.streamFailureCount >= 2 && !root.useFallbackDiskCache)
+                root.useFallbackDiskCache = true;
+            if (root.isStreamLeader)
+                streamRestartTimer.restart();
+        }
+    }
+
+    Component.onCompleted: {
+        root.isStreamLeader = HubRegistry.register(root);
+        mkdirProc.running = true;
+        if (root.isStreamLeader)
+            streamProc.running = true;
+    }
+    Component.onDestruction: {
+        if (root.isStreamLeader)
+            root.flushCandleCache();
+        if (streamProc.running)
+            streamProc.running = false;
+        HubRegistry.unregister(root);
+    }
 
     Process {
         id: barMoveProc
@@ -1529,9 +2106,8 @@ Panel {
             var rk = root.bgFetchRange;
             var parsed = (exitCode === 0 && raw && sym && rk) ? Model.parseChart(raw, rk, sym) : null;
             if (parsed && parsed.candles) {
-                var nextCache = Object.assign({}, root.bgCandleCache || ({}));
-                nextCache[sym + "_" + rk] = parsed.candles;
-                root.bgCandleCache = nextCache;
+                var sharedKey = Model.cacheKey(sym, rk);
+                root.updateSharedCandles(sharedKey, parsed.candles, parsed.symbol ? parsed : null);
                 if (rk === "1D")
                     root.evaluateBgSymbolStrat(sym);
             }
@@ -1550,11 +2126,14 @@ Panel {
             var raw = String(quoteStdout.text || "").trim();
             var parsed = exitCode === 0 && raw ? Model.parseSpark(raw) : ({});
             if (Object.keys(parsed).length > 0) {
+                var changedSyms = Object.keys(parsed);
                 root.quotes = Model.mergeQuotes(root.quotes, parsed);
-                root.quotesUpdated(Object.keys(parsed));
+                root.applyLiveQuotesToDetailAndCache(changedSyms);
+                root.quotesUpdated(changedSyms);
                 root.quoteFailureCount = 0;
                 root.quoteError = "";
                 root.quotesUpdatedAt = Date.now();
+                HubRegistry.broadcastQuotes(root, root.quotes, changedSyms, root.quotesUpdatedAt);
                 root.evaluateWatchlistPriceAlerts(parsed);
             } else {
                 root.quoteFailureCount = Math.min(10, root.quoteFailureCount + 1);
@@ -1604,7 +2183,7 @@ Panel {
                 var parsed = exitCode === 0 ? Model.parseChart(chartStdout.text, root.chartFetchRange, root.chartFetchSymbol || root.detailSymbol) : null;
                 if (!parsed && !root.chartRetryingYahoo && Model.isCryptoSymbol(root.chartFetchSymbol)) {
                     root.chartRetryingYahoo = true;
-                    chartProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.yahooChartUrl(root.chartFetchSymbol, root.chartFetchRange)];
+                    chartProc.command = ["curl", "-fsS", "--compressed", "--max-time", "8", "-A", "Mozilla/5.0", Model.yahooChartUrl(root.chartFetchSymbol, root.chartFetchRange)];
                     chartProc.running = true;
                     return;
                 }
@@ -1616,6 +2195,8 @@ Panel {
                     if (root.quotes[root.detailSymbol] && root.quotes[root.detailSymbol].ftfc)
                         parsed.ftfc = root.quotes[root.detailSymbol].ftfc;
                     root.detailQuote = parsed;
+                    if (parsed.candles && parsed.candles.length > 0)
+                        root.updateSharedCandles(Model.cacheKey(root.detailSymbol, root.detailRange), parsed.candles, parsed);
                     root.chartFailureCount = 0;
                     root.chartError = "";
                     root.chartUpdatedAt = Date.now();
@@ -1790,8 +2371,16 @@ Panel {
         interval: root.backgroundRefreshMs
         running: root.showBarQuote && !root.opened
         repeat: true
-        onTriggered: if (!quoteProc.running)
-            root.refresh()
+        onTriggered: {
+            if (!root.isStreamLeader)
+                return;
+            if (root.shouldStreamLive && root.streamConnected) {
+                root.hydrateMissingQuoteMetadata();
+                return;
+            }
+            if (!quoteProc.running)
+                root.refresh();
+        }
     }
 
     Timer {
@@ -1799,8 +2388,14 @@ Panel {
         interval: root.liveRefreshMs
         running: root.opened
         repeat: true
-        onTriggered: if (!quoteProc.running)
-            root.refresh()
+        onTriggered: {
+            if (root.shouldStreamLive && root.streamConnected) {
+                root.hydrateMissingQuoteMetadata();
+                return;
+            }
+            if (!quoteProc.running)
+                root.refresh();
+        }
     }
 
     Timer {
@@ -1836,7 +2431,7 @@ Panel {
     Timer {
         id: bgStratScanTimer
         interval: 60000
-        running: root.showBarQuote && (root.watchlist || []).length > 0
+        running: root.isStreamLeader && root.showBarQuote && (root.watchlist || []).length > 0
         repeat: true
         onTriggered: {
             if (Model.isUsMarketOpen(new Date(), false))
@@ -2407,6 +3002,14 @@ Panel {
             discordWebhook: root.discordWebhook
             alertsMuted: root.alertsMuted
             alertsMuteStatus: root.alertsMuteStatus
+            hubReady: root.streamReady
+            hubStreamingActive: root.shouldStreamLive && root.streamConnected
+
+            onHubChartFetchRequested: function (sym, tf, force) {
+                root.requestSharedChartFetch(sym, tf, force);
+            }
+
+            onActiveSymbolsChanged: root.scheduleStreamSubSync()
 
             Connections {
                 target: root
@@ -2565,6 +3168,18 @@ Panel {
             discordWebhook: root.discordWebhook
             alertsMuted: root.alertsMuted
             alertsMuteStatus: root.alertsMuteStatus
+            hubReady: root.streamReady
+            hubStreamingActive: root.shouldStreamLive && root.streamConnected
+
+            onHubChartFetchRequested: function (sym, tf, force) {
+                root.requestSharedChartFetch(sym, tf, force);
+            }
+
+            onHubSparkFetchRequested: function (symbols, lightweight) {
+                root.requestSharedSparkFetch(symbols, lightweight);
+            }
+
+            onSubscribedSymbolsChanged: root.scheduleStreamSubSync()
 
             Connections {
                 target: root

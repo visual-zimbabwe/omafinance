@@ -148,4 +148,15 @@ Column {
             controller.setBarSection(v);
         }
     }
+
+    Toggle {
+        width: parent.width
+        label: "Real-time streaming"
+        description: "Stream live WebSocket ticks while open or alerts are armed."
+        checked: controller.liveStreaming
+        hasCursor: controller.settingsCursor === controller.liveStreamingSettingsIndex
+        foreground: controller.contentForeground
+        fontFamily: controller.contentFontFamily
+        onClicked: controller.setLiveStreaming(!controller.liveStreaming)
+    }
 }

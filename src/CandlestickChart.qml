@@ -23,6 +23,10 @@ Item {
     property bool showGridLines: true
     property bool showTooltipHeader: true
     property bool isSyncing: false
+    property bool renderActive: true
+    property bool wheelZoomRequiresModifier: false
+    property bool _geomDirty: false
+    property bool _geomFlushScheduled: false
 
     property bool showPriceScale: true
     readonly property int scaleGutterWidth: showPriceScale ? Style.space(52) : 0
@@ -364,6 +368,40 @@ Item {
         if (src === root._cachedCandlesSource && srcLen === root._cachedCandlesLen && lastSig === root._cachedLastCandleSig) {
             return root._cachedValidCandles;
         }
+        // Incremental fast path: live tick updated only the developing rightmost candle
+        if (srcLen >= 2 && srcLen === root._cachedCandlesLen && root._cachedValidCandles && root._cachedValidCandles.length === srcLen) {
+            var firstC = src[0];
+            var prevC = src[srcLen - 2];
+            var cachedFirst = root._cachedValidCandles[0];
+            var cachedPrev = root._cachedValidCandles[srcLen - 2];
+            var cachedLast = root._cachedValidCandles[srcLen - 1];
+            if (firstC && prevC && last && cachedFirst && cachedPrev && cachedLast
+                && firstC.timestamp === cachedFirst.timestamp
+                && prevC.timestamp === cachedPrev.timestamp
+                && Number(prevC.close) === cachedPrev.close
+                && last.timestamp === cachedLast.timestamp) {
+                var lo = Number(last.open);
+                var lh = Number(last.high);
+                var ll = Number(last.low);
+                var lc = Number(last.close);
+                if (isFinite(lo) && isFinite(lh) && isFinite(ll) && isFinite(lc)) {
+                    var rangeChanged = (lh !== cachedLast.high || ll !== cachedLast.low);
+                    cachedLast.open = lo;
+                    cachedLast.high = lh;
+                    cachedLast.low = ll;
+                    cachedLast.close = lc;
+                    cachedLast.volume = last.volume || 0;
+                    cachedLast.strat = Model.stratScenario(cachedLast, cachedPrev);
+                    root._cachedCandlesSource = src;
+                    root._cachedLastCandleSig = lastSig;
+                    if (rangeChanged) {
+                        root._cachedBfValidRef = null;
+                        root._cachedBfResult = null;
+                    }
+                    return root._cachedValidCandles;
+                }
+            }
+        }
         var out = [];
         for (var i = 0; i < srcLen; i++) {
             var c = src[i];
@@ -698,11 +736,27 @@ Item {
         };
     }
 
-    function refreshGeometry() {
+    function _flushGeometry() {
+        root._geomFlushScheduled = false;
+        if (!root.visible || !root.renderActive || root.width <= 0 || root.height <= 0) {
+            root._geomDirty = true;
+            return;
+        }
+        root._geomDirty = false;
         cachedGeometry = buildGeom();
         canvas.requestPaint();
         if (hovering && !dragging)
             updateHover(hoverPointerX, hoverPointerY);
+    }
+
+    function refreshGeometry() {
+        root._geomDirty = true;
+        if (!root.visible || !root.renderActive || root.width <= 0 || root.height <= 0)
+            return;
+        if (!root._geomFlushScheduled) {
+            root._geomFlushScheduled = true;
+            Qt.callLater(root._flushGeometry);
+        }
     }
 
     function updateHover(px, py) {
@@ -859,57 +913,70 @@ Item {
             }
 
             // Right Price Scale Axis Ticks (Borderless - No Vertical Divider Line)
+            var quotedFont = Model.quotedFontFamily(root.fontFamily);
             if (root.showPriceScale && g.right < w) {
+                var normalTickFont = Style.font.bodySmall + "px " + quotedFont;
+                var boldTickFont = "bold " + normalTickFont;
+                ctx.textAlign = "left";
+                ctx.textBaseline = "middle";
+                if (root.showGridLines && g.ticks.length > 0) {
+                    ctx.strokeStyle = root.gridColor;
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    for (var gi = 0; gi < g.ticks.length; gi++) {
+                        var gy = Math.round(g.ticks[gi].y) + 0.5;
+                        ctx.moveTo(g.left, gy);
+                        ctx.lineTo(g.right, gy);
+                    }
+                    ctx.stroke();
+                }
                 for (var ti = 0; ti < g.ticks.length; ti++) {
                     var t = g.ticks[ti];
                     var isHoveredTick = (ti === root.hoveredTickIndex);
-
-                    ctx.font = (isHoveredTick ? "bold " : "") + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
+                    ctx.font = isHoveredTick ? boldTickFont : normalTickFont;
                     ctx.fillStyle = isHoveredTick ? Color.foreground : root.labelColor;
-                    ctx.textAlign = "left";
-                    ctx.textBaseline = "middle";
                     ctx.fillText(t.label, g.right + Style.space(6), Math.round(t.y));
-
-                    if (root.showGridLines) {
-                        ctx.strokeStyle = root.gridColor;
-                        ctx.beginPath();
-                        ctx.moveTo(g.left, Math.round(t.y) + 0.5);
-                        ctx.lineTo(g.right, Math.round(t.y) + 0.5);
-                        ctx.stroke();
-                    }
                 }
             }
 
-            // Candlesticks rendering
+            // Candlesticks rendering (batched by color: 2 wick stroke calls instead of N)
             var len = g.candles.length;
             var cW = g.candleW;
             var halfW = cW / 2;
+            var bodyW = Math.max(1, Math.round(cW));
 
-            for (var i = 0; i < len; i++) {
-                var c = g.candles[i];
-                var isUp = c.close >= c.open;
-                var color = isUp ? root.upColor : root.downColor;
-                var cx = Math.round(g.xs[i]) + 0.5;
-                var yH = Math.round(g.yHighs[i]);
-                var yL = Math.round(g.yLows[i]);
-                var yO = Math.round(g.yOpens[i]);
-                var yC = Math.round(g.yCloses[i]);
+            ctx.lineWidth = 1;
+            for (var pass = 0; pass < 2; pass++) {
+                var drawUp = (pass === 0);
+                var passColor = drawUp ? root.upColor : root.downColor;
+                ctx.strokeStyle = passColor;
+                ctx.fillStyle = passColor;
 
-                ctx.strokeStyle = color;
-                ctx.fillStyle = color;
-                ctx.lineWidth = 1;
-
-                // Wick (Upper & Lower)
+                // Batch all wicks for this polarity into a single Canvas path
                 ctx.beginPath();
-                ctx.moveTo(cx, yH);
-                ctx.lineTo(cx, yL);
+                for (var wi = 0; wi < len; wi++) {
+                    var wc = g.candles[wi];
+                    if ((wc.close >= wc.open) !== drawUp)
+                        continue;
+                    var wcx = Math.round(g.xs[wi]) + 0.5;
+                    ctx.moveTo(wcx, Math.round(g.yHighs[wi]));
+                    ctx.lineTo(wcx, Math.round(g.yLows[wi]));
+                }
                 ctx.stroke();
 
-                // Candle Body
-                var bodyTop = Math.min(yO, yC);
-                var bodyHeight = Math.max(1.5, Math.abs(yC - yO));
-                var bodyLeft = Math.round(cx - halfW);
-                ctx.fillRect(bodyLeft, bodyTop, Math.max(1, Math.round(cW)), bodyHeight);
+                // Draw candle bodies for this polarity
+                for (var i = 0; i < len; i++) {
+                    var c = g.candles[i];
+                    if ((c.close >= c.open) !== drawUp)
+                        continue;
+                    var cx = Math.round(g.xs[i]) + 0.5;
+                    var yO = Math.round(g.yOpens[i]);
+                    var yC = Math.round(g.yCloses[i]);
+                    var bodyTop = Math.min(yO, yC);
+                    var bodyHeight = Math.max(1.5, Math.abs(yC - yO));
+                    var bodyLeft = Math.round(cx - halfW);
+                    ctx.fillRect(bodyLeft, bodyTop, bodyW, bodyHeight);
+                }
             }
 
             // Extended-Hours (Pre-Market / After-Hours) Horizontal Price Line
@@ -935,6 +1002,7 @@ Item {
             var bf = g.broadening;
             if (bf) {
                     var rightEdgeX = g.right;
+                    var strokeColor = Model.isLightColor(Color.background) ? Color.foreground : "#FFFFFF";
 
                     var forms = (bf.formations && Array.isArray(bf.formations) && bf.formations.length > 0)
                         ? bf.formations
@@ -969,7 +1037,6 @@ Item {
                         }
 
                         var lvl = (typeof formIdx === "number") ? formIdx : 0;
-                        var strokeColor = Model.isLightColor(Color.background) ? Color.foreground : "#FFFFFF";
                         var lineWidth = (lvl === 0) ? 0.60 : ((lvl === 1) ? 0.50 : 0.45);
                         var dotRadius = (lvl === 0) ? 1.8 : ((lvl === 1) ? 1.5 : 1.3);
                         var dashPattern = (lvl === 0) ? [] : ((lvl === 1) ? [6, 4] : [2, 3]);
@@ -1164,6 +1231,8 @@ Item {
     onPadChanged: refreshGeometry()
     onWidthChanged: refreshGeometry()
     onHeightChanged: refreshGeometry()
+    onVisibleChanged: if (visible && _geomDirty) refreshGeometry()
+    onRenderActiveChanged: if (renderActive && _geomDirty) refreshGeometry()
 
     Keys.onPressed: function (event) {
         if (event.key === Qt.Key_R && (event.modifiers & Qt.AltModifier)) {
@@ -1413,6 +1482,10 @@ Item {
         }
 
         onWheel: function (wheel) {
+            if (root.wheelZoomRequiresModifier && !(wheel.modifiers & Qt.ControlModifier)) {
+                wheel.accepted = false;
+                return;
+            }
             var all = root.validCandles();
             var total = all.length;
             if (total <= 8)

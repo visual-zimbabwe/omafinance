@@ -8,6 +8,8 @@ Item {
     id: root
 
     property int cellIndex: 0
+    property bool cellActive: true
+    property bool wheelZoomRequiresModifier: false
     property string symbol: "AAPL"
     property string companyName: ""
     property string timeframe: "1D"
@@ -23,7 +25,7 @@ Item {
     onHourlyCandlesChanged: root.liveClockMs = Date.now()
     onDailyCandlesChanged: root.liveClockMs = Date.now()
     property bool hideStratBadge: false
-    readonly property var stratChecklist: root.hideStratBadge ? null : Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote, root.replayCutoffTs > 0 ? new Date((root.replayCutoffTs - 1) * 1000) : new Date(root.liveClockMs), { activeTimeframe: root.timeframe, activeCandles: root.candles })
+    readonly property var stratChecklist: (!root.cellActive || root.hideStratBadge) ? null : Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote, root.replayCutoffTs > 0 ? new Date((root.replayCutoffTs - 1) * 1000) : new Date(root.liveClockMs), { activeTimeframe: root.timeframe, activeCandles: root.candles })
     property bool syncSymbolActive: true
     property bool isExecutionTimeframeCell: (!root.hideStratBadge && root.stratChecklist && root.stratChecklist.setupTimeframe && root.timeframe === root.stratChecklist.setupTimeframe)
     property bool activeFocusCell: false
@@ -219,7 +221,7 @@ Item {
         if (!searching || !searchPendingQuery)
             return;
         searchActiveQuery = searchPendingQuery;
-        searchProc.command = ["curl", "-fsS", "--max-time", "5", "-A", "Mozilla/5.0", Model.searchUrl(searchActiveQuery)];
+        searchProc.command = ["curl", "-fsS", "--compressed", "--max-time", "5", "-A", "Mozilla/5.0", Model.searchUrl(searchActiveQuery)];
         searchProc.running = true;
     }
 
@@ -461,6 +463,8 @@ Item {
             CandlestickChart {
                 id: chart
                 anchors.fill: parent
+                renderActive: root.cellActive
+                wheelZoomRequiresModifier: root.wheelZoomRequiresModifier
                 symbol: root.symbol
                 rangeKey: root.timeframe
                 candles: root.candles
