@@ -71,6 +71,7 @@ FloatingWindow {
     signal hubChartFetchRequested(string sym, string tf, bool force)
     signal hubSparkFetchRequested(var symbols, bool lightweight)
     signal subscribedSymbolsChanged
+    signal resetAllPriceScalesRequested
     property int drillDownDataRev: 0
 
     function notifyCacheKeyUpdated(key) {
@@ -274,7 +275,7 @@ FloatingWindow {
     function normalizeGlobalZoom(nextZoom) {
         if (nextZoom === -1 || String(nextZoom).trim().toUpperCase() === "ALL")
             return -1;
-        return (typeof Model.clampBarCount === "function") ? Model.clampBarCount(nextZoom) : Math.max(8, parseInt(nextZoom, 10) || 8);
+        return (typeof Model.clampBarCount === "function") ? Model.clampBarCount(nextZoom) : Math.max(1, parseInt(nextZoom, 10) || 8);
     }
 
     function setGlobalBarCount(nextZoom) {
@@ -1013,6 +1014,11 @@ FloatingWindow {
         focus: true
 
         Keys.onPressed: function (event) {
+            if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_R) {
+                root.resetAllPriceScalesRequested();
+                event.accepted = true;
+                return;
+            }
             if ((event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_C) {
                 if (!root.inDrillDown && root.filteredTiles.length > 0) {
                     root.copyFilteredTickers();
@@ -1491,7 +1497,7 @@ FloatingWindow {
                         FinanceInputBox {
                             id: barsBox
                             readonly property int parsedBars: parseInt(inputText, 10)
-                            readonly property bool barsOutOfRange: inputActiveFocus && inputText.length > 0 && (isNaN(parsedBars) || parsedBars < Model.MIN_BAR_COUNT || parsedBars > Model.MAX_BAR_COUNT)
+                            readonly property bool barsOutOfRange: inputActiveFocus && inputText.length > 0 && (isNaN(parsedBars) || parsedBars < Model.MIN_BAR_COUNT)
 
                             width: Style.space(48)
                             anchors.verticalCenter: parent.verticalCenter
@@ -1511,7 +1517,7 @@ FloatingWindow {
                                 regularExpression: /[0-9]*/
                             }
                             QQC.ToolTip.visible: barsBox.barsOutOfRange
-                            QQC.ToolTip.text: "Bars clamped to " + Model.MIN_BAR_COUNT + "–" + Model.MAX_BAR_COUNT
+                            QQC.ToolTip.text: "Minimum " + Model.MIN_BAR_COUNT + " bar"
                             onLiveDebounced: function (text) {
                                 if (text.length > 0)
                                     root.setGlobalBarCount(text);
@@ -1694,6 +1700,9 @@ FloatingWindow {
                                 if (!sym || sym === tileWrapper.symbol)
                                     tileWrapper.dataRev++;
                             }
+                            function onResetAllPriceScalesRequested() {
+                                cellInstance.resetPriceScale();
+                            }
                         }
 
                         width: tileGridView.cellWidth
@@ -1841,6 +1850,17 @@ FloatingWindow {
                                 readonly property real topRowH: height * 0.48
                                 readonly property real botRowH: height - topRowH
 
+                                Connections {
+                                    target: root
+                                    function onResetAllPriceScalesRequested() {
+                                        ddCell30.resetPriceScale();
+                                        ddCell60.resetPriceScale();
+                                        ddCell1D.resetPriceScale();
+                                        ddCell1W.resetPriceScale();
+                                        ddCell1M.resetPriceScale();
+                                    }
+                                }
+
                                 // TOP ROW (30m, 60m)
                                 Item {
                                     width: parent.width
@@ -1848,6 +1868,7 @@ FloatingWindow {
                                     anchors.top: parent.top
 
                                     GridCell {
+                                        id: ddCell30
                                         width: parent.width * 0.5
                                         height: parent.height
                                         x: 0
@@ -1867,6 +1888,7 @@ FloatingWindow {
                                     }
 
                                     GridCell {
+                                        id: ddCell60
                                         width: parent.width * 0.5
                                         height: parent.height
                                         x: parent.width * 0.5
@@ -1893,6 +1915,7 @@ FloatingWindow {
                                     anchors.bottom: parent.bottom
 
                                     GridCell {
+                                        id: ddCell1D
                                         width: parent.width * 0.333
                                         height: parent.height
                                         x: 0
@@ -1912,6 +1935,7 @@ FloatingWindow {
                                     }
 
                                     GridCell {
+                                        id: ddCell1W
                                         width: parent.width * 0.333
                                         height: parent.height
                                         x: parent.width * 0.333
@@ -1931,6 +1955,7 @@ FloatingWindow {
                                     }
 
                                     GridCell {
+                                        id: ddCell1M
                                         width: parent.width * 0.334
                                         height: parent.height
                                         x: parent.width * 0.666
