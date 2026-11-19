@@ -830,3 +830,42 @@ test("real-time streaming hub, off-thread cache, active-gating, virtualized Grid
   assert.match(sector, /GridView\s*\{\s*id:\s*tileGridView/)
   assert.match(sector, /Loader\s*\{\s*id:\s*drillDownLoader[\s\S]*?active:\s*root\.inDrillDown/)
 })
+
+test("charts support 1-bar minimum zoom and interactive price scale (cursor, drag zoom/pan, wheel zoom, clipping, compact ticks, and Auto reset)", () => {
+  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const sector = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
+
+  // Minimum bars = Model.MIN_BAR_COUNT (1) across chart, GridWindow, and SectorAnalysisWindow (no candle width cap)
+  assert.match(chart, /var minBars = Model\.MIN_BAR_COUNT;/)
+  assert.match(chart, /root\.configuredZoom >= Model\.MIN_BAR_COUNT/)
+  assert.match(chart, /var candleW = slotW >= 7 \? Math\.max\(1, slotW - 4\)/)
+  assert.match(grid, /root\.cellZooms\[index\] >= Model\.MIN_BAR_COUNT/)
+  assert.doesNotMatch(sector, /Model\.MAX_BAR_COUNT/)
+
+  // Price scale state, cursor, drag zoom/pan, wheel zoom, and hit-zone separation
+  assert.match(chart, /property bool autoPriceScale:\s*true/)
+  assert.match(chart, /property bool draggingPriceScale:\s*false/)
+  assert.match(chart, /function resetPriceScale\(\)/)
+  assert.match(chart, /Qt\.SizeVerCursor/)
+  assert.match(chart, /Model\.priceScaleDragFactor/)
+  assert.match(chart, /Model\.priceScaleWheelFactor/)
+  assert.match(chart, /Model\.zoomPriceLogRange/)
+  assert.match(chart, /Model\.panPriceLogRange/)
+  assert.match(chart, /Model\.formatScalePrice/)
+  assert.match(chart, /if \(root\.showPriceScale && px >= g\.right\)\s*return null;/)
+
+  // Plot-area clipping, hover gutter affordance, off-screen badge indicator, and Auto ('A') reset button
+  assert.match(chart, /ctx\.clip\(\);/)
+  assert.match(chart, /root\.hoveringScale \|\| root\.draggingPriceScale/)
+  assert.match(chart, /isLastAbove \? "▲" : \(isLastBelow \? "▼" : ""\)/)
+  assert.match(chart, /id:\s*autoScaleResetBtn/)
+
+  // Alt+R reset wiring across GridCell, GridWindow, and SectorAnalysisWindow (preserving bare R replay)
+  assert.match(cell, /function resetPriceScale\(\)/)
+  assert.match(cell, /event\.key === Qt\.Key_R && \(event\.modifiers & Qt\.AltModifier\)/)
+  assert.match(grid, /event\.key === Qt\.Key_R && \(event\.modifiers & Qt\.AltModifier\)/)
+  assert.match(sector, /signal resetAllPriceScalesRequested/)
+  assert.match(sector, /\(event\.modifiers & Qt\.AltModifier\) && event\.key === Qt\.Key_R/)
+})

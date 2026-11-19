@@ -49,14 +49,22 @@ Item {
     property bool followLatest: true
 
     onConfiguredZoomChanged: {
-        var target = (root.configuredZoom >= 8) ? root.configuredZoom : -1;
+        var target = (root.configuredZoom >= Model.MIN_BAR_COUNT) ? root.configuredZoom : -1;
         if (root.viewCount !== target) {
             root.viewCount = target;
             root.followLatest = true;
             root.refreshGeometry();
         }
     }
+    property bool autoPriceScale: true
+    property real manualLogMin: 0
+    property real manualLogMax: 0
+    property bool draggingPriceScale: false
+    property string priceScaleDragMode: ""
     property real dragStartX: 0
+    property real dragStartY: 0
+    property real dragStartLogMin: 0
+    property real dragStartLogMax: 0
     property int dragStartViewStart: 0
     property int dragStartViewCount: 0
     property real dragStartCenterIndex: 0
@@ -93,14 +101,26 @@ Item {
     property real hoverPointerY: 0
     property var cachedGeometry: null
 
+    function resetPriceScale() {
+        if (!root.autoPriceScale || root.draggingPriceScale) {
+            root.autoPriceScale = true;
+            root.draggingPriceScale = false;
+            root.priceScaleDragMode = "";
+            root.refreshGeometry();
+        }
+    }
+
     function resetZoom() {
         if (symbol !== _lastLevelSymbol) {
             _lastLevelSymbol = symbol;
             clearLevels();
         }
         viewStart = 0;
-        viewCount = (root.configuredZoom >= 8) ? root.configuredZoom : -1;
+        viewCount = (root.configuredZoom >= Model.MIN_BAR_COUNT) ? root.configuredZoom : -1;
         followLatest = true;
+        autoPriceScale = true;
+        draggingPriceScale = false;
+        priceScaleDragMode = "";
         refreshGeometry();
     }
 
@@ -182,6 +202,8 @@ Item {
     function hitTestLevel(px, py) {
         var g = cachedGeometry;
         if (!g || !root.priceLevels || root.priceLevels.length === 0 || g.innerW <= 0)
+            return null;
+        if (root.showPriceScale && px >= g.right)
             return null;
         var bestIdx = -1;
         var bestDist = Style.space(7);
@@ -484,7 +506,7 @@ Item {
         if (total === 0)
             return unset;
 
-        var minBars = 8;
+        var minBars = Model.MIN_BAR_COUNT;
         var isDaily = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
         var isWeekly = (root.rangeKey === "1W" || root.rangeKey === "W" || root.rangeKey === "week" || root.rangeKey === "1w");
         var defaultCount = (isDaily || isWeekly) ? Math.min(total, 140) : total;
@@ -547,6 +569,11 @@ Item {
         logMin -= logSpan * 0.06;
         logMax += logSpan * 0.06;
         logSpan = logMax - logMin;
+        if (!root.autoPriceScale && isFinite(root.manualLogMin) && isFinite(root.manualLogMax) && root.manualLogMax > root.manualLogMin) {
+            logMin = root.manualLogMin;
+            logMax = root.manualLogMax;
+            logSpan = logMax - logMin;
+        }
         min = Math.exp(logMin);
         max = Math.exp(logMax);
         var span = max - min;
@@ -616,10 +643,11 @@ Item {
                     var cty = priceToY(cp);
                     if (cty >= top - 2 && cty <= bot + 2) {
                         if (ticks.length === 0 || Math.abs(cty - lastY) >= minSpacing) {
+                            var cpStep = cp > 0 ? Math.pow(10, Math.floor(Math.log10(cp))) : 1;
                             ticks.push({
                                 price: cp,
                                 y: cty,
-                                label: Model.formatPrice(cp, root.currency, root.priceHint)
+                                label: Model.formatScalePrice(cp, cpStep, root.priceHint)
                             });
                             lastY = cty;
                         }
@@ -644,15 +672,22 @@ Item {
                     step = 10 * mag;
 
                 step = Number(step.toPrecision(12));
-                var startPrice = Math.ceil(min / step) * step;
-                for (var p = startPrice; p <= max; p += step) {
-                    var ty = priceToY(p);
-                    if (ty >= top - 2 && ty <= bot + 2) {
-                        ticks.push({
-                            price: p,
-                            y: ty,
-                            label: Model.formatPrice(p, root.currency, root.priceHint)
-                        });
+                if (step > 0 && isFinite(step)) {
+                    var startPrice = Math.ceil(min / step) * step;
+                    var lastLinY = -99999;
+                    var tickGuard = 0;
+                    for (var p = startPrice; p <= max && tickGuard < 64; p += step, tickGuard++) {
+                        var ty = priceToY(p);
+                        if (ty >= top - 2 && ty <= bot + 2) {
+                            if (ticks.length === 0 || Math.abs(ty - lastLinY) >= minSpacing) {
+                                ticks.push({
+                                    price: p,
+                                    y: ty,
+                                    label: Model.formatScalePrice(p, step, root.priceHint)
+                                });
+                                lastLinY = ty;
+                            }
+                        }
                     }
                 }
             }
@@ -745,7 +780,7 @@ Item {
         root._geomDirty = false;
         cachedGeometry = buildGeom();
         canvas.requestPaint();
-        if (hovering && !dragging)
+        if (hovering && !dragging && !draggingPriceScale)
             updateHover(hoverPointerX, hoverPointerY);
     }
 
@@ -912,9 +947,36 @@ Item {
                 return;
             }
 
-            // Right Price Scale Axis Ticks (Borderless - No Vertical Divider Line)
+            var len = g.candles.length;
+            var hasExt = (g.extendedPrice !== null && g.yExtended !== null && g.lastClose !== null);
+            var isExtUp = hasExt ? (g.extendedPrice >= g.lastClose) : false;
+            var extColor = isExtUp ? root.upColor : root.downColor;
+            var badgeW = root.scaleGutterWidth - Style.space(4);
+            var badgeH = Style.space(16);
+            var badgeX = g.right + Style.space(2);
+            var lastC = len > 0 ? g.candles[len - 1] : null;
+            var lastY = len > 0 ? g.yCloses[len - 1] : 0;
+            var badgeY = len > 0 ? Math.max(g.top, Math.min(g.bot - badgeH, Math.round(lastY - badgeH / 2))) : -99999;
+            var extBadgeY = hasExt ? Math.max(g.top, Math.min(g.bot - badgeH, Math.round(g.yExtended - badgeH / 2))) : -99999;
+            var drawRthBadge = (len > 0) && (!hasExt || Math.abs(extBadgeY - badgeY) >= badgeH + 2);
+
+            // Right Price Scale Axis Ticks (Borderless at rest; subtle hover/drag gutter affordance)
             var quotedFont = Model.quotedFontFamily(root.fontFamily);
             if (root.showPriceScale && g.right < w) {
+                if (root.hoveringScale || root.draggingPriceScale) {
+                    ctx.save();
+                    ctx.fillStyle = Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, root.draggingPriceScale ? 0.07 : 0.035);
+                    ctx.fillRect(g.right, g.top, w - g.right, g.innerH);
+                    ctx.strokeStyle = Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.14);
+                    ctx.lineWidth = 1;
+                    var sepX = Math.round(g.right) + 0.5;
+                    ctx.beginPath();
+                    ctx.moveTo(sepX, g.top);
+                    ctx.lineTo(sepX, g.bot);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
                 var normalTickFont = Style.font.bodySmall + "px " + quotedFont;
                 var boldTickFont = "bold " + normalTickFont;
                 ctx.textAlign = "left";
@@ -930,17 +992,31 @@ Item {
                     }
                     ctx.stroke();
                 }
+                var badgeCenterRth = badgeY + badgeH / 2;
+                var badgeCenterExt = extBadgeY + badgeH / 2;
+                var badgeOverlapPad = badgeH * 0.75;
                 for (var ti = 0; ti < g.ticks.length; ti++) {
                     var t = g.ticks[ti];
-                    var isHoveredTick = (ti === root.hoveredTickIndex);
+                    var isHoveredTick = (ti === root.hoveredTickIndex && !root.draggingPriceScale);
+                    if (!isHoveredTick) {
+                        if (drawRthBadge && Math.abs(t.y - badgeCenterRth) < badgeOverlapPad)
+                            continue;
+                        if (hasExt && Math.abs(t.y - badgeCenterExt) < badgeOverlapPad)
+                            continue;
+                    }
                     ctx.font = isHoveredTick ? boldTickFont : normalTickFont;
                     ctx.fillStyle = isHoveredTick ? Color.foreground : root.labelColor;
-                    ctx.fillText(t.label, g.right + Style.space(6), Math.round(t.y));
+                    ctx.fillText(t.label, g.right + Style.space(5), Math.round(t.y));
                 }
             }
 
+            // Clip chart plot area so vertically zoomed/panned candles, rays, and levels never bleed into headers or time axis
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(Math.max(0, g.left - Style.space(4)), g.top, g.innerW + Style.space(4), g.innerH);
+            ctx.clip();
+
             // Candlesticks rendering (batched by color: 2 wick stroke calls instead of N)
-            var len = g.candles.length;
             var cW = g.candleW;
             var halfW = cW / 2;
             var bodyW = Math.max(1, Math.round(cW));
@@ -980,9 +1056,6 @@ Item {
             }
 
             // Extended-Hours (Pre-Market / After-Hours) Horizontal Price Line
-            var hasExt = (g.extendedPrice !== null && g.yExtended !== null && g.lastClose !== null);
-            var isExtUp = hasExt ? (g.extendedPrice >= g.lastClose) : false;
-            var extColor = isExtUp ? root.upColor : root.downColor;
             if (hasExt && g.yExtended >= g.top && g.yExtended <= g.bot) {
                 var extLineY = Math.round(g.yExtended) + 0.5;
                 ctx.save();
@@ -1160,28 +1233,29 @@ Item {
                 }
             }
 
+            // End plot-area clip before drawing right-scale badges and bottom time scale
+            ctx.restore();
+
             // Latest Price Marker in Right Price Scale Gutter
             if (root.showPriceScale && len > 0) {
-                var lastC = g.candles[len - 1];
-                var lastY = g.yCloses[len - 1];
                 var isLastUp = lastC.close >= lastC.open;
                 var badgeColor = isLastUp ? root.upColor : root.downColor;
-                var lastLabel = Model.formatPrice(lastC.close, root.currency, root.priceHint);
-                var badgeW = root.scaleGutterWidth - Style.space(4);
-                var badgeH = Style.space(16);
-                var badgeX = g.right + Style.space(2);
-                var badgeY = Math.max(g.top, Math.min(g.bot - badgeH, Math.round(lastY - badgeH / 2)));
-                var extBadgeY = hasExt ? Math.max(g.top, Math.min(g.bot - badgeH, Math.round(g.yExtended - badgeH / 2))) : -99999;
-                var drawRthBadge = !hasExt || Math.abs(extBadgeY - badgeY) >= badgeH + 2;
+                var isLastAbove = lastY < g.top;
+                var isLastBelow = lastY > g.bot;
+                var isLastOffscreen = isLastAbove || isLastBelow;
+                var lastPrefix = isLastAbove ? "▲" : (isLastBelow ? "▼" : "");
+                var lastLabel = lastPrefix + Model.formatScalePrice(lastC.close, null, root.priceHint);
 
                 if (drawRthBadge) {
                     ctx.save();
                     if (hasExt)
                         ctx.globalAlpha = 0.55;
+                    else if (isLastOffscreen)
+                        ctx.globalAlpha = 0.85;
                     ctx.fillStyle = badgeColor;
                     ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
 
-                    ctx.font = "bold " + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
+                    ctx.font = "bold " + Style.font.bodySmall + "px " + quotedFont;
                     ctx.fillStyle = Color.background;
                     ctx.textAlign = "center";
                     ctx.textBaseline = "middle";
@@ -1190,15 +1264,22 @@ Item {
                 }
 
                 if (hasExt) {
-                    var extLabel = Model.formatPrice(g.extendedPrice, root.currency, root.priceHint);
+                    var isExtAbove = g.yExtended < g.top;
+                    var isExtBelow = g.yExtended > g.bot;
+                    var extPrefix = isExtAbove ? "▲" : (isExtBelow ? "▼" : "");
+                    var extLabel = extPrefix + Model.formatScalePrice(g.extendedPrice, null, root.priceHint);
+                    ctx.save();
+                    if (isExtAbove || isExtBelow)
+                        ctx.globalAlpha = 0.85;
                     ctx.fillStyle = extColor;
                     ctx.fillRect(badgeX, extBadgeY, badgeW, badgeH);
 
-                    ctx.font = "bold " + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
+                    ctx.font = "bold " + Style.font.bodySmall + "px " + quotedFont;
                     ctx.fillStyle = Color.background;
                     ctx.textAlign = "center";
                     ctx.textBaseline = "middle";
                     ctx.fillText(extLabel, badgeX + badgeW / 2, extBadgeY + badgeH / 2);
+                    ctx.restore();
                 }
             }
 
@@ -1233,6 +1314,7 @@ Item {
     onHeightChanged: refreshGeometry()
     onVisibleChanged: if (visible && _geomDirty) refreshGeometry()
     onRenderActiveChanged: if (renderActive && _geomDirty) refreshGeometry()
+    onDraggingPriceScaleChanged: canvas.requestPaint()
 
     Keys.onPressed: function (event) {
         if (event.key === Qt.Key_R && (event.modifiers & Qt.AltModifier)) {
@@ -1251,8 +1333,12 @@ Item {
         cursorShape: {
             if (root.draggingLevelIndex >= 0)
                 return (root.levelDragMode === "x1" || root.levelDragMode === "x2") ? Qt.SizeHorCursor : Qt.ClosedHandCursor;
+            if (root.draggingPriceScale)
+                return Qt.SizeVerCursor;
             if (root.hoveredLevelIndex >= 0)
                 return (root.hoveredLevelPart === "x1" || root.hoveredLevelPart === "x2") ? Qt.SizeHorCursor : Qt.PointingHandCursor;
+            if (root.hoveringScale)
+                return Qt.SizeVerCursor;
             if (root.dragging)
                 return Qt.ClosedHandCursor;
             return enabled ? Qt.CrossCursor : Qt.ArrowCursor;
@@ -1331,9 +1417,25 @@ Item {
                     }
                 }
 
+                if (root.showPriceScale && g && g.candles.length > 0 && g.innerH > 0 && mouse.x >= g.right) {
+                    root.draggingPriceScale = true;
+                    root.priceScaleDragMode = (mouse.modifiers & Qt.ShiftModifier) ? "pan" : "zoom";
+                    root.dragStartY = mouse.y;
+                    root.dragStartLogMin = g.logMin;
+                    root.dragStartLogMax = g.logMax;
+                    if (root.autoPriceScale) {
+                        root.manualLogMin = g.logMin;
+                        root.manualLogMax = g.logMax;
+                    }
+                    return;
+                }
+
                 root.dragging = true;
                 root.isShiftDrag = (mouse.modifiers & Qt.ShiftModifier) || (mouse.modifiers & Qt.ControlModifier);
                 root.dragStartX = mouse.x;
+                root.dragStartY = mouse.y;
+                root.dragStartLogMin = g ? g.logMin : 0;
+                root.dragStartLogMax = g ? g.logMax : 0;
                 var all = root.validCandles();
                 var total = all.length;
                 root.dragStartViewStart = g ? g.vStart : 0;
@@ -1392,15 +1494,29 @@ Item {
                 return;
             }
 
+            if (root.draggingPriceScale && g && g.innerH > 0) {
+                var dyScale = mouse.y - root.dragStartY;
+                if (Math.abs(dyScale) < 1)
+                    return;
+                var nextScaleRange = (root.priceScaleDragMode === "pan")
+                    ? Model.panPriceLogRange(root.dragStartLogMin, root.dragStartLogMax, dyScale, g.innerH)
+                    : Model.zoomPriceLogRange(root.dragStartLogMin, root.dragStartLogMax, Model.priceScaleDragFactor(dyScale, g.innerH));
+                root.autoPriceScale = false;
+                root.manualLogMin = nextScaleRange.logMin;
+                root.manualLogMax = nextScaleRange.logMax;
+                root.refreshGeometry();
+                return;
+            }
+
             if (root.dragging && g) {
                 var all = root.validCandles();
                 var total = all.length;
 
-                if (root.isShiftDrag && total > 8) {
+                if (root.isShiftDrag && total > Model.MIN_BAR_COUNT) {
                     // Shift+Drag = Zoom
                     var deltaX = mouse.x - root.dragStartX;
                     var countDelta = Math.round(deltaX * 0.25);
-                    var nextCount = Math.max(8, Math.min(total, root.dragStartViewCount - countDelta));
+                    var nextCount = Math.max(Model.MIN_BAR_COUNT, Math.min(total, root.dragStartViewCount - countDelta));
                     var isAtLatestBar = (root.dragStartViewStart + root.dragStartViewCount >= total - 1) || root.dragStartRatio >= 0.85;
                     var nextStart = isAtLatestBar ? Math.max(0, total - nextCount) : Math.max(0, Math.min(total - nextCount, Math.round(root.dragStartCenterIndex - nextCount * root.dragStartRatio)));
 
@@ -1416,18 +1532,32 @@ Item {
                         if (zoomChanged)
                             root.zoomChangedManually(root.viewCount);
                     }
-                } else if (g.totalCandles > g.vCount) {
-                    // Normal Drag = PAN (Move left/right through time)
-                    var deltaX = mouse.x - root.dragStartX;
-                    var shiftBars = Math.round(deltaX / Math.max(1, g.slotW));
-                    var maxStart = Math.max(0, g.totalCandles - g.vCount);
-                    var nextStart = Math.max(0, Math.min(maxStart, root.dragStartViewStart - shiftBars));
+                } else if (!root.isShiftDrag) {
+                    // Normal Drag = PAN horizontally through time (+ vertically when manual Y-scale is active)
+                    var panChanged = false;
+                    if (g.totalCandles > g.vCount) {
+                        var deltaX = mouse.x - root.dragStartX;
+                        var shiftBars = Math.round(deltaX / Math.max(1, g.slotW));
+                        var maxStart = Math.max(0, g.totalCandles - g.vCount);
+                        var nextStart = Math.max(0, Math.min(maxStart, root.dragStartViewStart - shiftBars));
 
-                    if (nextStart !== root.viewStart || root.followLatest !== (nextStart >= maxStart)) {
-                        root.viewStart = nextStart;
-                        root.followLatest = (nextStart >= maxStart);
-                        root.refreshGeometry();
+                        if (nextStart !== root.viewStart || root.followLatest !== (nextStart >= maxStart)) {
+                            root.viewStart = nextStart;
+                            root.followLatest = (nextStart >= maxStart);
+                            panChanged = true;
+                        }
                     }
+                    if (!root.autoPriceScale && g.innerH > 0) {
+                        var dyPan = mouse.y - root.dragStartY;
+                        var panned = Model.panPriceLogRange(root.dragStartLogMin, root.dragStartLogMax, dyPan, g.innerH);
+                        if (panned.logMin !== root.manualLogMin || panned.logMax !== root.manualLogMax) {
+                            root.manualLogMin = panned.logMin;
+                            root.manualLogMax = panned.logMax;
+                            panChanged = true;
+                        }
+                    }
+                    if (panChanged)
+                        root.refreshGeometry();
                 }
             } else {
                 var hoverHit = root.hitTestLevel(mouse.x, mouse.y);
@@ -1455,6 +1585,8 @@ Item {
                     canvas.requestPaint();
                 return;
             }
+            root.draggingPriceScale = false;
+            root.priceScaleDragMode = "";
             root.dragging = false;
             root.isShiftDrag = false;
             root.updateHover(mouse.x, mouse.y);
@@ -1464,6 +1596,8 @@ Item {
             root.draggingLevelIndex = -1;
             root.levelDragMode = "";
             root.levelDragMoved = false;
+            root.draggingPriceScale = false;
+            root.priceScaleDragMode = "";
             root.dragging = false;
             root.isShiftDrag = false;
         }
@@ -1476,21 +1610,38 @@ Item {
             var hit = root.hitTestLevel(mouse.x, mouse.y);
             if (hit || root.editingLevel)
                 return;
+            root.draggingPriceScale = false;
+            root.priceScaleDragMode = "";
             root.dragging = false;
             root.isShiftDrag = false;
             root.chartDoubleClicked();
         }
 
         onWheel: function (wheel) {
+            var g = root.cachedGeometry;
+            if (root.showPriceScale && g && g.candles.length > 0 && g.innerH > 0 && wheel.x >= g.right) {
+                var dyWheel = (wheel.angleDelta.y !== 0) ? wheel.angleDelta.y : (wheel.pixelDelta ? wheel.pixelDelta.y * 2 : 0);
+                if (dyWheel !== 0) {
+                    var baseLogMin = root.autoPriceScale ? g.logMin : root.manualLogMin;
+                    var baseLogMax = root.autoPriceScale ? g.logMax : root.manualLogMax;
+                    var nextWheelRange = Model.zoomPriceLogRange(baseLogMin, baseLogMax, Model.priceScaleWheelFactor(dyWheel));
+                    root.autoPriceScale = false;
+                    root.manualLogMin = nextWheelRange.logMin;
+                    root.manualLogMax = nextWheelRange.logMax;
+                    root.refreshGeometry();
+                }
+                wheel.accepted = true;
+                return;
+            }
+
             if (root.wheelZoomRequiresModifier && !(wheel.modifiers & Qt.ControlModifier)) {
                 wheel.accepted = false;
                 return;
             }
             var all = root.validCandles();
             var total = all.length;
-            if (total <= 8)
+            if (total <= Model.MIN_BAR_COUNT)
                 return;
-            var g = root.cachedGeometry;
             if (!g)
                 return;
             var curCount = g.vCount ? g.vCount : total;
@@ -1527,7 +1678,7 @@ Item {
 
                 if (wheel.angleDelta.y > 0) {
                     // Zoom IN: reduce visible bar count, anchoring to latest bar or cursor bar
-                    var nextCount = Math.max(8, curCount - deltaBars);
+                    var nextCount = Math.max(Model.MIN_BAR_COUNT, curCount - deltaBars);
                     var nextStart = isAtLatestBar ? Math.max(0, total - nextCount) : Math.max(0, Math.min(total - nextCount, Math.round(anchorBar - ratio * nextCount)));
                     root.viewCount = nextCount;
                     root.viewStart = nextStart;
@@ -1561,7 +1712,7 @@ Item {
                 root.hoveredLevelPart = "";
                 canvas.requestPaint();
             }
-            if (!root.dragging && root.draggingLevelIndex < 0)
+            if (!root.dragging && !root.draggingPriceScale && root.draggingLevelIndex < 0)
                 root.clearHover();
         }
     }
@@ -1724,7 +1875,7 @@ Item {
     // Vertical Crosshair (Dashed Hairline [2, 3])
     Shape {
         id: verticalCrosshair
-        visible: root.interactive && root.hovering && !root.hoveringScale
+        visible: root.interactive && root.hovering && !root.hoveringScale && !root.draggingPriceScale
         anchors.fill: parent
 
         ShapePath {
@@ -1744,7 +1895,7 @@ Item {
     // Horizontal Crosshair (Faint Dotted Hairline [2, 3])
     Shape {
         id: horizontalCrosshair
-        visible: root.interactive && root.hovering
+        visible: root.interactive && root.hovering && !root.draggingPriceScale && (!root.cachedGeometry || (root.hoverY >= root.cachedGeometry.top && root.hoverY <= root.cachedGeometry.bot))
         anchors.fill: parent
 
         ShapePath {
@@ -1763,7 +1914,7 @@ Item {
 
     // Candle Selection Highlight Pip
     Rectangle {
-        visible: root.interactive && root.hovering && !root.hoveringScale && root.hoverCandle !== null
+        visible: root.interactive && root.hovering && !root.hoveringScale && !root.draggingPriceScale && root.hoverCandle !== null && (!root.cachedGeometry || (root.hoverY >= root.cachedGeometry.top && root.hoverY <= root.cachedGeometry.bot))
         width: Style.space(6)
         height: Style.space(6)
         radius: width / 2
@@ -1777,9 +1928,9 @@ Item {
     // Crosshair Price Axis Badge on Right Scale
     Rectangle {
         id: axisPriceBadge
-        visible: root.showPriceScale && root.interactive && root.hovering
+        visible: root.showPriceScale && root.interactive && root.hovering && !root.draggingPriceScale
         x: root.cachedGeometry ? (root.cachedGeometry.right + Style.space(2)) : (parent.width - root.scaleGutterWidth)
-        y: Math.max(root.pad + Style.space(16), Math.min(root.height - height - root.pad, Math.round(root.hoverY - height / 2)))
+        y: root.cachedGeometry ? Math.max(root.cachedGeometry.top, Math.min(root.cachedGeometry.bot - height, Math.round(root.hoverY - height / 2))) : Math.max(root.pad + Style.space(16), Math.min(root.height - height - root.pad, Math.round(root.hoverY - height / 2)))
         width: Math.max(Style.space(32), root.scaleGutterWidth - Style.space(4))
         height: Style.space(16)
         color: Color.popups.background
@@ -1790,11 +1941,51 @@ Item {
         Text {
             anchors.centerIn: parent
             textFormat: Text.PlainText
-            text: (root.hoverCandle || root.hoveringScale) ? Model.formatPrice(root.hoverPrice, root.currency, root.priceHint) : ""
+            text: (root.hoverCandle || root.hoveringScale) ? Model.formatScalePrice(root.hoverPrice, null, root.priceHint) : ""
             color: Color.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
             font.bold: true
+        }
+    }
+
+    // Compact Auto-Scale Reset Button (visible only while manual Y-scale is active)
+    Rectangle {
+        id: autoScaleResetBtn
+        visible: root.showPriceScale && root.interactive && !root.autoPriceScale && root.cachedGeometry !== null
+        width: Math.max(Style.space(18), Math.min(Style.space(22), root.scaleGutterWidth - Style.space(6)))
+        height: Style.space(15)
+        x: root.cachedGeometry ? Math.round(root.cachedGeometry.right + (root.scaleGutterWidth - width) / 2) : (parent.width - width - Style.space(4))
+        y: root.cachedGeometry ? Math.min(root.height - height - Style.space(2), Math.round(root.cachedGeometry.bot + Style.space(2))) : (parent.height - height - Style.space(2))
+        radius: Style.space(2)
+        color: autoScaleMouse.containsMouse ? Color.accent : Color.popups.background
+        border.width: 1
+        border.color: autoScaleMouse.containsMouse ? Color.accent : root.crosshairColor
+        z: Model.Z_LAYER.CROSSHAIR + 1
+
+        Behavior on color {
+            ColorAnimation {
+                duration: Style.duration(120)
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        Text {
+            anchors.centerIn: parent
+            textFormat: Text.PlainText
+            text: "A"
+            color: autoScaleMouse.containsMouse ? Color.background : Color.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall - 1
+            font.bold: true
+        }
+
+        MouseArea {
+            id: autoScaleMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.resetPriceScale()
         }
     }
 

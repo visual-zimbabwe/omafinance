@@ -4367,21 +4367,22 @@ test("Contradiction 8: Pre-Trade Checklist (Canonical 11 Questions vs 9 Rules)",
 })
 
 test("bar count constants and clampBarCount helper", () => {
-  assert.equal(Model.MIN_BAR_COUNT, 8)
+  assert.equal(Model.MIN_BAR_COUNT, 1)
   assert.equal(Model.DEFAULT_ANALYSIS_BAR_COUNT, 8)
 
-  // Valid values above min
+  // Valid values at and above min (1)
   assert.equal(Model.clampBarCount(20), 20)
   assert.equal(Model.clampBarCount("45"), 45)
   assert.equal(Model.clampBarCount(8), 8)
+  assert.equal(Model.clampBarCount(5), 5)
+  assert.equal(Model.clampBarCount("3"), 3)
+  assert.equal(Model.clampBarCount(1), 1)
 
-  // Values below min clamped to 8
-  assert.equal(Model.clampBarCount(5), 8)
-  assert.equal(Model.clampBarCount(0), 8)
-  assert.equal(Model.clampBarCount(-10), 8)
-  assert.equal(Model.clampBarCount("3"), 8)
+  // Values below min clamped to 1
+  assert.equal(Model.clampBarCount(0), 1)
+  assert.equal(Model.clampBarCount(-10), 1)
 
-  // Non-numeric and empty fallbacks
+  // Non-numeric and empty fallbacks still default to 8
   assert.equal(Model.clampBarCount(""), 8)
   assert.equal(Model.clampBarCount("abc"), 8)
   assert.equal(Model.clampBarCount(null), 8)
@@ -4390,7 +4391,8 @@ test("bar count constants and clampBarCount helper", () => {
 
   // Custom fallback
   assert.equal(Model.clampBarCount("invalid", 14), 14)
-  assert.equal(Model.clampBarCount("invalid", 4), 8)
+  assert.equal(Model.clampBarCount("invalid", 4), 4)
+  assert.equal(Model.clampBarCount("invalid", 0), 1)
 })
 
 test("scenario filter: composite tokens, shapes (h, s, 2us, 2ds, 2dh, 2uh, 3s, 3h), negation, and sequences", () => {
@@ -4925,4 +4927,88 @@ test("packCandles and unpackCandles round-trip compact v2 tuples, strip float32 
   assert.equal(unpackedLegacy.length, 2)
   assert.equal(unpackedLegacy[0].timestamp, 1792159200)
   assert.equal(unpackedLegacy[0].close, 414.6300048828125)
+})
+
+test("price scale log zoom, vertical pan, drag/wheel factors, and step-aware compact formatting", () => {
+  const lo = Math.log(100)
+  const hi = Math.log(200)
+  const center = (lo + hi) / 2
+  const span = hi - lo
+
+  // 1. Wheel zoom: scroll up (+120) zooms in (narrower span); scroll down (-120) zooms out (wider span)
+  const fUp = Model.priceScaleWheelFactor(120)
+  const fDown = Model.priceScaleWheelFactor(-120)
+  assert.ok(fUp > 0 && fUp < 1)
+  assert.ok(fDown > 1)
+  assert.ok(Math.abs(fUp * fDown - 1) < 1e-12)
+
+  // High-resolution trackpad deltas scale smoothly and proportionally
+  const fTrackpad = Model.priceScaleWheelFactor(15)
+  assert.ok(fTrackpad > fUp && fTrackpad < 1)
+
+  // Zoom centers symmetrically around midpoint and round-trips cleanly
+  const zoomedIn = Model.zoomPriceLogRange(lo, hi, fUp)
+  assert.ok(zoomedIn.logSpan < span)
+  assert.ok(Math.abs((zoomedIn.logMin + zoomedIn.logMax) / 2 - center) < 1e-12)
+  const roundTrip = Model.zoomPriceLogRange(zoomedIn.logMin, zoomedIn.logMax, fDown)
+  assert.ok(Math.abs(roundTrip.logMin - lo) < 1e-12)
+  assert.ok(Math.abs(roundTrip.logMax - hi) < 1e-12)
+
+  // 2. Drag factor: drag up (dy < 0) stretches/zooms in (< 1); drag down (dy > 0) compresses/zooms out (> 1)
+  const dragUp = Model.priceScaleDragFactor(-60, 200)
+  const dragDown = Model.priceScaleDragFactor(60, 200)
+  assert.ok(dragUp > 0 && dragUp < 1)
+  assert.ok(dragDown > 1)
+  assert.ok(Math.abs(dragUp * dragDown - 1) < 1e-12)
+
+  // 3. Vertical pan: drag down (+dy) shifts log range upward so candles follow pointer down 1:1; span invariant
+  const panDown = Model.panPriceLogRange(lo, hi, 50, 200)
+  assert.ok(panDown.logMin > lo && panDown.logMax > hi)
+  assert.ok(Math.abs(panDown.logSpan - span) < 1e-12)
+  assert.ok(Math.abs((panDown.logMin - lo) - 0.25 * span) < 1e-12)
+
+  const panUp = Model.panPriceLogRange(panDown.logMin, panDown.logMax, -50, 200)
+  assert.ok(Math.abs(panUp.logMin - lo) < 1e-12)
+  assert.ok(Math.abs(panUp.logMax - hi) < 1e-12)
+
+  // 4. Extreme zoom/pan clamping never yields NaN, Infinity, or zero span
+  const ultraIn = Model.zoomPriceLogRange(lo, hi, 1e-9)
+  assert.ok(isFinite(ultraIn.logMin) && isFinite(ultraIn.logMax))
+  assert.ok(ultraIn.logSpan >= Model.PRICE_SCALE_MIN_LOG_SPAN - 1e-12)
+  const ultraOut = Model.zoomPriceLogRange(lo, hi, 1e9)
+  assert.ok(isFinite(ultraOut.logMin) && isFinite(ultraOut.logMax))
+  assert.ok(ultraOut.logSpan <= Model.PRICE_SCALE_MAX_LOG_SPAN + 1e-12)
+  const ultraPan = Model.panPriceLogRange(lo, hi, -1e9, 200)
+  assert.ok(isFinite(ultraPan.logMin) && Math.exp(ultraPan.logMin) >= 0.0000099)
+
+  // 5. Compact step-aware price scale formatting (no redundant $, deep-zoom decimal expansion, large-integer cleanup)
+  assert.equal(Model.formatScalePrice(225.5, 2.5, 2), "225.50")
+  assert.equal(Model.formatScalePrice(225, 10, 2), "225")
+  assert.equal(Model.formatScalePrice(97500, 2500, 2), "97,500")
+  assert.equal(Model.formatScalePrice(97542.3, null, 2), "97,542")
+  assert.equal(Model.formatScalePrice(6000, 50, 2), "6,000")
+  assert.equal(Model.formatScalePrice(225.125, 0.025, 2), "225.125")
+  assert.equal(Model.formatScalePrice(2.405, 0.005, 2), "2.405")
+  assert.equal(Model.formatScalePrice(0.0452, 0.005, 4), "0.0452")
+  assert.equal(Model.formatScalePrice(null, 1, 2), "-")
+
+  // 6. Per-cell zoom persistence accepts 1..7 bars now that MIN_BAR_COUNT is 1
+  const raw = Model.serializeState(
+    ["SPY"],
+    [],
+    "1D",
+    "2+3",
+    { symbol: true, timeframe: false, crosshair: true, time: true },
+    ["SPY", "SPY", "SPY", "SPY", "SPY"],
+    {},
+    {},
+    "equal",
+    "1Y",
+    false,
+    "",
+    ["30", "60", "1D", "1W", "1M"],
+    [1, 3, 5, 0, 8]
+  )
+  const parsed = Model.parseState(raw)
+  assert.deepEqual(parsed.gridZooms, [1, 3, 5, -1, 8])
 })

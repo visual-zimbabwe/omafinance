@@ -198,7 +198,7 @@ FloatingWindow {
     }
 
     function zoomForCell(index) {
-        if (root.cellZooms && isFinite(root.cellZooms[index]) && root.cellZooms[index] >= 5)
+        if (root.cellZooms && isFinite(root.cellZooms[index]) && root.cellZooms[index] >= Model.MIN_BAR_COUNT)
             return Math.round(root.cellZooms[index]);
         return -1;
     }
@@ -291,10 +291,10 @@ FloatingWindow {
     function setZoomForCell(index, newZoom) {
         var updated = [];
         for (var i = 0; i < 5; i++) {
-            var z = (root.cellZooms && isFinite(root.cellZooms[i]) && root.cellZooms[i] >= 5) ? Math.round(root.cellZooms[i]) : -1;
+            var z = (root.cellZooms && isFinite(root.cellZooms[i]) && root.cellZooms[i] >= Model.MIN_BAR_COUNT) ? Math.round(root.cellZooms[i]) : -1;
             updated.push(z);
         }
-        updated[index] = (isFinite(newZoom) && newZoom >= 5) ? Math.round(newZoom) : -1;
+        updated[index] = (isFinite(newZoom) && newZoom >= Model.MIN_BAR_COUNT) ? Math.round(newZoom) : -1;
         root.cellZooms = updated;
         saveStateDebounceTimer.restart();
     }
@@ -854,6 +854,10 @@ FloatingWindow {
                 event.accepted = true;
             } else if (event.key === Qt.Key_Right && root.replayCutoffTs > 0) {
                 root.stepReplay(1);
+                event.accepted = true;
+            } else if (event.key === Qt.Key_R && (event.modifiers & Qt.AltModifier)) {
+                if (activeCell && activeCell.resetZoom)
+                    activeCell.resetZoom();
                 event.accepted = true;
             } else if (event.key === Qt.Key_R) {
                 if (activeCell && activeCell.activeHoverCandle && isFinite(activeCell.activeHoverCandle.timestamp)) {

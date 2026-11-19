@@ -61,8 +61,61 @@ function normalizeTimeframeList(raw) {
   return out.length > 0 ? out : null
 }
 
-var MIN_BAR_COUNT = 8
+var MIN_BAR_COUNT = 1
 var DEFAULT_ANALYSIS_BAR_COUNT = 8
+
+var PRICE_SCALE_MIN_LOG_SPAN = 0.0005
+var PRICE_SCALE_MAX_LOG_SPAN = 14
+var PRICE_SCALE_MIN_LOG = Math.log(0.00001)
+var PRICE_SCALE_MAX_LOG = Math.log(1e9)
+
+function clampPriceLogBounds(lo, hi) {
+  var span = Math.max(PRICE_SCALE_MIN_LOG_SPAN, Math.min(PRICE_SCALE_MAX_LOG_SPAN, hi - lo))
+  var minV = lo
+  var maxV = lo + span
+  if (minV < PRICE_SCALE_MIN_LOG) {
+    minV = PRICE_SCALE_MIN_LOG
+    maxV = Math.min(PRICE_SCALE_MAX_LOG, minV + span)
+  }
+  if (maxV > PRICE_SCALE_MAX_LOG) {
+    maxV = PRICE_SCALE_MAX_LOG
+    minV = Math.max(PRICE_SCALE_MIN_LOG, maxV - span)
+  }
+  return { logMin: minV, logMax: maxV, logSpan: Math.max(PRICE_SCALE_MIN_LOG_SPAN, maxV - minV) }
+}
+
+function zoomPriceLogRange(logMin, logMax, factor) {
+  var curMin = isFinite(logMin) ? logMin : 0
+  var curMax = isFinite(logMax) ? logMax : curMin + 0.01
+  var curSpan = Math.max(PRICE_SCALE_MIN_LOG_SPAN, curMax - curMin)
+  var f = (isFinite(factor) && factor > 0) ? factor : 1
+  var nextSpan = Math.max(PRICE_SCALE_MIN_LOG_SPAN, Math.min(PRICE_SCALE_MAX_LOG_SPAN, curSpan * f))
+  var center = (curMin + curMax) / 2
+  return clampPriceLogBounds(center - nextSpan / 2, center + nextSpan / 2)
+}
+
+function panPriceLogRange(logMin, logMax, deltaY, innerH) {
+  var curMin = isFinite(logMin) ? logMin : 0
+  var curMax = isFinite(logMax) ? logMax : curMin + 0.01
+  var curSpan = Math.max(PRICE_SCALE_MIN_LOG_SPAN, curMax - curMin)
+  var h = (isFinite(innerH) && innerH > 0) ? innerH : 1
+  var dy = isFinite(deltaY) ? deltaY : 0
+  var dLog = (dy / h) * curSpan
+  return clampPriceLogBounds(curMin + dLog, curMax + dLog)
+}
+
+function priceScaleDragFactor(deltaY, innerH) {
+  var dy = isFinite(deltaY) ? deltaY : 0
+  var h = (isFinite(innerH) && innerH > 0) ? innerH : 180
+  var denom = Math.max(80, h * 0.45)
+  return Math.exp(dy / denom)
+}
+
+function priceScaleWheelFactor(angleDeltaY) {
+  var d = isFinite(angleDeltaY) ? angleDeltaY : 0
+  if (d === 0) return 1
+  return Math.pow(0.88, d / 120)
+}
 
 function clampBarCount(count, fallback) {
   var n = parseInt(count, 10)
@@ -1557,6 +1610,29 @@ function formatPrice(price, currency, hint) {
   var code = String(currency || "USD")
   if (code === "USD") return "$" + body
   return body + " " + code
+}
+
+function formatScalePrice(price, step, hint) {
+  var n = finiteOrNull(price)
+  if (n === null) return "-"
+  var abs = Math.abs(n)
+  var baseDec = priceDecimals(n, hint)
+  var dec = baseDec
+  var s = finiteOrNull(step)
+  if (s !== null && s > 0) {
+    if (s < 1) {
+      var stepDec = Math.min(6, Math.max(0, Math.ceil(-Math.log10(s) - 1e-9)))
+      var scaled = s * Math.pow(10, stepDec)
+      if (Math.abs(scaled - Math.round(scaled)) > 0.05 && stepDec < 6)
+        stepDec += 1
+      dec = Math.max(baseDec, stepDec)
+    } else if (Math.abs(n - Math.round(n)) < 1e-6 && (abs >= 1000 || (abs >= 10 && s >= 5))) {
+      dec = 0
+    }
+  } else if (abs >= 10000) {
+    dec = 0
+  }
+  return withCommas(n.toFixed(dec))
 }
 
 function formatPercent(pct) {
@@ -8302,6 +8378,13 @@ if (typeof module !== "undefined") {
     MIN_BAR_COUNT: MIN_BAR_COUNT,
     DEFAULT_ANALYSIS_BAR_COUNT: DEFAULT_ANALYSIS_BAR_COUNT,
     clampBarCount: clampBarCount,
+    PRICE_SCALE_MIN_LOG_SPAN: PRICE_SCALE_MIN_LOG_SPAN,
+    PRICE_SCALE_MAX_LOG_SPAN: PRICE_SCALE_MAX_LOG_SPAN,
+    zoomPriceLogRange: zoomPriceLogRange,
+    panPriceLogRange: panPriceLogRange,
+    priceScaleDragFactor: priceScaleDragFactor,
+    priceScaleWheelFactor: priceScaleWheelFactor,
+    formatScalePrice: formatScalePrice,
     parseColorRgb: parseColorRgb,
     rgbToHex: rgbToHex,
     relativeLuminance: relativeLuminance,

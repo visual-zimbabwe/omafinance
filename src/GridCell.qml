@@ -107,6 +107,10 @@ Item {
         chart.resetZoom();
     }
 
+    function resetPriceScale() {
+        chart.resetPriceScale();
+    }
+
     function dismissLevelEdit() {
         chart.dismissLevelEdit();
         root.forceActiveFocus();
@@ -284,6 +288,12 @@ Item {
         } else if (event.key === Qt.Key_Slash || event.key === Qt.Key_S) {
             if (!root.disableTickerSearch && !root.searching && !root.changingInterval && !root.editingLevel) {
                 root.startSearch();
+                event.accepted = true;
+                return;
+            }
+        } else if (event.key === Qt.Key_R && (event.modifiers & Qt.AltModifier)) {
+            if (!root.searching && !root.changingInterval && !root.editingLevel) {
+                root.resetZoom();
                 event.accepted = true;
                 return;
             }
