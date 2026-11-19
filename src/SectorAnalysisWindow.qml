@@ -57,6 +57,10 @@ FloatingWindow {
     property string discordWebhook: ""
     property bool alertsMuted: false
     property string alertsMuteStatus: ""
+    property bool hubReady: false
+    property bool hubStreamingActive: false
+    property var hubPendingMap: ({})
+    property int hubPendingCount: 0
 
     signal alertDispatchRequested(var alert)
     signal alertsMuteToggleRequested
@@ -64,10 +68,17 @@ FloatingWindow {
     signal quotesReceived(var incomingQuotes)
     signal chartDataReceived(string key, var candles, var quoteEnriched)
     signal symbolDataUpdated(string sym)
+    signal hubChartFetchRequested(string sym, string tf, bool force)
+    signal hubSparkFetchRequested(var symbols, bool lightweight)
+    signal subscribedSymbolsChanged
     property int drillDownDataRev: 0
 
     function notifyCacheKeyUpdated(key) {
         var k = String(key || "");
+        if (k && root.hubPendingMap && root.hubPendingMap[k]) {
+            delete root.hubPendingMap[k];
+            root.hubPendingCount = Math.max(0, root.hubPendingCount - 1);
+        }
         var sep = k.lastIndexOf("_");
         var sym = sep >= 0 ? k.slice(0, sep) : "";
         if (sym) {
@@ -119,6 +130,8 @@ FloatingWindow {
     readonly property string fontFamily: Style.font.family
 
     function reloadSector(sym) {
+        root.hubPendingMap = ({});
+        root.hubPendingCount = 0;
         var raw = (typeof sym === "string" && sym.length > 0) ? sym : root.sectorSymbol;
         var tickers = Model.parseSectorTickers(raw);
         var isMulti = tickers.length > 1;
@@ -130,6 +143,7 @@ FloatingWindow {
             root.holdings = [];
             syncTileModel();
             recomputeBreadthMetrics();
+            root.subscribedSymbolsChanged();
             refreshBatchQuotes();
             refreshVisibleCharts(false);
         }
@@ -535,9 +549,12 @@ FloatingWindow {
         }
     }
 
+    property double lastBreadthRecomputeMs: 0
+
     onHoldingsChanged: {
         syncTileModel();
         recomputeBreadthMetrics();
+        root.subscribedSymbolsChanged();
     }
     onChartCacheChanged: {
         syncTileModel();
@@ -547,7 +564,17 @@ FloatingWindow {
             root.drillDownDataRev++;
     }
     onQuotesChanged: {
-        recomputeBreadthMetrics();
+        var now = Date.now();
+        if (now - root.lastBreadthRecomputeMs >= 150) {
+            root.lastBreadthRecomputeMs = now;
+            recomputeBreadthMetrics();
+        } else if (!breadthUpdateTimer.running) {
+            breadthUpdateTimer.start();
+        }
+    }
+    onActiveTileIndexChanged: {
+        if (gridViewport.isVirtualized && tileGridView)
+            tileGridView.positionViewAtIndex(root.activeTileIndex, GridView.Contain);
     }
     onSortFieldChanged: syncTileModel()
     onSortAscendingChanged: syncTileModel()
@@ -590,10 +617,77 @@ FloatingWindow {
         return syms;
     }
 
+    function getVisibleViewportSymbols() {
+        var tiles = root.filteredTiles || [];
+        if (tiles.length === 0)
+            return [];
+        if (!gridViewport || !gridViewport.isVirtualized || !tileGridView || gridViewport.cellHeight <= 0) {
+            return Model.extractSymbols(tiles.slice(0, 60));
+        }
+        var cols = Math.max(1, gridViewport.cols);
+        var firstRow = Math.max(0, Math.floor(tileGridView.contentY / gridViewport.cellHeight) - 1);
+        var visibleRows = Math.max(1, Math.ceil(tileGridView.height / gridViewport.cellHeight) + 2);
+        var startIdx = firstRow * cols;
+        var endIdx = Math.min(tiles.length, (firstRow + visibleRows) * cols);
+        var out = [];
+        for (var i = startIdx; i < endIdx; i++) {
+            if (tiles[i] && tiles[i].symbol)
+                out.push(tiles[i].symbol);
+        }
+        return out;
+    }
+
+    function getSubscribedSymbols() {
+        var prioritized = getVisibleViewportSymbols();
+        var all = getAllSymbols();
+        if (prioritized.length === 0)
+            return all.length <= 60 ? all : all.slice(0, 60);
+        var seen = ({});
+        var out = [];
+        for (var i = 0; i < prioritized.length && out.length < 60; i++) {
+            var ps = prioritized[i];
+            if (ps && !seen[ps]) {
+                seen[ps] = true;
+                out.push(ps);
+            }
+        }
+        for (var j = 0; j < all.length && out.length < 60; j++) {
+            var as = all[j];
+            if (as && !seen[as]) {
+                seen[as] = true;
+                out.push(as);
+            }
+        }
+        return out;
+    }
+
     function refreshBatchQuotes() {
         var syms = getAllSymbols();
         if (syms.length === 0)
             return;
+        if (root.hubReady) {
+            var toFetch = syms;
+            if (root.hubStreamingActive) {
+                var subbed = root.getSubscribedSymbols();
+                var subSet = ({});
+                for (var si = 0; si < subbed.length; si++)
+                    subSet[subbed[si]] = true;
+                var restOnly = [];
+                for (var ri = 0; ri < syms.length; ri++) {
+                    var rs = syms[ri];
+                    var existing = root.quotes[rs];
+                    if (!subSet[rs] || !existing || existing.previousClose === undefined || existing.previousClose === null)
+                        restOnly.push(rs);
+                }
+                toFetch = restOnly;
+            }
+            if (toFetch.length === 0)
+                return;
+            var hubChunks = Model.chunkSymbols(toFetch, 20);
+            for (var ci = 0; ci < hubChunks.length; ci++)
+                root.hubSparkFetchRequested(hubChunks[ci], true);
+            return;
+        }
         root.pendingQuoteChunks = Model.chunkSymbols(syms, 20);
         if (!quoteProc.running)
             processNextQuoteChunk();
@@ -603,7 +697,7 @@ FloatingWindow {
         if (root.pendingQuoteChunks.length === 0)
             return;
         var nextChunk = root.pendingQuoteChunks.shift();
-        quoteProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.sparkUrl(nextChunk)];
+        quoteProc.command = ["curl", "-fsS", "--compressed", "--max-time", "8", "-A", "Mozilla/5.0", Model.sparkQuoteUrl(nextChunk)];
         quoteProc.running = true;
     }
 
@@ -678,6 +772,14 @@ FloatingWindow {
         var key = cacheKey(sym, tf);
         if (!force && root.chartCache[key] && root.chartCache[key].length > 0)
             return;
+        if (root.hubReady) {
+            if (!root.hubPendingMap[key]) {
+                root.hubPendingMap[key] = true;
+                root.hubPendingCount = root.hubPendingCount + 1;
+            }
+            root.hubChartFetchRequested(sym, tf, force === true);
+            return;
+        }
         for (var i = 0; i < root.pendingFetches.length; i++) {
             if (root.pendingFetches[i].symbol === sym && root.pendingFetches[i].rangeKey === tf)
                 return;
@@ -842,19 +944,37 @@ FloatingWindow {
 
     function refreshVisibleCharts(force) {
         var syms = getAllSymbols();
-        // 1. Priority 1: active timeframe for ALL symbols
-        for (var i = 0; i < syms.length; i++) {
-            queueFetch(syms[i], root.timeframe, force);
+        var viewportSyms = getVisibleViewportSymbols();
+        var seen = ({});
+        var ordered = [];
+        for (var v = 0; v < viewportSyms.length; v++) {
+            var vs = viewportSyms[v];
+            if (vs && !seen[vs]) {
+                seen[vs] = true;
+                ordered.push(vs);
+            }
         }
-        // 2. Priority 2: 1D and 60m for breadth calculations (only if not already cached)
+        for (var a = 0; a < syms.length; a++) {
+            var as = syms[a];
+            if (as && !seen[as]) {
+                seen[as] = true;
+                ordered.push(as);
+            }
+        }
+        // 1. Priority 1: active timeframe (viewport tiles first, then remaining basket for breadth/filtering)
+        for (var i = 0; i < ordered.length; i++) {
+            queueFetch(ordered[i], root.timeframe, force);
+        }
+        // 2. Priority 2: pre-warm 1D and 60m only for compact baskets or currently visible viewport tiles
+        var warmList = (ordered.length <= 36) ? ordered : ordered.slice(0, 36);
         if (root.timeframe !== "1D") {
-            for (var j = 0; j < syms.length; j++) {
-                queueFetch(syms[j], "1D", false);
+            for (var j = 0; j < warmList.length; j++) {
+                queueFetch(warmList[j], "1D", false);
             }
         }
         if (root.timeframe !== "60") {
-            for (var k = 0; k < syms.length; k++) {
-                queueFetch(syms[k], "60", false);
+            for (var k = 0; k < warmList.length; k++) {
+                queueFetch(warmList[k], "60", false);
             }
         }
     }
@@ -1511,11 +1631,12 @@ FloatingWindow {
             }
 
             FinanceLoader {
-                readonly property bool workersBusy: worker0.running || worker1.running || worker2.running || worker3.running || root.pendingFetches.length > 0
+                readonly property int pendingTotal: root.pendingFetches.length + root.hubPendingCount
+                readonly property bool workersBusy: worker0.running || worker1.running || worker2.running || worker3.running || pendingTotal > 0
                 readonly property int totalTarget: Math.max(1, (root.holdings || []).length)
                 anchors.fill: parent
                 active: workersBusy
-                progress: workersBusy ? Math.max(0.08, Math.min(1.0, 1.0 - (root.pendingFetches.length / totalTarget))) : 0
+                progress: workersBusy ? Math.max(0.08, Math.min(1.0, 1.0 - (pendingTotal / totalTarget))) : 0
                 color: Color.accent
             }
         }
@@ -1526,94 +1647,109 @@ FloatingWindow {
             width: parent.width
             height: parent.height - masterHeader.height - headerDivider.height
 
-            // 1. DYNAMIC FLEX 1X1 GRID VIEWPORT (Visible when !inDrillDown)
+            // 1. DYNAMIC FLEX / VIRTUALIZED GRID VIEWPORT (Visible when !inDrillDown)
             Item {
                 id: gridViewport
                 visible: !root.inDrillDown
                 anchors.fill: parent
 
+                readonly property int virtualizeThreshold: 36
                 readonly property int visibleCount: root.filteredTiles.length
-                readonly property int cols: Math.max(1, Math.min(6, Math.ceil(Math.sqrt(Math.max(1, visibleCount)))))
+                readonly property bool isVirtualized: visibleCount > virtualizeThreshold
+                readonly property int cols: isVirtualized ? 6 : Math.max(1, Math.min(6, Math.ceil(Math.sqrt(Math.max(1, visibleCount)))))
                 readonly property int rows: Math.max(1, Math.ceil(visibleCount / cols))
                 readonly property real cellWidth: width / cols
-                readonly property real cellHeight: height / rows
+                readonly property real cellHeight: isVirtualized ? Math.max(Style.space(185), Math.floor(height / 4)) : (height / rows)
 
-                Grid {
+                GridView {
+                    id: tileGridView
                     anchors.fill: parent
-                    columns: gridViewport.cols
-                    spacing: 0
+                    model: tileListModel
+                    cellWidth: gridViewport.cellWidth
+                    cellHeight: gridViewport.cellHeight
+                    clip: true
+                    interactive: gridViewport.isVirtualized
+                    boundsBehavior: Flickable.StopAtBounds
+                    cacheBuffer: gridViewport.isVirtualized ? Math.round(gridViewport.cellHeight * 1.5) : Math.max(1, Math.round(height))
 
-                    Repeater {
-                        model: tileListModel
+                    onContentYChanged: {
+                        if (gridViewport.isVirtualized)
+                            scrollFetchDebounceTimer.restart();
+                    }
 
-                        Item {
-                            id: tileWrapper
-                            required property string symbol
-                            required property string name
-                            required property int index
-                            property int dataRev: 0
+                    QQC.ScrollBar.vertical: QQC.ScrollBar {
+                        policy: gridViewport.isVirtualized ? QQC.ScrollBar.AsNeeded : QQC.ScrollBar.AlwaysOff
+                    }
 
-                            Connections {
-                                target: root
-                                function onSymbolDataUpdated(sym) {
-                                    if (!sym || sym === tileWrapper.symbol)
-                                        tileWrapper.dataRev++;
+                    delegate: Item {
+                        id: tileWrapper
+                        required property string symbol
+                        required property string name
+                        required property int index
+                        property int dataRev: 0
+
+                        Connections {
+                            target: root
+                            function onSymbolDataUpdated(sym) {
+                                if (!sym || sym === tileWrapper.symbol)
+                                    tileWrapper.dataRev++;
+                            }
+                        }
+
+                        width: tileGridView.cellWidth
+                        height: tileGridView.cellHeight
+
+                        // Hairline Border
+                        Rectangle {
+                            anchors.fill: parent
+                            color: "transparent"
+                            border.width: 1
+                            border.color: root.activeTileIndex === tileWrapper.index ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12)
+                            z: Model.Z_LAYER.TILE_BORDER
+                        }
+
+                        // 100% Native Omafinance GridCell
+                        GridCell {
+                            id: cellInstance
+                            anchors.fill: parent
+                            cellIndex: tileWrapper.index
+                            cellActive: root.visible && !root.inDrillDown
+                            wheelZoomRequiresModifier: gridViewport.isVirtualized
+                            symbol: tileWrapper.symbol
+                            companyName: tileWrapper.name || ""
+                            timeframe: root.timeframe
+                            showBroadening: root.showBroadening
+                            hideStratBadge: true
+                            disableTickerSearch: true
+                            activeFocusCell: root.activeTileIndex === tileWrapper.index
+                            zoomCount: root.globalBarCount
+
+                            quote: (tileWrapper.dataRev >= 0) ? (root.quotes[tileWrapper.symbol] || null) : null
+                            candles: (tileWrapper.dataRev >= 0) ? root.getCandles(tileWrapper.symbol, root.timeframe) : []
+                            hourlyCandles: (tileWrapper.dataRev >= 0) ? root.getCandles(tileWrapper.symbol, "60") : []
+                            dailyCandles: (tileWrapper.dataRev >= 0) ? root.getCandles(tileWrapper.symbol, "1D") : []
+                            priceLevels: root.symbolLevels[tileWrapper.symbol] || []
+
+                            onFocusRequested: function (idx) {
+                                root.activeTileIndex = idx;
+                                keyboardListener.forceActiveFocus();
+                            }
+                            onMaximizeRequested: function (idx) {
+                                root.drillDownSymbol = tileWrapper.symbol;
+                                root.inDrillDown = true;
+                            }
+                            onCrosshairMoved: function (ts, pr, c) {
+                                if (root.syncCrosshair) {
+                                    root.broadcastCrosshair(tileWrapper.symbol, ts, pr, c);
                                 }
                             }
-
-                            width: gridViewport.cellWidth
-                            height: gridViewport.cellHeight
-
-                            // Hairline Border
-                            Rectangle {
-                                anchors.fill: parent
-                                color: "transparent"
-                                border.width: 1
-                                border.color: root.activeTileIndex === tileWrapper.index ? Color.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12)
-                                z: Model.Z_LAYER.TILE_BORDER
+                            onCrosshairCleared: {
+                                if (root.syncCrosshair) {
+                                    root.clearCrosshair();
+                                }
                             }
-
-                            // 100% Native Omafinance GridCell
-                            GridCell {
-                                id: cellInstance
-                                anchors.fill: parent
-                                cellIndex: tileWrapper.index
-                                symbol: tileWrapper.symbol
-                                companyName: tileWrapper.name || ""
-                                timeframe: root.timeframe
-                                showBroadening: root.showBroadening
-                                hideStratBadge: true
-                                disableTickerSearch: true
-                                activeFocusCell: root.activeTileIndex === tileWrapper.index
-                                zoomCount: root.globalBarCount
-
-                                quote: (tileWrapper.dataRev >= 0) ? (root.quotes[tileWrapper.symbol] || null) : null
-                                candles: (tileWrapper.dataRev >= 0) ? root.getCandles(tileWrapper.symbol, root.timeframe) : []
-                                hourlyCandles: (tileWrapper.dataRev >= 0) ? root.getCandles(tileWrapper.symbol, "60") : []
-                                dailyCandles: (tileWrapper.dataRev >= 0) ? root.getCandles(tileWrapper.symbol, "1D") : []
-                                priceLevels: root.symbolLevels[tileWrapper.symbol] || []
-
-                                onFocusRequested: function (idx) {
-                                    root.activeTileIndex = idx;
-                                    keyboardListener.forceActiveFocus();
-                                }
-                                onMaximizeRequested: function (idx) {
-                                    root.drillDownSymbol = tileWrapper.symbol;
-                                    root.inDrillDown = true;
-                                }
-                                onCrosshairMoved: function (ts, pr, c) {
-                                    if (root.syncCrosshair) {
-                                        root.broadcastCrosshair(tileWrapper.symbol, ts, pr, c);
-                                    }
-                                }
-                                onCrosshairCleared: {
-                                    if (root.syncCrosshair) {
-                                        root.clearCrosshair();
-                                    }
-                                }
-                                onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCountDebounced(nextZoom);
-                                }
+                            onZoomChangedManually: function (idx, nextZoom) {
+                                root.setGlobalBarCountDebounced(nextZoom);
                             }
                         }
                     }
@@ -1693,114 +1829,125 @@ FloatingWindow {
                         }
                     }
 
-                    // Full 2+3 Multi-Timeframe Chart Grid
-                    Item {
+                    // Full 2+3 Multi-Timeframe Chart Grid (lazy-loaded only while drill-down is active)
+                    Loader {
+                        id: drillDownLoader
                         width: parent.width
                         height: parent.height - Style.space(32)
+                        active: root.inDrillDown
+                        sourceComponent: Component {
+                            Item {
+                                anchors.fill: parent
+                                readonly property real topRowH: height * 0.48
+                                readonly property real botRowH: height - topRowH
 
-                        readonly property real topRowH: height * 0.48
-                        readonly property real botRowH: height - topRowH
+                                // TOP ROW (30m, 60m)
+                                Item {
+                                    width: parent.width
+                                    height: parent.topRowH
+                                    anchors.top: parent.top
 
-                        // TOP ROW (30m, 60m)
-                        Item {
-                            width: parent.width
-                            height: parent.topRowH
-                            anchors.top: parent.top
+                                    GridCell {
+                                        width: parent.width * 0.5
+                                        height: parent.height
+                                        x: 0
+                                        cellActive: root.visible && root.inDrillDown
+                                        symbol: root.drillDownSymbol
+                                        timeframe: "30"
+                                        showBroadening: root.showBroadening
+                                        disableTickerSearch: true
+                                        zoomCount: root.globalBarCount
+                                        quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
+                                        candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "30") : []
+                                        hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
+                                        dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
+                                        onZoomChangedManually: function (idx, nextZoom) {
+                                            root.setGlobalBarCountDebounced(nextZoom);
+                                        }
+                                    }
 
-                            GridCell {
-                                width: parent.width * 0.5
-                                height: parent.height
-                                x: 0
-                                symbol: root.drillDownSymbol
-                                timeframe: "30"
-                                showBroadening: root.showBroadening
-                                disableTickerSearch: true
-                                zoomCount: root.globalBarCount
-                                quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
-                                candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "30") : []
-                                hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
-                                onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCountDebounced(nextZoom);
+                                    GridCell {
+                                        width: parent.width * 0.5
+                                        height: parent.height
+                                        x: parent.width * 0.5
+                                        cellActive: root.visible && root.inDrillDown
+                                        symbol: root.drillDownSymbol
+                                        timeframe: "60"
+                                        showBroadening: root.showBroadening
+                                        disableTickerSearch: true
+                                        zoomCount: root.globalBarCount
+                                        quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
+                                        candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
+                                        hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
+                                        dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
+                                        onZoomChangedManually: function (idx, nextZoom) {
+                                            root.setGlobalBarCountDebounced(nextZoom);
+                                        }
+                                    }
                                 }
-                            }
 
-                            GridCell {
-                                width: parent.width * 0.5
-                                height: parent.height
-                                x: parent.width * 0.5
-                                symbol: root.drillDownSymbol
-                                timeframe: "60"
-                                showBroadening: root.showBroadening
-                                disableTickerSearch: true
-                                zoomCount: root.globalBarCount
-                                quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
-                                candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
-                                onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCountDebounced(nextZoom);
-                                }
-                            }
-                        }
+                                // BOTTOM ROW (1D, 1W, 1M)
+                                Item {
+                                    width: parent.width
+                                    height: parent.botRowH
+                                    anchors.bottom: parent.bottom
 
-                        // BOTTOM ROW (1D, 1W, 1M)
-                        Item {
-                            width: parent.width
-                            height: parent.botRowH
-                            anchors.bottom: parent.bottom
+                                    GridCell {
+                                        width: parent.width * 0.333
+                                        height: parent.height
+                                        x: 0
+                                        cellActive: root.visible && root.inDrillDown
+                                        symbol: root.drillDownSymbol
+                                        timeframe: "1D"
+                                        showBroadening: root.showBroadening
+                                        disableTickerSearch: true
+                                        zoomCount: root.globalBarCount
+                                        quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
+                                        candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
+                                        hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
+                                        dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
+                                        onZoomChangedManually: function (idx, nextZoom) {
+                                            root.setGlobalBarCountDebounced(nextZoom);
+                                        }
+                                    }
 
-                            GridCell {
-                                width: parent.width * 0.333
-                                height: parent.height
-                                x: 0
-                                symbol: root.drillDownSymbol
-                                timeframe: "1D"
-                                showBroadening: root.showBroadening
-                                disableTickerSearch: true
-                                zoomCount: root.globalBarCount
-                                quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
-                                candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
-                                hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
-                                onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCountDebounced(nextZoom);
-                                }
-                            }
+                                    GridCell {
+                                        width: parent.width * 0.333
+                                        height: parent.height
+                                        x: parent.width * 0.333
+                                        cellActive: root.visible && root.inDrillDown
+                                        symbol: root.drillDownSymbol
+                                        timeframe: "1W"
+                                        showBroadening: root.showBroadening
+                                        disableTickerSearch: true
+                                        zoomCount: root.globalBarCount
+                                        quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
+                                        candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1W") : []
+                                        hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
+                                        dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
+                                        onZoomChangedManually: function (idx, nextZoom) {
+                                            root.setGlobalBarCountDebounced(nextZoom);
+                                        }
+                                    }
 
-                            GridCell {
-                                width: parent.width * 0.333
-                                height: parent.height
-                                x: parent.width * 0.333
-                                symbol: root.drillDownSymbol
-                                timeframe: "1W"
-                                showBroadening: root.showBroadening
-                                disableTickerSearch: true
-                                zoomCount: root.globalBarCount
-                                quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
-                                candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1W") : []
-                                hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
-                                onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCountDebounced(nextZoom);
-                                }
-                            }
-
-                            GridCell {
-                                width: parent.width * 0.334
-                                height: parent.height
-                                x: parent.width * 0.666
-                                symbol: root.drillDownSymbol
-                                timeframe: "1M"
-                                showBroadening: root.showBroadening
-                                disableTickerSearch: true
-                                zoomCount: root.globalBarCount
-                                quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
-                                candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1M") : []
-                                hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
-                                onZoomChangedManually: function (idx, nextZoom) {
-                                    root.setGlobalBarCountDebounced(nextZoom);
+                                    GridCell {
+                                        width: parent.width * 0.334
+                                        height: parent.height
+                                        x: parent.width * 0.666
+                                        cellActive: root.visible && root.inDrillDown
+                                        symbol: root.drillDownSymbol
+                                        timeframe: "1M"
+                                        showBroadening: root.showBroadening
+                                        disableTickerSearch: true
+                                        zoomCount: root.globalBarCount
+                                        quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
+                                        candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1M") : []
+                                        hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
+                                        dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
+                                        onZoomChangedManually: function (idx, nextZoom) {
+                                            root.setGlobalBarCountDebounced(nextZoom);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1819,6 +1966,20 @@ FloatingWindow {
                 root.setGlobalBarCount(root.pendingGlobalBarCount);
                 root.pendingGlobalBarCount = -2;
             }
+        }
+    }
+
+    Timer {
+        id: scrollFetchDebounceTimer
+        interval: 180
+        repeat: false
+        onTriggered: {
+            if (!gridViewport.isVirtualized)
+                return;
+            var vis = root.getVisibleViewportSymbols();
+            for (var i = 0; i < vis.length; i++)
+                root.queueFetch(vis[i], root.timeframe, false);
+            root.subscribedSymbolsChanged();
         }
     }
 

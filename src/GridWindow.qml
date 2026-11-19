@@ -40,6 +40,7 @@ FloatingWindow {
     // Quotes and Candles Cache
     property var quotes: ({})
     property var chartCache: ({})
+    property var chartFetchedAt: ({})
     property var symbolLevels: ({})
     property var symbolPriceMemory: ({})
     property real replayCutoffTs: 0
@@ -62,6 +63,10 @@ FloatingWindow {
     signal alertsMuteToggleRequested
     property bool alertsMuted: false
     property string alertsMuteStatus: ""
+    property bool hubReady: false
+    property bool hubStreamingActive: false
+    signal hubChartFetchRequested(string sym, string tf, bool force)
+    signal activeSymbolsChanged
 
     function setReplayCutoff(ts) {
         root.replayCutoffTs = (isFinite(ts) && ts > 0) ? ts : 0;
@@ -145,12 +150,35 @@ FloatingWindow {
             root.quoteRefreshPending = false;
             return;
         }
+        if (root.hubStreamingActive) {
+            var allHydrated = true;
+            var curHourLive = Math.floor(Date.now() / 3600000);
+            for (var hi = 0; hi < syms.length; hi++) {
+                var hq = root.quotes[syms[hi]];
+                if (!hq || hq.previousClose === undefined || hq.previousClose === null || !hq.ftfcAnchors || hq.ftfcAnchors.hourBucket !== curHourLive) {
+                    allHydrated = false;
+                    break;
+                }
+            }
+            if (allHydrated)
+                return;
+        }
         if (quoteProc.running) {
             root.quoteRefreshPending = true;
             return;
         }
         root.quoteRefreshPending = false;
-        quoteProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.sparkUrl(syms)];
+        var needsFullSpark = false;
+        var curHour = Math.floor(Date.now() / 3600000);
+        for (var i = 0; i < syms.length; i++) {
+            var q = root.quotes[syms[i]];
+            if (!q || !q.ftfcAnchors || q.ftfcAnchors.hourBucket !== curHour) {
+                needsFullSpark = true;
+                break;
+            }
+        }
+        var url = needsFullSpark ? Model.sparkUrl(syms) : Model.sparkQuoteUrl(syms);
+        quoteProc.command = ["curl", "-fsS", "--compressed", "--max-time", "8", "-A", "Mozilla/5.0", url];
         quoteProc.running = true;
     }
 
@@ -200,6 +228,8 @@ FloatingWindow {
 
     function notifyCacheKeyUpdated(key) {
         var k = String(key || "");
+        if (k && root.chartCache && root.chartCache[k] && root.chartCache[k].length > 0)
+            root.chartFetchedAt[k] = Date.now();
         var sep = k.lastIndexOf("_");
         var sym = sep >= 0 ? k.slice(0, sep) : "";
         var count = root.gridMode === "2x2" ? 4 : 5;
@@ -212,10 +242,36 @@ FloatingWindow {
     }
 
     onChartCacheChanged: root.notifyCacheKeyUpdated("")
-    onQuotesChanged: root.notifyCacheKeyUpdated("")
+
+    function activeTimeframesForSymbol(sym) {
+        var tfs = ["30", "60", "1D"];
+        var count = root.gridMode === "2x2" ? 4 : 5;
+        for (var i = 0; i < count; i++) {
+            if (root.symbolForCell(i) === sym) {
+                var tf = root.timeframeForCell(i);
+                if (tf && tfs.indexOf(tf) === -1)
+                    tfs.push(tf);
+            }
+        }
+        return tfs;
+    }
+
+    function applyQuotesToDevelopingCandles(changedSymbols) {
+        if (root.replayCutoffTs > 0 || !root.chartCache || !Array.isArray(changedSymbols))
+            return;
+        var nowDate = new Date();
+        for (var i = 0; i < changedSymbols.length; i++) {
+            var sym = changedSymbols[i];
+            var q = sym ? root.quotes[sym] : null;
+            if (!q)
+                continue;
+            Model.updateCachedDevelopingCandles(root.chartCache, sym, q, root.activeTimeframesForSymbol(sym), nowDate);
+        }
+    }
 
     function notifyQuotesUpdated(changedSymbols) {
         if (!Array.isArray(changedSymbols) || changedSymbols.length === 0) return;
+        root.applyQuotesToDevelopingCandles(changedSymbols);
         var count = root.gridMode === "2x2" ? 4 : 5;
         for (var i = 0; i < count; i++) {
             var cSym = root.symbolForCell(i);
@@ -278,10 +334,33 @@ FloatingWindow {
         return Model.buildReplayQuote(q, root.chartCache[cacheKey(sym, "30")] || [], root.chartCache[cacheKey(sym, "60")] || [], root.chartCache[cacheKey(sym, "1D")] || [], root.replayCutoffTs, subBars);
     }
 
+    function isChartFresh(sym, tf, key) {
+        var cached = root.chartCache ? root.chartCache[key] : null;
+        if (!cached || cached.length === 0)
+            return false;
+        var fetchedAt = root.chartFetchedAt ? (root.chartFetchedAt[key] || 0) : 0;
+        if (!fetchedAt)
+            return false;
+        var ageMs = Date.now() - fetchedAt;
+        // Higher-timeframe histories (1W/1M/1Y) only need periodic reconciliation; developing bars update live on ticks.
+        if (tf === "1W" || tf === "1M" || tf === "1Y")
+            return ageMs < 300000;
+        // Non-crypto equities outside US market hours don't form new RTH candles every 15s.
+        if (!Model.isCryptoSymbol(sym) && !Model.isUsMarketOpen(new Date(), false))
+            return ageMs < 120000;
+        return false;
+    }
+
     function requestChartFetch(sym, tf, force) {
         var key = cacheKey(sym, tf);
         if (!force && root.chartCache[key])
             return;
+        if (force && root.isChartFresh(sym, tf, key))
+            return;
+        if (root.hubReady) {
+            root.hubChartFetchRequested(sym, tf, force === true);
+            return;
+        }
         for (var i = 0; i < root.pendingFetches.length; i++) {
             if (root.pendingFetches[i].symbol === sym && root.pendingFetches[i].rangeKey === tf)
                 return;
@@ -315,7 +394,10 @@ FloatingWindow {
             var raw = String(quoteStdout.text || "").trim();
             var parsed = exitCode === 0 && raw ? Model.parseSpark(raw) : ({});
             if (Object.keys(parsed).length > 0) {
+                var parsedKeys = Object.keys(parsed);
                 root.quotes = Model.mergeQuotes(root.quotes, parsed);
+                root.applyQuotesToDevelopingCandles(parsedKeys);
+                root.notifyQuotesUpdated(parsedKeys);
                 root.quoteFailureCount = 0;
                 root.evaluateActivePriceLevelAlerts(parsed);
                 root.quotesReceived(parsed);
@@ -338,7 +420,7 @@ FloatingWindow {
             var parsed = (exitCode === 0 && raw) ? Model.parseChart(raw, root.currentFetchRange, root.currentFetchSymbol) : null;
             if (!parsed && !root.isRetryingYahoo && Model.isCryptoSymbol(root.currentFetchSymbol)) {
                 root.isRetryingYahoo = true;
-                chartFetchProc.command = ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", Model.yahooChartUrl(root.currentFetchSymbol, root.currentFetchRange)];
+                chartFetchProc.command = ["curl", "-fsS", "--compressed", "--max-time", "8", "-A", "Mozilla/5.0", Model.yahooChartUrl(root.currentFetchSymbol, root.currentFetchRange)];
                 chartFetchProc.running = true;
                 return;
             }
@@ -348,6 +430,7 @@ FloatingWindow {
                 if (!root.chartCache)
                     root.chartCache = ({});
                 root.chartCache[key] = parsed.candles;
+                root.chartFetchedAt[key] = Date.now();
                 root.notifyCacheKeyUpdated(key);
                 root.chartDataReceived(key, parsed.candles, parsed.symbol ? parsed : null);
 
@@ -567,6 +650,7 @@ FloatingWindow {
         }
         refreshQuotes();
         refreshAllCharts();
+        root.activeSymbolsChanged();
         saveGridState();
     }
 
@@ -669,7 +753,6 @@ FloatingWindow {
     Component.onCompleted: {
         refreshQuotes();
         refreshAllCharts();
-        refreshAttackScan();
         Qt.callLater(function () {
             var item = root.getActiveCellItem();
             if (item)
@@ -681,7 +764,6 @@ FloatingWindow {
         if (visible) {
             refreshQuotes();
             refreshAllCharts();
-            refreshAttackScan();
             Qt.callLater(function () {
                 var item = root.getActiveCellItem();
                 if (item)
@@ -706,11 +788,12 @@ FloatingWindow {
         root.replayCutoffTs = 0;
         refreshQuotes();
         refreshAllCharts();
-        refreshAttackScan();
+        root.activeSymbolsChanged();
     }
     onGridModeChanged: {
         refreshQuotes();
         refreshAllCharts();
+        root.activeSymbolsChanged();
         Qt.callLater(function () {
             var item = root.getActiveCellItem();
             if (item)
@@ -1213,6 +1296,7 @@ FloatingWindow {
                         id: cellFocusSingle
                         anchors.fill: parent
                         cellIndex: root.activeCellIndex
+                        cellActive: root.visible && root.gridMode === "1x1"
                         symbol: root.symbolForCell(root.activeCellIndex)
                         timeframe: root.timeframeForCell(root.activeCellIndex)
                         zoomCount: root.zoomForCell(root.activeCellIndex)
@@ -1273,6 +1357,7 @@ FloatingWindow {
                         GridCell {
                             id: cell0
                             cellIndex: 0
+                            cellActive: root.visible && root.gridMode !== "1x1"
                             x: 0
                             y: 0
                             width: topRowContainer.col0Width
@@ -1340,6 +1425,7 @@ FloatingWindow {
                         GridCell {
                             id: cell1
                             cellIndex: 1
+                            cellActive: root.visible && root.gridMode !== "1x1"
                             x: topRowContainer.col0Width
                             y: 0
                             width: topRowContainer.col1Width
@@ -1425,6 +1511,7 @@ FloatingWindow {
                             GridCell {
                                 id: cell2
                                 cellIndex: 2
+                                cellActive: root.visible && root.gridMode === "2x2"
                                 x: 0
                                 y: 0
                                 width: botRow2x2.col2Width
@@ -1492,6 +1579,7 @@ FloatingWindow {
                             GridCell {
                                 id: cell3
                                 cellIndex: 3
+                                cellActive: root.visible && root.gridMode === "2x2"
                                 x: botRow2x2.col2Width
                                 y: 0
                                 width: botRow2x2.col3Width
@@ -1555,6 +1643,7 @@ FloatingWindow {
                             GridCell {
                                 id: cell2_3
                                 cellIndex: 2
+                                cellActive: root.visible && root.gridMode === "2+3"
                                 x: 0
                                 y: 0
                                 width: botRow23.col2Width
@@ -1622,6 +1711,7 @@ FloatingWindow {
                             GridCell {
                                 id: cell3_3
                                 cellIndex: 3
+                                cellActive: root.visible && root.gridMode === "2+3"
                                 x: botRow23.col2Width
                                 y: 0
                                 width: botRow23.col3Width
@@ -1689,6 +1779,7 @@ FloatingWindow {
                             GridCell {
                                 id: cell4
                                 cellIndex: 4
+                                cellActive: root.visible && root.gridMode === "2+3"
                                 x: botRow23.col2Width + botRow23.col3Width
                                 y: 0
                                 width: botRow23.col4Width

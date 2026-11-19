@@ -4794,3 +4794,135 @@ test("@ENERGY preset expands, normalizes and labels", () => {
   assert.equal(Model.describeSectorInput("@ENERGY"), "Energy")
   assert.equal(Model.describeSectorInput("@INDEX,@ENERGY"), "Major Indexes + Energy")
 })
+
+test("sparkQuoteUrl builds lightweight 1d quote URL and chartCommand enables gzip compression", () => {
+  const url = Model.sparkQuoteUrl(["SPY", "NVDA"])
+  assert.match(url, /\/v7\/finance\/spark\?symbols=SPY%2CNVDA&range=1d&interval=1d&includePrePost=false$/)
+  assert.ok(Model.chartCommand("AAPL", "1D").includes("--compressed"))
+  assert.ok(Model.chartCommand("HYPE32196-USD", "60").includes("--compressed"))
+})
+
+test("extractFtfcAnchors and computeFtfcFromAnchors match extractFTFC and survive lightweight mergeQuotes", () => {
+  const timestamps = [
+    Date.UTC(2026, 2, 2, 14, 30) / 1000,
+    Date.UTC(2026, 2, 9, 14, 30) / 1000,
+    Date.UTC(2026, 2, 10, 14, 30) / 1000,
+    Date.UTC(2026, 2, 10, 15, 30) / 1000
+  ]
+  const indicators = {
+    quote: [{
+      open: [100, 105, 110, 120],
+      high: [106, 112, 121, 126],
+      low: [99, 104, 109, 118],
+      close: [105, 110, 120, 122]
+    }]
+  }
+  const meta = { regularMarketOpen: 110 }
+  const hourly = Model.mergePeriodCandles(Model.parseCandles(timestamps, indicators), "60")
+  const anchors = Model.extractFtfcAnchors(hourly, meta, true)
+  for (const px of [95, 102, 108, 115, 125]) {
+    assert.deepEqual(
+      Model.computeFtfcFromAnchors(anchors, px),
+      Model.extractFTFC(timestamps, indicators, px, meta)
+    )
+  }
+
+  // mergeQuotes preserves anchors from full spark and recomputes FTFC in O(1) on lightweight tick
+  const hydrated = {
+    SPY: {
+      symbol: "SPY",
+      name: "SPDR S&P 500",
+      currency: "USD",
+      priceHint: 2,
+      previousClose: 108,
+      price: 125,
+      regularPrice: 125,
+      ftfcAnchors: anchors,
+      ftfc: Model.computeFtfcFromAnchors(anchors, 125)
+    }
+  }
+  const merged = Model.mergeQuotes(hydrated, {
+    SPY: { symbol: "SPY", price: 112, regularPrice: 112, ftfc: null }
+  })
+  assert.equal(merged.SPY.name, "SPDR S&P 500")
+  assert.equal(merged.SPY.previousClose, 108)
+  assert.deepEqual(merged.SPY.ftfc, { "60": "down", "D": "up", "W": "up", "M": "up" })
+})
+
+test("marketDateEt matches America/New_York Intl formatter across EST, EDT, DST transitions, and UTC midnight", () => {
+  const samples = [
+    Date.UTC(2026, 0, 15, 3, 30) / 1000,   // Jan 14 22:30 EST
+    Date.UTC(2026, 0, 15, 5, 0) / 1000,    // Jan 15 00:00 EST
+    Date.UTC(2026, 2, 8, 6, 59) / 1000,    // DST spring-forward -1m (Mar 8 01:59 EST)
+    Date.UTC(2026, 2, 8, 7, 1) / 1000,     // DST spring-forward +1m (Mar 8 03:01 EDT)
+    Date.UTC(2026, 6, 4, 3, 59) / 1000,    // Jul 3 23:59 EDT
+    Date.UTC(2026, 6, 4, 4, 1) / 1000,     // Jul 4 00:01 EDT
+    Date.UTC(2026, 10, 1, 5, 59) / 1000,   // DST fall-back -1m (Nov 1 01:59 EDT)
+    Date.UTC(2026, 10, 1, 6, 1) / 1000     // DST fall-back +1m (Nov 1 01:01 EST)
+  ]
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  })
+  for (const ts of samples) {
+    assert.equal(Model.marketDateEt(ts), fmt.format(new Date(ts * 1000)))
+  }
+})
+
+test("armedAlertSymbols returns deduplicated symbols with active un-triggered alerts", () => {
+  const syms = Model.armedAlertSymbols({
+    "NVDA": [{ price: 150, alertEnabled: true, alertTriggered: false }],
+    "AAPL": [{ price: 200, alertEnabled: true, alertTriggered: true }],
+    "msft": [
+      { price: 400, alertEnabled: false, alertTriggered: false },
+      { price: 410, alertEnabled: true, alertTriggered: false }
+    ],
+    "TSLA": [{ price: 250, alertEnabled: false }]
+  })
+  assert.deepEqual(syms, ["NVDA", "MSFT"])
+})
+
+test("matchesScenarioQuery bounded lookback produces identical results to full candle scan", () => {
+  const candles = []
+  for (let i = 0; i < 200; i++) {
+    candles.push({ timestamp: 1700000000 + i * 86400, open: 100 + i, high: 102 + i, low: 99 + i, close: 101 + i, volume: 1000 })
+  }
+  // Craft trailing 3 bars: 2u -> 1 -> 2u green
+  candles.push({ timestamp: 1720000000, open: 300, high: 310, low: 299, close: 308, volume: 1000 })
+  candles.push({ timestamp: 1720086400, open: 305, high: 309, low: 301, close: 304, volume: 1000 })
+  candles.push({ timestamp: 1720172800, open: 305, high: 315, low: 304, close: 314, volume: 1000 })
+  assert.equal(Model.matchesScenarioQuery(candles, null, "2u-1-2ug"), true)
+  assert.equal(Model.matchesScenarioQuery(candles, null, "2u-1-2ug, 3-1g"), true)
+  assert.equal(Model.matchesScenarioQuery(candles, null, "!1, 1-2u"), true)
+  assert.equal(Model.matchesScenarioQuery(candles, null, "!2u"), false)
+})
+
+test("packCandles and unpackCandles round-trip compact v2 tuples, strip float32 noise, and support legacy v1 objects", () => {
+  const raw = [
+    { timestamp: 1792159200, open: 414.3500061035156, high: 415.510009765625, low: 413.75, close: 414.6300048828125, volume: 540579 },
+    { timestamp: 1792162800, open: 0.000123456789, high: 0.000129999, low: 0.0001201, close: 0.000125678, volume: 987654321 }
+  ]
+  const packed = Model.packCandles(raw)
+  assert.equal(packed.length, 2)
+  assert.deepEqual(packed[0], [1792159200, 414.35, 415.51, 413.75, 414.63, 540579])
+  // Sub-$1 crypto retains 6 significant digits
+  assert.equal(packed[1][1], 0.000123457)
+  assert.ok(JSON.stringify(packed).length < JSON.stringify(raw).length * 0.55)
+
+  const unpacked = Model.unpackCandles(packed)
+  assert.deepEqual(unpacked[0], {
+    timestamp: 1792159200,
+    open: 414.35,
+    high: 415.51,
+    low: 413.75,
+    close: 414.63,
+    volume: 540579
+  })
+  // Backward compatible with v1 object arrays
+  const unpackedLegacy = Model.unpackCandles(raw)
+  assert.equal(unpackedLegacy.length, 2)
+  assert.equal(unpackedLegacy[0].timestamp, 1792159200)
+  assert.equal(unpackedLegacy[0].close, 414.6300048828125)
+})

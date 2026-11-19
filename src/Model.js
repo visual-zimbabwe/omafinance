@@ -501,6 +501,35 @@ function sparkUrl(symbols) {
     + "&range=1mo&interval=60m&includePrePost=false"
 }
 
+function sparkQuoteUrl(symbols) {
+  var list = Array.isArray(symbols) ? symbols.slice() : []
+  return "https://query1.finance.yahoo.com/v7/finance/spark?symbols="
+    + encodeURIComponent(list.join(","))
+    + "&range=1d&interval=1d&includePrePost=false"
+}
+
+function armedAlertSymbols(symbolLevels) {
+  var out = []
+  var seen = {}
+  if (!symbolLevels || typeof symbolLevels !== "object") return out
+  var syms = Object.keys(symbolLevels)
+  for (var i = 0; i < syms.length; i++) {
+    var sym = normalizeSymbol(syms[i])
+    if (!sym || seen[sym]) continue
+    var lvls = symbolLevels[syms[i]]
+    if (!isArrayLike(lvls)) continue
+    for (var j = 0; j < lvls.length; j++) {
+      var lvl = lvls[j]
+      if (lvl && lvl.alertEnabled && !lvl.alertTriggered) {
+        seen[sym] = true
+        out.push(sym)
+        break
+      }
+    }
+  }
+  return out
+}
+
 function quoteSymbolsForView(watchlist, detailSymbol, view) {
   var detail = normalizeSymbol(detailSymbol)
   if (view === "detail" && detail) return [detail]
@@ -654,14 +683,14 @@ function chartCommand(symbol, rangeKey) {
       }
     })
     return [
-      "curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0",
+      "curl", "-fsS", "--compressed", "--max-time", "8", "-A", "Mozilla/5.0",
       "-X", "POST",
       "-H", "Content-Type: application/json",
       "-d", payload,
       "https://api.hyperliquid.xyz/info"
     ]
   }
-  return ["curl", "-fsS", "--max-time", "8", "-A", "Mozilla/5.0", chartUrl(sym, rk)]
+  return ["curl", "-fsS", "--compressed", "--max-time", "8", "-A", "Mozilla/5.0", chartUrl(sym, rk)]
 }
 
 function collectPeriods(value) {
@@ -919,16 +948,9 @@ function parseCandles(timestamps, indicators) {
   return out
 }
 
-function extractFTFC(timestamps, indicators, price, meta) {
-  var quote = indicators && indicators.quote && indicators.quote[0] ? indicators.quote[0] : null
-  var hasExplicitOpen = !!(quote && quote.open && quote.open.length)
-  var p = finiteOrNull(price)
-  var rawCandles = parseCandles(timestamps, indicators)
-  var hourlyCandles = mergePeriodCandles(rawCandles, "60")
-  var N = hourlyCandles.length
-
-  var fallback = { "60": "flat", "D": "flat", "W": "flat", "M": "flat" }
-  if (!N || p === null) return fallback
+function extractFtfcAnchors(hourlyCandles, meta, hasExplicitOpen) {
+  var N = isArrayLike(hourlyCandles) ? hourlyCandles.length : 0
+  if (!N) return null
 
   var lastCandle = hourlyCandles[N - 1]
   var lastDate = new Date(lastCandle.timestamp * 1000)
@@ -1000,17 +1022,43 @@ function extractFTFC(timestamps, indicators, price, meta) {
   }
   if (monthOpen === null) monthOpen = hourlyCandles[0].close
 
+  return {
+    open60: open60,
+    openD: dayOpen,
+    openW: weekOpen,
+    openM: monthOpen,
+    hourBucket: Math.floor((Number(lastCandle.timestamp) || 0) / 3600),
+    anchoredAt: Date.now()
+  }
+}
+
+function computeFtfcFromAnchors(anchors, livePrice) {
+  var p = finiteOrNull(livePrice)
+  var fallback = { "60": "flat", "D": "flat", "W": "flat", "M": "flat" }
+  if (!anchors || p === null) return fallback
   function tone(curr, ref) {
-    if (curr === null || ref === null) return "flat"
+    if (curr === null || ref === null || ref === undefined) return "flat"
     return curr >= ref ? "up" : "down"
   }
-
   return {
-    "60": tone(p, open60),
-    "D": tone(p, dayOpen),
-    "W": tone(p, weekOpen),
-    "M": tone(p, monthOpen)
+    "60": tone(p, anchors.open60),
+    "D": tone(p, anchors.openD),
+    "W": tone(p, anchors.openW),
+    "M": tone(p, anchors.openM)
   }
+}
+
+function extractFTFC(timestamps, indicators, price, meta) {
+  var quote = indicators && indicators.quote && indicators.quote[0] ? indicators.quote[0] : null
+  var hasExplicitOpen = !!(quote && quote.open && quote.open.length)
+  var p = finiteOrNull(price)
+  var rawCandles = parseCandles(timestamps, indicators)
+  var hourlyCandles = mergePeriodCandles(rawCandles, "60")
+  if (!hourlyCandles.length || p === null) {
+    return { "60": "flat", "D": "flat", "W": "flat", "M": "flat" }
+  }
+  var anchors = extractFtfcAnchors(hourlyCandles, meta, hasExplicitOpen)
+  return computeFtfcFromAnchors(anchors, p)
 }
 
 function timeframeColor(quote, tf, upColor, downColor, dimColor) {
@@ -1060,11 +1108,12 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
   var openPx = finiteOrNull(meta.regularMarketOpen)
   if (openPx === 0) openPx = null
 
-  var candles = parseCandles(result.timestamp, result.indicators)
+  var rawCandles = parseCandles(result.timestamp, result.indicators)
+  var candles
   if (rangeKey === "1Y") {
-    candles = aggregateYearlyCandles(candles)
+    candles = aggregateYearlyCandles(rawCandles)
   } else {
-    candles = mergePeriodCandles(candles, rangeKey)
+    candles = mergePeriodCandles(rawCandles, rangeKey)
   }
 
   var candlePrice = regularPrice != null ? regularPrice : latest
@@ -1100,11 +1149,21 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
   var ftfcPrice = regularPrice != null ? regularPrice : latest
   var granularity = String(meta.dataGranularity || "")
   var isHourly = granularity === "1h" || granularity === "60m" || rangeKey === "60"
-  var ftfc = isHourly ? extractFTFC(result.timestamp, result.indicators, ftfcPrice, meta) : null
-  // Scenario needs real high/low; spark payloads carry closes only, so skip them.
   var q0 = result.indicators && result.indicators.quote && result.indicators.quote[0] ? result.indicators.quote[0] : null
-  var hasOHLC = !!(q0 && q0.open && q0.open.length && q0.high && q0.high.length && q0.low && q0.low.length)
-  var bar60 = (isHourly && hasOHLC) ? extractBar60(mergePeriodCandles(parseCandles(result.timestamp, result.indicators), "60"), ftfcPrice) : null
+  var hasExplicitOpen = !!(q0 && q0.open && q0.open.length)
+  // Scenario needs real high/low; spark payloads carry closes only, so skip them.
+  var hasOHLC = !!(hasExplicitOpen && q0.high && q0.high.length && q0.low && q0.low.length)
+  var ftfcAnchors = null
+  var ftfc = null
+  var bar60 = null
+  if (isHourly) {
+    var hourlyCandles = (rangeKey === "60" || rangeKey === "60m") ? candles : mergePeriodCandles(rawCandles, "60")
+    ftfcAnchors = extractFtfcAnchors(hourlyCandles, meta, hasExplicitOpen)
+    ftfc = ftfcAnchors ? computeFtfcFromAnchors(ftfcAnchors, ftfcPrice) : { "60": "flat", "D": "flat", "W": "flat", "M": "flat" }
+    if (hasOHLC) {
+      bar60 = extractBar60(hourlyCandles, ftfcPrice)
+    }
+  }
 
   return {
     symbol: symbol,
@@ -1132,6 +1191,7 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
     closes: closes,
     candles: candles,
     ftfc: ftfc,
+    ftfcAnchors: ftfcAnchors,
     bar60: bar60
   }
 }
@@ -1255,7 +1315,8 @@ function parseCoinbaseChart(raw, fallbackSymbol, rangeKey) {
     var prevClose = prev ? prev.close : last.open
     var change = last.close - prevClose
     var changePercent = (prevClose !== 0) ? (change / prevClose) * 100 : 0
-    var ftfc = (rk === "60") ? extractFTFCFromCandles(candles, last.close) : null
+    var ftfcAnchors = (rk === "60") ? extractFtfcAnchors(candles, null, true) : null
+    var ftfc = ftfcAnchors ? computeFtfcFromAnchors(ftfcAnchors, last.close) : null
     var bar60 = (rk === "60") ? extractBar60(candles, last.close) : null
 
     return {
@@ -1283,6 +1344,7 @@ function parseCoinbaseChart(raw, fallbackSymbol, rangeKey) {
       closes: closes,
       candles: candles,
       ftfc: ftfc,
+      ftfcAnchors: ftfcAnchors,
       bar60: bar60
     }
   } catch (e) {
@@ -1330,7 +1392,8 @@ function parseHyperliquidChart(raw, fallbackSymbol, rangeKey) {
     var prevClose = prev ? prev.close : last.open
     var change = last.close - prevClose
     var changePercent = (prevClose !== 0) ? (change / prevClose) * 100 : 0
-    var ftfc = (rk === "60") ? extractFTFCFromCandles(candles, last.close) : null
+    var ftfcAnchors = (rk === "60") ? extractFtfcAnchors(candles, null, true) : null
+    var ftfc = ftfcAnchors ? computeFtfcFromAnchors(ftfcAnchors, last.close) : null
     var bar60 = (rk === "60") ? extractBar60(candles, last.close) : null
 
     return {
@@ -1358,6 +1421,7 @@ function parseHyperliquidChart(raw, fallbackSymbol, rangeKey) {
       closes: closes,
       candles: candles,
       ftfc: ftfc,
+      ftfcAnchors: ftfcAnchors,
       bar60: bar60
     }
   } catch (e) {
@@ -1408,7 +1472,38 @@ function mergeQuotes(current, incoming) {
   }
   if (incoming) {
     for (key in incoming) {
-      if (Object.prototype.hasOwnProperty.call(incoming, key)) out[key] = incoming[key]
+      if (!Object.prototype.hasOwnProperty.call(incoming, key)) continue
+      var inc = incoming[key]
+      var prev = out[key]
+      if (prev && inc && typeof prev === "object" && typeof inc === "object") {
+        var merged = Object.assign({}, prev, inc)
+        if (!inc.name && prev.name) merged.name = prev.name
+        if (!inc.currency && prev.currency) merged.currency = prev.currency
+        if ((inc.priceHint === undefined || inc.priceHint === null) && prev.priceHint !== undefined) merged.priceHint = prev.priceHint
+        if (inc.previousClose == null && prev.previousClose != null) merged.previousClose = prev.previousClose
+        if (inc.open == null && prev.open != null) merged.open = prev.open
+        if (inc.dayHigh == null && prev.dayHigh != null) merged.dayHigh = prev.dayHigh
+        if (inc.dayLow == null && prev.dayLow != null) merged.dayLow = prev.dayLow
+        if (inc.volume == null && prev.volume != null) merged.volume = prev.volume
+        if (inc.fiftyTwoWeekHigh == null && prev.fiftyTwoWeekHigh != null) merged.fiftyTwoWeekHigh = prev.fiftyTwoWeekHigh
+        if (inc.fiftyTwoWeekLow == null && prev.fiftyTwoWeekLow != null) merged.fiftyTwoWeekLow = prev.fiftyTwoWeekLow
+        if (!inc.ftfcAnchors && prev.ftfcAnchors) merged.ftfcAnchors = prev.ftfcAnchors
+        if (!inc.bar60 && prev.bar60) merged.bar60 = prev.bar60
+        if (!inc.closes || inc.closes.length === 0) {
+          if (prev.closes && prev.closes.length > 0) merged.closes = prev.closes
+        }
+        if (!inc.ftfc) {
+          var ftfcPx = merged.regularPrice != null ? merged.regularPrice : merged.price
+          if (merged.ftfcAnchors && ftfcPx != null) {
+            merged.ftfc = computeFtfcFromAnchors(merged.ftfcAnchors, ftfcPx)
+          } else if (prev.ftfc) {
+            merged.ftfc = prev.ftfc
+          }
+        }
+        out[key] = merged
+      } else {
+        out[key] = inc
+      }
     }
   }
   return out
@@ -6715,7 +6810,7 @@ var BF_DEFAULT_WINDOW = 260;
 // Minimum number of bars between the two anchors of a ray.
 var BF_MIN_SPAN = 2;
 // Memoised computeActiveBroadening results kept per Model.js instance (charts repaint often).
-var BF_CACHE_LIMIT = 24;
+var BF_CACHE_LIMIT = 128;
 
 function bfExtreme(candle, isUpper) {
   return Number(isUpper ? candle.high : candle.low);
@@ -7334,14 +7429,11 @@ function buildSingleBarDescriptor(cCur, cPrev) {
   };
 }
 
-function buildScenarioContext(candles, quote) {
+function buildScenarioContext(candles, quote, maxLookbackBars) {
   if (!isArrayLike(candles) || candles.length < 2) return null;
 
   var n = candles.length;
   var cLast = Object.assign({}, candles[n - 1]);
-  var cPrev = candles[n - 2];
-  var cTwo = n >= 3 ? candles[n - 3] : null;
-  var cThree = n >= 4 ? candles[n - 4] : null;
 
   var livePx = stratLivePrice(quote);
   if (livePx !== null && isFinite(livePx)) {
@@ -7350,8 +7442,14 @@ function buildScenarioContext(candles, quote) {
     if (cLast.low === null || livePx < cLast.low) cLast.low = livePx;
   }
 
+  var startIdx = 1;
+  if (typeof maxLookbackBars === "number" && isFinite(maxLookbackBars) && maxLookbackBars > 0) {
+    var needed = Math.max(3, Math.floor(maxLookbackBars));
+    startIdx = Math.max(1, n - needed);
+  }
+
   var bars = [];
-  for (var i = 1; i < n; i++) {
+  for (var i = startIdx; i < n; i++) {
     var curCandle = (i === n - 1) ? cLast : candles[i];
     bars.push(buildSingleBarDescriptor(curCandle, candles[i - 1]));
   }
@@ -7519,9 +7617,22 @@ function evaluateScenarioToken(ctx, token) {
   return isNegated ? !res : res;
 }
 
-function matchesScenarioTokens(candles, quote, tokens) {
+function scenarioLookbackForTokens(tokens) {
+  var maxK = 3;
+  if (!tokens) return maxK;
+  for (var i = 0; i < tokens.length; i++) {
+    var raw = String(tokens[i] || "");
+    if (raw.charAt(0) === "!" || raw.charAt(0) === "-") raw = raw.substring(1);
+    if (!raw) continue;
+    var parts = raw.split("-");
+    if (parts.length > maxK) maxK = parts.length;
+  }
+  return maxK;
+}
+
+function matchesScenarioTokens(candles, quote, tokens, prebuiltCtx) {
   if (!tokens || tokens.length === 0) return true;
-  var ctx = buildScenarioContext(candles, quote);
+  var ctx = prebuiltCtx || buildScenarioContext(candles, quote, scenarioLookbackForTokens(tokens));
   if (!ctx) return false;
 
   for (var i = 0; i < tokens.length; i++) {
@@ -7545,9 +7656,12 @@ function matchesScenarioQuery(candles, quote, query) {
   var clauses = parseScenarioQuery(query);
   if (clauses.length === 0) return true;
 
+  var maxLookback = 3;
   var inclusionClauses = [];
   var exclusionClauses = [];
   for (var i = 0; i < clauses.length; i++) {
+    var k = scenarioLookbackForTokens(clauses[i]);
+    if (k > maxLookback) maxLookback = k;
     if (isPureExclusionClause(clauses[i])) {
       exclusionClauses.push(clauses[i]);
     } else {
@@ -7555,8 +7669,12 @@ function matchesScenarioQuery(candles, quote, query) {
     }
   }
 
+  // Build context ONCE per symbol across all clauses (and only for the trailing maxLookback bars)
+  var ctx = buildScenarioContext(candles, quote, maxLookback);
+  if (!ctx) return false;
+
   for (var e = 0; e < exclusionClauses.length; e++) {
-    if (!matchesScenarioTokens(candles, quote, exclusionClauses[e])) {
+    if (!matchesScenarioTokens(candles, quote, exclusionClauses[e], ctx)) {
       return false;
     }
   }
@@ -7564,7 +7682,7 @@ function matchesScenarioQuery(candles, quote, query) {
   if (inclusionClauses.length === 0) return true;
 
   for (var p = 0; p < inclusionClauses.length; p++) {
-    if (matchesScenarioTokens(candles, quote, inclusionClauses[p])) {
+    if (matchesScenarioTokens(candles, quote, inclusionClauses[p], ctx)) {
       return true;
     }
   }
@@ -7638,12 +7756,12 @@ function chunkSymbols(symbols, chunkSize) {
 }
 
 function marketDateEt(timestampSec) {
-  var d = (timestampSec != null && isFinite(timestampSec)) ? new Date(timestampSec * 1000) : new Date();
-  var s = d.toLocaleString("en-US", { timeZone: "America/New_York" });
-  var et = new Date(s);
-  var m = et.getMonth() + 1;
-  var day = et.getDate();
-  return et.getFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day;
+  var utcMs = (timestampSec != null && isFinite(timestampSec)) ? (timestampSec * 1000) : Date.now();
+  var offsetMs = (isUsDstUtc(utcMs) ? -4 : -5) * 3600000;
+  var et = new Date(utcMs + offsetMs);
+  var m = et.getUTCMonth() + 1;
+  var day = et.getUTCDate();
+  return et.getUTCFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day;
 }
 
 function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
@@ -7846,6 +7964,88 @@ function updateCachedDevelopingCandles(cache, sym, quote, timeframes, nowDate) {
   return changedKeys;
 }
 
+function roundCandlePrice(v) {
+  var n = finiteOrNull(v);
+  if (n === null) return null;
+  var abs = Math.abs(n);
+  if (abs === 0) return 0;
+  if (abs >= 1) return Math.round(n * 10000) / 10000;
+  return Number(n.toPrecision(6));
+}
+
+function packCandles(candles) {
+  if (!isArrayLike(candles) || candles.length === 0) return [];
+  var out = [];
+  for (var i = 0; i < candles.length; i++) {
+    var c = candles[i];
+    if (!c) continue;
+    if (Array.isArray(c) && c.length >= 5) {
+      out.push([
+        Math.round(Number(c[0]) || 0),
+        roundCandlePrice(c[1]),
+        roundCandlePrice(c[2]),
+        roundCandlePrice(c[3]),
+        roundCandlePrice(c[4]),
+        Math.round(Number(c[5]) || 0)
+      ]);
+      continue;
+    }
+    var ts = finiteOrNull(c.timestamp);
+    var cl = roundCandlePrice(c.close);
+    if (ts === null || cl === null) continue;
+    var op = roundCandlePrice(c.open);
+    var hi = roundCandlePrice(c.high);
+    var lo = roundCandlePrice(c.low);
+    out.push([
+      Math.round(ts),
+      op !== null ? op : cl,
+      hi !== null ? hi : cl,
+      lo !== null ? lo : cl,
+      cl,
+      Math.round(Number(c.volume) || 0)
+    ]);
+  }
+  return out;
+}
+
+function unpackCandles(raw) {
+  if (!isArrayLike(raw) || raw.length === 0) return [];
+  var out = [];
+  for (var i = 0; i < raw.length; i++) {
+    var item = raw[i];
+    if (!item) continue;
+    if (Array.isArray(item) && item.length >= 5) {
+      var ts = finiteOrNull(item[0]);
+      var op = finiteOrNull(item[1]);
+      var hi = finiteOrNull(item[2]);
+      var lo = finiteOrNull(item[3]);
+      var cl = finiteOrNull(item[4]);
+      if (ts === null || cl === null) continue;
+      out.push({
+        timestamp: ts,
+        open: op !== null ? op : cl,
+        high: hi !== null ? hi : cl,
+        low: lo !== null ? lo : cl,
+        close: cl,
+        volume: finiteOrNull(item[5]) || 0
+      });
+    } else if (typeof item === "object") {
+      var ots = finiteOrNull(item.timestamp);
+      var ocl = finiteOrNull(item.close);
+      if (ots === null || ocl === null) continue;
+      out.push({
+        timestamp: ots,
+        open: finiteOrNull(item.open) !== null ? finiteOrNull(item.open) : ocl,
+        high: finiteOrNull(item.high) !== null ? finiteOrNull(item.high) : ocl,
+        low: finiteOrNull(item.low) !== null ? finiteOrNull(item.low) : ocl,
+        close: ocl,
+        volume: finiteOrNull(item.volume) || 0
+      });
+    }
+  }
+  return out;
+}
+
 function pruneChartCache(cache, maxEntries, accessTimes, protectedKeys) {
   if (!cache || typeof cache !== "object") return {};
   var cap = (isFinite(maxEntries) && maxEntries > 0) ? Math.floor(maxEntries) : 600;
@@ -7893,6 +8093,7 @@ function mergeChartQuote(existingQuote, chartParsed) {
   if (hasExisting) {
     var enriched = Object.assign({}, existingQuote);
     if (chartParsed.ftfc) enriched.ftfc = chartParsed.ftfc;
+    if (chartParsed.ftfcAnchors) enriched.ftfcAnchors = chartParsed.ftfcAnchors;
     if (chartParsed.bar60) enriched.bar60 = chartParsed.bar60;
     if (chartParsed.closes && (!enriched.closes || enriched.closes.length === 0)) enriched.closes = chartParsed.closes;
     if (chartParsed.name && !enriched.name) enriched.name = chartParsed.name;
@@ -7933,6 +8134,11 @@ if (typeof module !== "undefined") {
     barSymbol: barSymbol,
     searchUrl: searchUrl,
     sparkUrl: sparkUrl,
+    sparkQuoteUrl: sparkQuoteUrl,
+    armedAlertSymbols: armedAlertSymbols,
+    extractFtfcAnchors: extractFtfcAnchors,
+    computeFtfcFromAnchors: computeFtfcFromAnchors,
+    marketDateEt: marketDateEt,
     quoteSymbolsForView: quoteSymbolsForView,
     chartRanges: chartRanges,
     normalizeRange: normalizeRange,
@@ -8087,6 +8293,8 @@ if (typeof module !== "undefined") {
     chunkSymbols: chunkSymbols,
     updateDevelopingCandle: updateDevelopingCandle,
     updateCachedDevelopingCandles: updateCachedDevelopingCandles,
+    packCandles: packCandles,
+    unpackCandles: unpackCandles,
     pruneChartCache: pruneChartCache,
     mergeChartQuote: mergeChartQuote,
     SIMULTANEOUS_BREAK_THRESHOLD: SIMULTANEOUS_BREAK_THRESHOLD,

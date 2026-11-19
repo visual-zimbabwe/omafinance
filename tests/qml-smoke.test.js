@@ -786,3 +786,47 @@ test("SectorAnalysisWindow preserves and labels @ ticker presets", () => {
   assert.match(win, /function setSector\(sym\)\s*\{[\s\S]*?Model\.describeSectorInput\(sym\)[\s\S]*?Model\.normalizeSectorInput\(sym\)/)
   assert.match(win, /readonly property string sectorFullName:\s*\{[\s\S]*?Model\.describeSectorInput\(root\.sectorSymbol\)/)
 })
+
+test("real-time streaming hub, off-thread cache, active-gating, virtualized GridView, and batched Canvas optimizations are wired", () => {
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+  const sector = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
+  const settings = fs.readFileSync(source("FinanceSettingsView.qml"), "utf8")
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"))
+
+  // Phase 1: Dead refreshAttackScan removed; live developing candles & compression enabled
+  assert.doesNotMatch(grid, /refreshAttackScan/)
+  assert.match(grid, /function isChartFresh\(/)
+  assert.match(grid, /function applyQuotesToDevelopingCandles\(/)
+  assert.match(panel, /function applyLiveQuotesToDetailAndCache\(/)
+  assert.match(panel, /Model\.armedAlertSymbols\(root\.symbolLevels\)/)
+
+  // Phase 2: Persistent NDJSON streaming daemon + active/alert-gated lifecycle + liveStreaming setting
+  assert.ok(fs.existsSync(path.join(root, "scripts", "market-stream.js")))
+  assert.equal(manifest.barWidget.defaults.liveStreaming, true)
+  assert.match(settings, /label:\s*"Real-time streaming"/)
+  assert.match(panel, /id:\s*streamProc[\s\S]*?stdinEnabled:\s*true[\s\S]*?market-stream\.js/)
+  assert.match(panel, /readonly property bool shouldStreamLive:/)
+  assert.match(panel, /function handleStreamLine\(line\)/)
+  assert.match(grid, /property bool hubStreamingActive:\s*false/)
+  assert.match(sector, /property bool hubStreamingActive:\s*false/)
+
+  // Phase 3: Off-thread compact v2 cache + in-memory pruning
+  assert.match(panel, /function pruneInMemoryChartCache\(/)
+  assert.match(panel, /op:\s*"cacheFlush"/)
+  assert.match(panel, /Model\.unpackCandles/)
+
+  // Phase 4: Active-gated GridCells, virtualized scrollable GridView (>36), lazy drilldown, coalesced/batched CandlestickChart
+  assert.doesNotMatch(grid, /onQuotesChanged:\s*root\.notifyCacheKeyUpdated\(""\)/)
+  assert.match(grid, /cellActive:\s*root\.visible && root\.gridMode === "1x1"/)
+  assert.match(cell, /property bool cellActive:\s*true/)
+  assert.match(cell, /renderActive:\s*root\.cellActive/)
+  assert.match(chart, /function _flushGeometry\(\)/)
+  assert.match(chart, /Qt\.callLater\(root\._flushGeometry\)/)
+  assert.match(chart, /wheelZoomRequiresModifier/)
+  assert.match(sector, /readonly property int virtualizeThreshold:\s*36/)
+  assert.match(sector, /GridView\s*\{\s*id:\s*tileGridView/)
+  assert.match(sector, /Loader\s*\{\s*id:\s*drillDownLoader[\s\S]*?active:\s*root\.inDrillDown/)
+})
