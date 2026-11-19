@@ -5012,3 +5012,201 @@ test("price scale log zoom, vertical pan, drag/wheel factors, and step-aware com
   const parsed = Model.parseState(raw)
   assert.deepEqual(parsed.gridZooms, [1, 3, 5, -1, 8])
 })
+
+test("normalizeYahooTick maps proto3-omitted marketHours to pre-market outside RTH and regular during RTH", () => {
+  const MarketStream = require("../scripts/market-stream.js")
+
+  // Thursday 2026-11-19 (EST = UTC-5)
+  const preMarketMs = Date.UTC(2026, 10, 19, 13, 0, 0) // 08:00 ET
+  const rthMs = Date.UTC(2026, 10, 19, 15, 0, 0)       // 10:00 ET
+  const postMs = Date.UTC(2026, 10, 19, 22, 0, 0)      // 17:00 ET
+
+  // Proto3 omits field 7 when marketHours === 0 (PRE_MARKET)
+  const preTick = MarketStream.normalizeYahooTick({ 1: "NVDA", 2: 155.25, 3: preMarketMs })
+  assert.equal(preTick.session, "pre")
+  assert.equal(preTick.hasExtended, true)
+  assert.equal(preTick.extendedPrice, 155.25)
+  assert.equal(preTick.regularPrice, undefined)
+
+  // Safety net: omitted field 7 during confirmed US RTH resolves to regular
+  const rthOmitted = MarketStream.normalizeYahooTick({ 1: "NVDA", 2: 156.5, 3: rthMs })
+  assert.equal(rthOmitted.session, "regular")
+  assert.equal(rthOmitted.regularPrice, 156.5)
+  assert.equal(rthOmitted.hasExtended, false)
+
+  // Explicit field 7 = 1 (REGULAR) and 2 (POST)
+  const regTick = MarketStream.normalizeYahooTick({ 1: "SPY", 2: 728.2, 3: rthMs, 7: 1n })
+  assert.equal(regTick.session, "regular")
+  assert.equal(regTick.regularPrice, 728.2)
+  assert.equal(regTick.hasExtended, false)
+
+  const postTick = MarketStream.normalizeYahooTick({ 1: "SPY", 2: 729.0, 3: postMs, 7: 2n })
+  assert.equal(postTick.session, "post")
+  assert.equal(postTick.extendedPrice, 729.0)
+  assert.equal(postTick.hasExtended, true)
+  assert.equal(postTick.regularPrice, undefined)
+
+  // Crypto always stays "live"
+  const cryptoTick = MarketStream.normalizeYahooTick({ 1: "BTC-USD", 2: 92000, 3: preMarketMs })
+  assert.equal(cryptoTick.session, "live")
+  assert.equal(cryptoTick.regularPrice, 92000)
+})
+
+test("mergeQuotes clears yesterday open/dayHigh/dayLow/volume on new trading day and pre->regular open transition", () => {
+  const wedCloseSec = Math.floor(Date.UTC(2026, 10, 18, 21, 0, 0) / 1000) // Wed 16:00 ET
+  const thuPreSec = Math.floor(Date.UTC(2026, 10, 19, 13, 30, 0) / 1000)  // Thu 08:30 ET
+  const thuOpenSec = Math.floor(Date.UTC(2026, 10, 19, 14, 30, 5) / 1000) // Thu 09:30:05 ET
+  const thuMidSec = Math.floor(Date.UTC(2026, 10, 19, 15, 15, 0) / 1000)  // Thu 10:15 ET
+
+  const wedQuote = {
+    NVDA: {
+      symbol: "NVDA",
+      name: "NVIDIA",
+      price: 150,
+      regularPrice: 150,
+      previousClose: 148,
+      open: 149,
+      dayHigh: 155,
+      dayLow: 147,
+      volume: 50000000,
+      session: "regular",
+      timestamp: wedCloseSec
+    }
+  }
+
+  // 1. Direct Wed regular -> Thu regular WS tick (omits open/dayHigh/dayLow)
+  const mergedDirect = Model.mergeQuotes(wedQuote, {
+    NVDA: { symbol: "NVDA", price: 160, regularPrice: 160, session: "regular", timestamp: thuOpenSec }
+  })
+  assert.equal(mergedDirect.NVDA.dayHigh, null)
+  assert.equal(mergedDirect.NVDA.dayLow, null)
+  assert.equal(mergedDirect.NVDA.open, null)
+  assert.equal(mergedDirect.NVDA.volume, null)
+  assert.equal(mergedDirect.NVDA.name, "NVIDIA")
+
+  // 2. Wed regular -> Thu pre-market (08:30) -> Thu regular open (09:30)
+  const mergedPre = Model.mergeQuotes(wedQuote, {
+    NVDA: { symbol: "NVDA", price: 159, extendedPrice: 159, hasExtended: true, session: "pre", timestamp: thuPreSec }
+  })
+  assert.equal(mergedPre.NVDA.dayHigh, 155)
+  const mergedAfterPre = Model.mergeQuotes(mergedPre, {
+    NVDA: { symbol: "NVDA", price: 160.5, regularPrice: 160.5, hasExtended: false, session: "regular", timestamp: thuOpenSec }
+  })
+  assert.equal(mergedAfterPre.NVDA.dayHigh, null)
+  assert.equal(mergedAfterPre.NVDA.dayLow, null)
+  assert.equal(mergedAfterPre.NVDA.open, null)
+
+  // 3. Same-day regular tick preserves today's dayHigh/dayLow/open
+  const thuHydrated = {
+    NVDA: { symbol: "NVDA", price: 161, regularPrice: 161, open: 160, dayHigh: 162, dayLow: 159.5, volume: 12000000, session: "regular", timestamp: thuOpenSec }
+  }
+  const mergedSameDay = Model.mergeQuotes(thuHydrated, {
+    NVDA: { symbol: "NVDA", price: 161.5, regularPrice: 161.5, session: "regular", timestamp: thuMidSec }
+  })
+  assert.equal(mergedSameDay.NVDA.dayHigh, 162)
+  assert.equal(mergedSameDay.NVDA.dayLow, 159.5)
+  assert.equal(mergedSameDay.NVDA.open, 160)
+})
+
+test("updateDevelopingCandle preserves RTH purity, aligns 60m US equities to 09:30 ET, and rolls over 1W/1M/1Y", () => {
+  // 1. Pre-market and post-market ticks never mutate RTH candles
+  const wed1530Sec = Math.floor(Date.UTC(2026, 10, 18, 20, 30, 0) / 1000) // Wed 15:30 EST
+  const base60 = [{ timestamp: wed1530Sec, open: 100, high: 101, low: 99, close: 100.5, volume: 1000 }]
+  const preRes = Model.updateDevelopingCandle(base60, { symbol: "AAPL", price: 105, extendedPrice: 105, session: "pre" }, "60", new Date(Date.UTC(2026, 10, 19, 13, 15, 0)))
+  assert.equal(preRes, base60)
+  const postRes = Model.updateDevelopingCandle(base60, { symbol: "AAPL", price: 98, extendedPrice: 98, session: "post" }, "60", new Date(Date.UTC(2026, 10, 19, 22, 0, 0)))
+  assert.equal(postRes, base60)
+
+  // 2. 60m US equity aligns to 09:30 ET, 10:30 ET, and guards 09:29:59 skew
+  const thu0930Sec = Math.floor(Date.UTC(2026, 10, 19, 14, 30, 0) / 1000)
+  const thu1030Sec = Math.floor(Date.UTC(2026, 10, 19, 15, 30, 0) / 1000)
+
+  const skewRes = Model.updateDevelopingCandle(base60, { symbol: "AAPL", regularPrice: 102, session: "regular" }, "60", new Date(Date.UTC(2026, 10, 19, 14, 29, 59)))
+  assert.equal(skewRes.length, 2)
+  assert.equal(skewRes[1].timestamp, thu0930Sec)
+
+  const openRes = Model.updateDevelopingCandle(base60, { symbol: "AAPL", regularPrice: 102, session: "regular" }, "60", new Date(Date.UTC(2026, 10, 19, 14, 31, 0)))
+  assert.equal(openRes.length, 2)
+  assert.equal(openRes[1].timestamp, thu0930Sec)
+  assert.equal(openRes[1].open, 102)
+
+  const midHourRes = Model.updateDevelopingCandle(openRes, { symbol: "AAPL", regularPrice: 104, session: "regular" }, "60", new Date(Date.UTC(2026, 10, 19, 15, 15, 0)))
+  assert.equal(midHourRes.length, 2)
+  assert.equal(midHourRes[1].timestamp, thu0930Sec)
+  assert.equal(midHourRes[1].high, 104)
+  assert.equal(midHourRes[1].close, 104)
+
+  const nextHourRes = Model.updateDevelopingCandle(midHourRes, { symbol: "AAPL", regularPrice: 103.5, session: "regular" }, "60", new Date(Date.UTC(2026, 10, 19, 15, 31, 0)))
+  assert.equal(nextHourRes.length, 3)
+  assert.equal(nextHourRes[2].timestamp, thu1030Sec)
+  assert.equal(nextHourRes[2].open, 103.5)
+
+  // 3. 60m crypto & non-US equity keep top-of-hour :00 alignment
+  const btcBase = [{ timestamp: Math.floor(Date.UTC(2026, 10, 19, 13, 0, 0) / 1000), open: 90000, high: 91000, low: 89500, close: 90500, volume: 10 }]
+  const btcRes = Model.updateDevelopingCandle(btcBase, { symbol: "BTC-USD", regularPrice: 91200, session: "live" }, "60", new Date(Date.UTC(2026, 10, 19, 14, 31, 0)))
+  assert.equal(btcRes.length, 2)
+  assert.equal(btcRes[1].timestamp, Math.floor(Date.UTC(2026, 10, 19, 14, 0, 0) / 1000))
+
+  const deBase = [{ timestamp: Math.floor(Date.UTC(2026, 10, 19, 13, 0, 0) / 1000), open: 200, high: 202, low: 199, close: 201, volume: 100 }]
+  const deRes = Model.updateDevelopingCandle(deBase, { symbol: "SAP.DE", regularPrice: 203, session: "regular" }, "60", new Date(Date.UTC(2026, 10, 19, 14, 31, 0)))
+  assert.equal(deRes.length, 2)
+  assert.equal(deRes[1].timestamp, Math.floor(Date.UTC(2026, 10, 19, 14, 0, 0) / 1000))
+
+  // 4. 1W Monday rollover, 1M 1st-of-month rollover, 1Y Jan-1 rollover
+  const prevWeekMon = Math.floor(Date.UTC(2026, 10, 9, 14, 30, 0) / 1000)  // Mon Nov 9
+  const nextWeekMon = new Date(Date.UTC(2026, 10, 16, 14, 31, 0))          // Mon Nov 16 09:31 ET
+  const wRes = Model.updateDevelopingCandle([{ timestamp: prevWeekMon, open: 10, high: 12, low: 9, close: 11, volume: 1 }], { symbol: "SPY", regularPrice: 12.5, session: "regular" }, "1W", nextWeekMon)
+  assert.equal(wRes.length, 2)
+  assert.equal(wRes[1].open, 12.5)
+
+  const octBar = Math.floor(Date.UTC(2026, 9, 1, 13, 30, 0) / 1000)        // Oct 1
+  const nov2Open = new Date(Date.UTC(2026, 10, 2, 14, 31, 0))              // Nov 2
+  const mRes = Model.updateDevelopingCandle([{ timestamp: octBar, open: 10, high: 12, low: 9, close: 11, volume: 1 }], { symbol: "SPY", regularPrice: 11.8, session: "regular" }, "1M", nov2Open)
+  assert.equal(mRes.length, 2)
+  assert.equal(mRes[1].open, 11.8)
+
+  const y2025 = Math.floor(Date.UTC(2025, 0, 2, 14, 30, 0) / 1000)
+  const y2026Open = new Date(Date.UTC(2026, 0, 2, 14, 31, 0))
+  const yRes = Model.updateDevelopingCandle([{ timestamp: y2025, open: 500, high: 600, low: 480, close: 590, volume: 1 }], { symbol: "SPY", regularPrice: 595, session: "regular" }, "1Y", y2026Open)
+  assert.equal(yRes.length, 2)
+  assert.equal(yRes[1].open, 595)
+
+  // 5. 1D ignores stale previous-day dayHigh/dayLow
+  const wed1D = [{ timestamp: Math.floor(Date.UTC(2026, 10, 18, 14, 30, 0) / 1000), open: 149, high: 155, low: 147, close: 150, volume: 100 }]
+  const staleDayQuote = { symbol: "NVDA", regularPrice: 160, dayHigh: 155, dayLow: 147, session: "regular", timestamp: Math.floor(Date.UTC(2026, 10, 18, 21, 0, 0) / 1000) }
+  const dRes = Model.updateDevelopingCandle(wed1D, staleDayQuote, "1D", new Date(Date.UTC(2026, 10, 19, 14, 30, 5)))
+  assert.equal(dRes.length, 2)
+  assert.equal(dRes[1].low, 160)
+  assert.equal(dRes[1].high, 160)
+})
+
+test("isCandleSeriesStale detects stale prior-session caches during RTH without false positives", () => {
+  const wed1D = [{ timestamp: Math.floor(Date.UTC(2026, 10, 18, 14, 30, 0) / 1000), open: 100, high: 102, low: 99, close: 101, volume: 10 }]
+  const thu1D = [...wed1D, { timestamp: Math.floor(Date.UTC(2026, 10, 19, 14, 30, 0) / 1000), open: 102, high: 103, low: 101, close: 102.5, volume: 10 }]
+  const mon1W = [{ timestamp: Math.floor(Date.UTC(2026, 10, 16, 14, 30, 0) / 1000), open: 98, high: 103, low: 97, close: 101, volume: 50 }]
+
+  const thuPre = new Date(Date.UTC(2026, 10, 19, 13, 30, 0))  // Thu 08:30 ET
+  const thuRth = new Date(Date.UTC(2026, 10, 19, 15, 0, 0))   // Thu 10:00 ET
+  const thuPost = new Date(Date.UTC(2026, 10, 19, 21, 30, 0)) // Thu 16:30 ET
+  const satNoon = new Date(Date.UTC(2026, 10, 21, 17, 0, 0))  // Sat 12:00 ET
+
+  // Empty is always stale
+  assert.equal(Model.isCandleSeriesStale([], "NVDA", "1D", thuRth, 0), true)
+
+  // During RTH: yesterday's 1D is stale, today's 1D is fresh
+  assert.equal(Model.isCandleSeriesStale(wed1D, "NVDA", "1D", thuRth, 0), true)
+  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", thuRth, 0), false)
+
+  // During RTH: 1W (Monday timestamp) requires a live fetch during today's RTH
+  assert.equal(Model.isCandleSeriesStale(mon1W, "NVDA", "1W", thuRth, 0), true)
+  assert.equal(Model.isCandleSeriesStale(mon1W, "NVDA", "1W", thuRth, thuPre.getTime()), true)
+  assert.equal(Model.isCandleSeriesStale(mon1W, "NVDA", "1W", thuRth, Date.UTC(2026, 10, 19, 14, 31, 0)), false)
+
+  // Pre-market & weekend: yesterday's / Friday's bars are fresh
+  assert.equal(Model.isCandleSeriesStale(wed1D, "NVDA", "1D", thuPre, 0), false)
+  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", satNoon, 0), false)
+
+  // Post-market: missing today's 1D bar is stale, having today's 1D bar is fresh
+  assert.equal(Model.isCandleSeriesStale(wed1D, "NVDA", "1D", thuPost, 0), true)
+  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", thuPost, 0), false)
+})

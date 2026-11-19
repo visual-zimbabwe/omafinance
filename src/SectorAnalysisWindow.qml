@@ -49,6 +49,7 @@ FloatingWindow {
     property string holdingsFetchSymbol: ""
     property var quotes: ({})
     property var chartCache: ({})
+    property var chartFetchedAt: ({})
     property var symbolLevels: ({})
     property var pendingFetches: []
     property var pendingQuoteChunks: []
@@ -74,12 +75,17 @@ FloatingWindow {
     signal resetAllPriceScalesRequested
     property int drillDownDataRev: 0
 
-    function notifyCacheKeyUpdated(key) {
+    function clearHubPendingKey(key) {
         var k = String(key || "");
         if (k && root.hubPendingMap && root.hubPendingMap[k]) {
             delete root.hubPendingMap[k];
             root.hubPendingCount = Math.max(0, root.hubPendingCount - 1);
         }
+    }
+
+    function notifyCacheKeyUpdated(key) {
+        var k = String(key || "");
+        root.clearHubPendingKey(k);
         var sep = k.lastIndexOf("_");
         var sym = sep >= 0 ? k.slice(0, sep) : "";
         if (sym) {
@@ -816,6 +822,7 @@ FloatingWindow {
                     if (!root.chartCache)
                         root.chartCache = ({});
                     root.chartCache[k] = parsed.candles;
+                    root.chartFetchedAt[k] = Date.now();
                     root.notifyCacheKeyUpdated(k);
                     root.chartDataReceived(k, parsed.candles, parsed.symbol ? parsed : null);
 
@@ -943,15 +950,60 @@ FloatingWindow {
         }
     }
 
+    function refreshViewportCharts(force) {
+        var viewportSyms = getVisibleViewportSymbols();
+        var nowDate = new Date();
+        var seen = ({});
+        for (var v = 0; v < viewportSyms.length; v++) {
+            var vs = viewportSyms[v];
+            if (!vs || seen[vs])
+                continue;
+            seen[vs] = true;
+            var kActive = cacheKey(vs, root.timeframe);
+            var cachedActive = root.chartCache ? root.chartCache[kActive] : null;
+            var forceActive = (force === true) || (cachedActive && cachedActive.length > 0 && Model.isCandleSeriesStale(cachedActive, vs, root.timeframe, nowDate, root.chartFetchedAt[kActive] || 0));
+            queueFetch(vs, root.timeframe, forceActive);
+            if (root.timeframe !== "1D") {
+                var k1D = cacheKey(vs, "1D");
+                var c1D = root.chartCache ? root.chartCache[k1D] : null;
+                var force1D = (force === true) || (c1D && c1D.length > 0 && Model.isCandleSeriesStale(c1D, vs, "1D", nowDate, root.chartFetchedAt[k1D] || 0));
+                queueFetch(vs, "1D", force1D);
+            }
+            if (root.timeframe !== "60") {
+                var k60 = cacheKey(vs, "60");
+                var c60 = root.chartCache ? root.chartCache[k60] : null;
+                var force60 = (force === true) || (c60 && c60.length > 0 && Model.isCandleSeriesStale(c60, vs, "60", nowDate, root.chartFetchedAt[k60] || 0));
+                queueFetch(vs, "60", force60);
+            }
+        }
+    }
+
+    function handleSessionBoundary(sessionState) {
+        root.chartFetchedAt = ({});
+        root.refreshBatchQuotes();
+        if (root.inDrillDown && root.drillDownSymbol) {
+            root.queueFetch(root.drillDownSymbol, "30", true);
+            root.queueFetch(root.drillDownSymbol, "60", true);
+            root.queueFetch(root.drillDownSymbol, "1D", true);
+            root.queueFetch(root.drillDownSymbol, "1W", true);
+            root.queueFetch(root.drillDownSymbol, "1M", true);
+        } else {
+            root.refreshViewportCharts(true);
+        }
+    }
+
     function refreshVisibleCharts(force) {
         var syms = getAllSymbols();
         var viewportSyms = getVisibleViewportSymbols();
+        var nowDate = new Date();
+        var viewportSet = ({});
         var seen = ({});
         var ordered = [];
         for (var v = 0; v < viewportSyms.length; v++) {
             var vs = viewportSyms[v];
             if (vs && !seen[vs]) {
                 seen[vs] = true;
+                viewportSet[vs] = true;
                 ordered.push(vs);
             }
         }
@@ -964,7 +1016,15 @@ FloatingWindow {
         }
         // 1. Priority 1: active timeframe (viewport tiles first, then remaining basket for breadth/filtering)
         for (var i = 0; i < ordered.length; i++) {
-            queueFetch(ordered[i], root.timeframe, force);
+            var oSym = ordered[i];
+            var oForce = force === true;
+            if (!oForce && viewportSet[oSym]) {
+                var oKey = cacheKey(oSym, root.timeframe);
+                var oCached = root.chartCache ? root.chartCache[oKey] : null;
+                if (oCached && oCached.length > 0 && Model.isCandleSeriesStale(oCached, oSym, root.timeframe, nowDate, root.chartFetchedAt[oKey] || 0))
+                    oForce = true;
+            }
+            queueFetch(oSym, root.timeframe, oForce);
         }
         // 2. Priority 2: pre-warm 1D and 60m only for compact baskets or currently visible viewport tiles
         var warmList = (ordered.length <= 36) ? ordered : ordered.slice(0, 36);
@@ -2002,8 +2062,14 @@ FloatingWindow {
             if (!gridViewport.isVirtualized)
                 return;
             var vis = root.getVisibleViewportSymbols();
-            for (var i = 0; i < vis.length; i++)
-                root.queueFetch(vis[i], root.timeframe, false);
+            var nowDate = new Date();
+            for (var i = 0; i < vis.length; i++) {
+                var vSym = vis[i];
+                var vKey = root.cacheKey(vSym, root.timeframe);
+                var vCached = root.chartCache ? root.chartCache[vKey] : null;
+                var vStale = Boolean(vCached && vCached.length > 0 && Model.isCandleSeriesStale(vCached, vSym, root.timeframe, nowDate, root.chartFetchedAt[vKey] || 0));
+                root.queueFetch(vSym, root.timeframe, vStale);
+            }
             root.subscribedSymbolsChanged();
         }
     }

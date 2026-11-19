@@ -88,17 +88,16 @@ function decodeYahooPricingProtobuf(input) {
   return fields;
 }
 
-function normalizeYahooTick(decoded) {
+function normalizeYahooTick(decoded, nowDate) {
   if (!decoded || typeof decoded !== "object") return null;
   const symbol = Model.normalizeSymbol(decoded[1]);
   const price = finitePositiveOrNull(decoded[2]);
   if (!symbol || price === null) return null;
 
   const quoteType = decoded[6] !== undefined ? Number(decoded[6]) : 0;
-  const marketHours = decoded[7] !== undefined ? Number(decoded[7]) : 1;
   const isCrypto = quoteType === 41 || Model.isCryptoSymbol(symbol);
 
-  let timestampMs = Date.now();
+  let timestampMs = (nowDate instanceof Date && Number.isFinite(nowDate.getTime())) ? nowDate.getTime() : Date.now();
   if (decoded[3] !== undefined) {
     const rawTime = typeof decoded[3] === "bigint"
       ? Number(zigzagDecodeBigInt(decoded[3]))
@@ -106,6 +105,14 @@ function normalizeYahooTick(decoded) {
     if (Number.isFinite(rawTime) && rawTime > 1000000000) {
       timestampMs = rawTime > 1e12 ? rawTime : rawTime * 1000;
     }
+  }
+
+  // Proto3 omits field 7 when marketHours === 0 (PRE_MARKET).
+  // Safety net: if omitted during confirmed US RTH, treat as regular so RTH ticks are not dropped.
+  const hasMarketHours = decoded[7] !== undefined;
+  let marketHours = hasMarketHours ? Number(decoded[7]) : 0;
+  if (!isCrypto && !hasMarketHours && Model.isUsMarketOpen(new Date(timestampMs), false)) {
+    marketHours = 1;
   }
 
   const rawChange = finiteOrNull(decoded[12]);
@@ -295,6 +302,16 @@ class TickBatcher {
     }
   }
 
+  clearSentForSymbols(symbols) {
+    if (!Array.isArray(symbols)) {
+      this.lastSentSig.clear();
+      return;
+    }
+    for (let i = 0; i < symbols.length; i++) {
+      this.lastSentSig.delete(symbols[i]);
+    }
+  }
+
   clear() {
     if (this.timer) {
       clearTimeout(this.timer);
@@ -424,6 +441,9 @@ class ProviderSocket {
     this.connected = false;
     this.failures = 0;
     this.reconnectTimer = null;
+    this.watchdogTimer = null;
+    this.lastMessageAt = 0;
+    this._watchdogActive = false;
     this.disposed = false;
   }
 
@@ -479,6 +499,9 @@ class ProviderSocket {
       if (this.ws !== ws) return;
       this.connected = true;
       this.failures = 0;
+      this.lastMessageAt = Date.now();
+      this._watchdogActive = false;
+      this.startWatchdog();
       try {
         if (this.hooks.onOpen) this.hooks.onOpen(ws, Array.from(this.symbols));
       } catch (e) {}
@@ -487,6 +510,7 @@ class ProviderSocket {
 
     ws.onmessage = (ev) => {
       if (this.ws !== ws) return;
+      this.lastMessageAt = Date.now();
       try {
         if (this.hooks.onMessage) this.hooks.onMessage(ev.data, Array.from(this.symbols));
       } catch (e) {}
@@ -499,6 +523,7 @@ class ProviderSocket {
     ws.onclose = () => {
       if (this.ws !== ws) return;
       this.ws = null;
+      this.stopWatchdog();
       const wasConnected = this.connected;
       this.connected = false;
       if (wasConnected && this.hooks.onStatus) this.hooks.onStatus();
@@ -506,6 +531,42 @@ class ProviderSocket {
         this.scheduleReconnect();
       }
     };
+  }
+
+  startWatchdog() {
+    this.stopWatchdog();
+    const staleMs = this.hooks && Number(this.hooks.staleTimeoutMs);
+    if (!Number.isFinite(staleMs) || staleMs <= 0) return;
+    this.watchdogTimer = setInterval(() => {
+      if (this.disposed || !this.connected || this.symbols.size === 0) return;
+      const active = !this.hooks.shouldWatchdog || Boolean(this.hooks.shouldWatchdog());
+      if (!active) {
+        this._watchdogActive = false;
+        return;
+      }
+      if (!this._watchdogActive) {
+        this._watchdogActive = true;
+        this.lastMessageAt = Date.now();
+        return;
+      }
+      if (Date.now() - this.lastMessageAt > staleMs) {
+        const syms = Array.from(this.symbols);
+        if (this.hooks.onStaleReconnect) {
+          try { this.hooks.onStaleReconnect(syms); } catch (e) {}
+        }
+        this.close(false);
+        this.scheduleReconnect();
+      }
+    }, 15000);
+    if (this.watchdogTimer.unref) this.watchdogTimer.unref();
+  }
+
+  stopWatchdog() {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+    this._watchdogActive = false;
   }
 
   scheduleReconnect() {
@@ -521,6 +582,7 @@ class ProviderSocket {
 
   close(dispose) {
     if (dispose) this.disposed = true;
+    this.stopWatchdog();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -709,6 +771,9 @@ function startDaemon() {
         if (tick) batcher.push(tick);
       }
     },
+    staleTimeoutMs: 45000,
+    shouldWatchdog: () => Model.isUsMarketOpen(new Date(), false),
+    onStaleReconnect: (syms) => batcher.clearSentForSymbols(syms),
     onStatus: emitStatus
   });
 
@@ -877,7 +942,14 @@ function startDaemon() {
     if (!trimmed) return;
     try {
       const cmd = JSON.parse(trimmed);
-      handleCommand(cmd);
+      Promise.resolve(handleCommand(cmd)).catch(() => {
+        if (cmd && cmd.op === "fetchChart") {
+          const sym = Model.normalizeSymbol(cmd.symbol);
+          const rk = String(cmd.rangeKey || "1D");
+          const key = sym ? Model.cacheKey(sym, rk) : "";
+          emit({ type: "chartResult", id: cmd.id || "", symbol: sym, rangeKey: rk, key, ok: false });
+        }
+      });
     } catch (e) {}
   });
 
