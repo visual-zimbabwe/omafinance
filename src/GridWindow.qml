@@ -228,8 +228,6 @@ FloatingWindow {
 
     function notifyCacheKeyUpdated(key) {
         var k = String(key || "");
-        if (k && root.chartCache && root.chartCache[k] && root.chartCache[k].length > 0)
-            root.chartFetchedAt[k] = Date.now();
         var sep = k.lastIndexOf("_");
         var sym = sep >= 0 ? k.slice(0, sep) : "";
         var count = root.gridMode === "2x2" ? 4 : 5;
@@ -239,6 +237,12 @@ FloatingWindow {
                 root.bumpCellRev(i);
             }
         }
+    }
+
+    function handleSessionBoundary(sessionState) {
+        root.chartFetchedAt = ({});
+        root.refreshQuotes();
+        root.refreshAllCharts(true);
     }
 
     onChartCacheChanged: root.notifyCacheKeyUpdated("")
@@ -353,12 +357,19 @@ FloatingWindow {
 
     function requestChartFetch(sym, tf, force) {
         var key = cacheKey(sym, tf);
-        if (!force && root.chartCache[key])
-            return;
-        if (force && root.isChartFresh(sym, tf, key))
+        var cached = root.chartCache ? root.chartCache[key] : null;
+        var promoteStale = false;
+        if (!force && cached && cached.length > 0) {
+            var fetchedAt = root.chartFetchedAt ? (root.chartFetchedAt[key] || 0) : 0;
+            if (!Model.isCandleSeriesStale(cached, sym, tf, new Date(), fetchedAt))
+                return;
+            promoteStale = true;
+        }
+        var effectiveForce = (force === true) || promoteStale;
+        if (force === true && root.isChartFresh(sym, tf, key))
             return;
         if (root.hubReady) {
-            root.hubChartFetchRequested(sym, tf, force === true);
+            root.hubChartFetchRequested(sym, tf, effectiveForce);
             return;
         }
         for (var i = 0; i < root.pendingFetches.length; i++) {

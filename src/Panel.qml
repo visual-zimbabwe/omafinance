@@ -28,6 +28,8 @@ Panel {
     property bool candleCacheDirty: false
     signal candleCacheUpdated(string key)
     signal quotesUpdated(var changedSymbols)
+    signal sessionBoundaryCrossed(string sessionState)
+    property bool _lastKnownUsRthOpen: Model.isUsMarketOpen(new Date(), false)
     property int selectedIndex: 0
     property bool cursorActive: false
     property string view: "list"
@@ -1531,42 +1533,50 @@ Panel {
     function collectProtectedCacheKeys() {
         var prot = ({});
         var tfs = ["30", "60", "1D", "1W", "1M"];
-        var wl = root.watchlist || [];
-        for (var i = 0; i < wl.length; i++) {
-            for (var ti = 0; ti < tfs.length; ti++) {
-                prot[Model.cacheKey(wl[i], tfs[ti])] = true;
-            }
-        }
-        var gWins = root.activeGridWindows || [];
-        for (var gi = 0; gi < gWins.length; gi++) {
-            var gw = gWins[gi];
-            if (!gw || !gw.visible)
+        var panels = HubRegistry.allPanels();
+        if (panels.length === 0)
+            panels = [root];
+        for (var pi = 0; pi < panels.length; pi++) {
+            var p = panels[pi];
+            if (!p)
                 continue;
-            var syms = gw.cellSymbols || [];
-            var gtfs = gw.cellTimeframes || [];
-            for (var ci = 0; ci < syms.length; ci++) {
-                var cs = syms[ci];
-                if (!cs)
-                    continue;
-                if (gtfs[ci])
-                    prot[Model.cacheKey(cs, gtfs[ci])] = true;
-                prot[Model.cacheKey(cs, "60")] = true;
-                prot[Model.cacheKey(cs, "1D")] = true;
+            var wl = p.watchlist || [];
+            for (var i = 0; i < wl.length; i++) {
+                for (var ti = 0; ti < tfs.length; ti++) {
+                    prot[Model.cacheKey(wl[i], tfs[ti])] = true;
+                }
             }
-        }
-        var sWins = root.activeSectorWindows || [];
-        for (var si = 0; si < sWins.length; si++) {
-            var sw = sWins[si];
-            if (!sw || !sw.visible || typeof sw.getAllSymbols !== "function")
-                continue;
-            var sSyms = sw.getAllSymbols() || [];
-            for (var sj = 0; sj < sSyms.length; sj++) {
-                var ss = sSyms[sj];
-                if (!ss)
+            var gWins = p.activeGridWindows || [];
+            for (var gi = 0; gi < gWins.length; gi++) {
+                var gw = gWins[gi];
+                if (!gw || !gw.visible)
                     continue;
-                prot[Model.cacheKey(ss, sw.timeframe)] = true;
-                prot[Model.cacheKey(ss, "1D")] = true;
-                prot[Model.cacheKey(ss, "60")] = true;
+                var syms = gw.cellSymbols || [];
+                var gtfs = gw.cellTimeframes || [];
+                for (var ci = 0; ci < syms.length; ci++) {
+                    var cs = syms[ci];
+                    if (!cs)
+                        continue;
+                    if (gtfs[ci])
+                        prot[Model.cacheKey(cs, gtfs[ci])] = true;
+                    prot[Model.cacheKey(cs, "60")] = true;
+                    prot[Model.cacheKey(cs, "1D")] = true;
+                }
+            }
+            var sWins = p.activeSectorWindows || [];
+            for (var si = 0; si < sWins.length; si++) {
+                var sw = sWins[si];
+                if (!sw || !sw.visible || typeof sw.getAllSymbols !== "function")
+                    continue;
+                var sSyms = sw.getAllSymbols() || [];
+                for (var sj = 0; sj < sSyms.length; sj++) {
+                    var ss = sSyms[sj];
+                    if (!ss)
+                        continue;
+                    prot[Model.cacheKey(ss, sw.timeframe)] = true;
+                    prot[Model.cacheKey(ss, "1D")] = true;
+                    prot[Model.cacheKey(ss, "60")] = true;
+                }
             }
         }
         return prot;
@@ -1587,6 +1597,8 @@ Panel {
                 nextAccess[k] = root.chartCacheAccess[k];
         }
         root.chartCacheAccess = nextAccess;
+        root.candleCacheUpdated("");
+        HubRegistry.broadcastCandleKey(root, root.chartCache, "");
     }
 
     function flushCandleCache() {
@@ -1631,7 +1643,7 @@ Panel {
         if (!Array.isArray(changedSymbols) || changedSymbols.length === 0)
             return;
         var nowDate = new Date();
-        var tfs = ["30", "60", "1D", "1W", "1M", "1Y"];
+        var tfs = ["1", "5", "15", "30", "60", "1D", "1W", "1M", "1Y"];
         for (var i = 0; i < changedSymbols.length; i++) {
             var sym = changedSymbols[i];
             var q = sym ? root.quotes[sym] : null;
@@ -1669,6 +1681,8 @@ Panel {
             root.chartCache = ({});
         root.chartCache[key] = Model.toArray(candles);
         root.chartCacheAccess[key] = Date.now();
+        if (!skipDaemonPut)
+            root.streamFetchedAt[key] = Date.now();
         root.candleCacheUpdated(key);
         HubRegistry.broadcastCandleKey(root, root.chartCache, key);
         if (quoteEnriched && quoteEnriched.symbol) {
@@ -1779,7 +1793,7 @@ Panel {
         return out;
     }
 
-    function hydrateMissingQuoteMetadata(symbols) {
+    function hydrateMissingQuoteMetadata(symbols, force) {
         if (!streamProc.running || !root.streamReady)
             return;
         var list = Array.isArray(symbols) && symbols.length > 0 ? symbols : root.collectStreamSymbols();
@@ -1788,10 +1802,11 @@ Panel {
         var needFull = [];
         var needLight = [];
         var curHour = Math.floor(Date.now() / 3600000);
+        var forceRefresh = force === true;
         for (var i = 0; i < list.length; i++) {
             var s = list[i];
             var q = root.quotes[s];
-            if (!q || q.previousClose === undefined || q.previousClose === null) {
+            if (forceRefresh || !q || q.previousClose === undefined || q.previousClose === null) {
                 needFull.push(s);
             } else if (!q.ftfcAnchors || q.ftfcAnchors.hourBucket !== curHour) {
                 needFull.push(s);
@@ -1804,6 +1819,13 @@ Panel {
             var lChunks = Model.chunkSymbols(needLight, 20);
             for (var lc = 0; lc < lChunks.length; lc++)
                 root.requestSharedSparkFetch(lChunks[lc], true);
+        }
+    }
+
+    function handleSessionBoundary(sessionState) {
+        root.sessionBoundaryCrossed(sessionState);
+        if (root.opened && root.view === "detail" && root.detailSymbol) {
+            root.startChartFetch();
         }
     }
 
@@ -1880,7 +1902,8 @@ Panel {
         var key = Model.cacheKey(normSym, rk);
         if (!force && root.chartCache && root.chartCache[key] && root.chartCache[key].length > 0)
             return true;
-        if (root.streamInFlightCharts[key])
+        var inFlightTs = root.streamInFlightCharts[key] || 0;
+        if (inFlightTs > 0 && (Date.now() - inFlightTs) < 20000)
             return true;
         if (!streamProc.running || !root.streamReady)
             return false;
@@ -1994,6 +2017,9 @@ Panel {
                 if (!msg.fromCache)
                     root.streamFetchedAt[cKey] = Date.now();
                 root.updateSharedCandles(cKey, msg.candles, msg.quote || null, true);
+                if (msg.fromCache && Model.isCandleSeriesStale(msg.candles, msg.symbol, msg.rangeKey, new Date(), root.streamFetchedAt[cKey] || 0)) {
+                    root.requestSharedChartFetch(msg.symbol, msg.rangeKey, true);
+                }
                 var allP = HubRegistry.allPanels();
                 if (allP.length === 0)
                     allP = [root];
@@ -2013,9 +2039,24 @@ Panel {
                 }
                 if (msg.rangeKey === "1D" && (root.watchlist || []).indexOf(msg.symbol) !== -1)
                     root.evaluateBgSymbolStrat(msg.symbol);
-            } else if (msg.symbol === root.detailSymbol && msg.rangeKey === root.detailRange) {
-                root.chartFailureCount = Math.min(10, root.chartFailureCount + 1);
-                root.chartError = "Chart unavailable";
+            } else {
+                if (cKey) {
+                    var allPanelsErr = HubRegistry.allPanels();
+                    if (allPanelsErr.length === 0)
+                        allPanelsErr = [root];
+                    for (var epi = 0; epi < allPanelsErr.length; epi++) {
+                        var ep = allPanelsErr[epi];
+                        var eWins = (ep && ep.activeSectorWindows) ? ep.activeSectorWindows : [];
+                        for (var ewi = 0; ewi < eWins.length; ewi++) {
+                            if (eWins[ewi] && typeof eWins[ewi].clearHubPendingKey === "function")
+                                eWins[ewi].clearHubPendingKey(cKey);
+                        }
+                    }
+                }
+                if (msg.symbol === root.detailSymbol && msg.rangeKey === root.detailRange) {
+                    root.chartFailureCount = Math.min(10, root.chartFailureCount + 1);
+                    root.chartError = "Chart unavailable";
+                }
             }
             return;
         }
@@ -2401,9 +2442,36 @@ Panel {
     Timer {
         id: chartLiveTimer
         interval: root.chartRefreshMs
-        running: root.opened && root.view === "detail" && root.detailRange === "1D"
+        running: root.opened && root.view === "detail" && root.detailSymbol !== ""
         repeat: true
-        onTriggered: root.startChartFetch()
+        onTriggered: {
+            if (!root.detailSymbol)
+                return;
+            if (!Model.isCryptoSymbol(root.detailSymbol) && !Model.isUsMarketOpen(new Date(), false)) {
+                var dk = Model.cacheKey(root.detailSymbol, root.detailRange);
+                var lastLive = (root.streamFetchedAt && root.streamFetchedAt[dk]) ? root.streamFetchedAt[dk] : 0;
+                if (lastLive > 0 && (Date.now() - lastLive) < 120000)
+                    return;
+            }
+            root.startChartFetch();
+        }
+    }
+
+    Timer {
+        id: sessionBoundaryTimer
+        interval: 10000
+        running: root.isStreamLeader && (root.opened || root.hasActiveWindows)
+        repeat: true
+        onTriggered: {
+            var nowOpen = Model.isUsMarketOpen(new Date(), false);
+            if (nowOpen !== root._lastKnownUsRthOpen) {
+                root._lastKnownUsRthOpen = nowOpen;
+                var nextState = nowOpen ? "regular" : "post";
+                root.hydrateMissingQuoteMetadata(null, true);
+                root.handleSessionBoundary(nextState);
+                HubRegistry.broadcastSessionBoundary(root, nextState);
+            }
+        }
     }
 
     Timer {
@@ -2987,8 +3055,11 @@ Panel {
         if (win) {
             win.quotes = root.quotes;
             win.chartCache = root.chartCache;
+            win.chartFetchedAt = Object.assign({}, root.streamFetchedAt || ({}));
             if (typeof win.notifyCacheKeyUpdated === "function")
                 win.notifyCacheKeyUpdated("");
+            if (typeof win.refreshAllCharts === "function")
+                win.refreshAllCharts(false);
             nextWindows.push(win);
             root.activeGridWindows = nextWindows;
         }
@@ -3016,14 +3087,22 @@ Panel {
                 function onCandleCacheUpdated(key) {
                     if (gridWin.chartCache !== root.chartCache)
                         gridWin.chartCache = root.chartCache;
+                    if (key && root.streamFetchedAt && root.streamFetchedAt[key])
+                        gridWin.chartFetchedAt[key] = root.streamFetchedAt[key];
                     if (typeof gridWin.notifyCacheKeyUpdated === "function")
                         gridWin.notifyCacheKeyUpdated(key);
                 }
                 function onQuotesUpdated(changedSymbols) {
+                    if (gridWin.chartCache !== root.chartCache)
+                        gridWin.chartCache = root.chartCache;
                     if (gridWin.quotes !== root.quotes)
                         gridWin.quotes = root.quotes;
                     if (typeof gridWin.notifyQuotesUpdated === "function")
                         gridWin.notifyQuotesUpdated(changedSymbols);
+                }
+                function onSessionBoundaryCrossed(sessionState) {
+                    if (typeof gridWin.handleSessionBoundary === "function")
+                        gridWin.handleSessionBoundary(sessionState);
                 }
             }
 
@@ -3155,6 +3234,9 @@ Panel {
         if (win) {
             win.quotes = root.quotes;
             win.chartCache = root.chartCache;
+            win.chartFetchedAt = Object.assign({}, root.streamFetchedAt || ({}));
+            if (typeof win.refreshViewportCharts === "function")
+                win.refreshViewportCharts(false);
             nextWindows.push(win);
             root.activeSectorWindows = nextWindows;
         }
@@ -3172,7 +3254,13 @@ Panel {
             hubStreamingActive: root.shouldStreamLive && root.streamConnected
 
             onHubChartFetchRequested: function (sym, tf, force) {
-                root.requestSharedChartFetch(sym, tf, force);
+                var normSym = Model.normalizeSymbol(sym);
+                var rk = String(tf || "1D");
+                var k = normSym ? Model.cacheKey(normSym, rk) : "";
+                var alreadyCached = (!force && k && root.chartCache && root.chartCache[k] && root.chartCache[k].length > 0);
+                var dispatched = root.requestSharedChartFetch(sym, tf, force);
+                if (k && (!dispatched || alreadyCached) && typeof secWin.clearHubPendingKey === "function")
+                    secWin.clearHubPendingKey(k);
             }
 
             onHubSparkFetchRequested: function (symbols, lightweight) {
@@ -3186,14 +3274,22 @@ Panel {
                 function onCandleCacheUpdated(key) {
                     if (secWin.chartCache !== root.chartCache)
                         secWin.chartCache = root.chartCache;
+                    if (key && root.streamFetchedAt && root.streamFetchedAt[key])
+                        secWin.chartFetchedAt[key] = root.streamFetchedAt[key];
                     if (typeof secWin.notifyCacheKeyUpdated === "function")
                         secWin.notifyCacheKeyUpdated(key);
                 }
                 function onQuotesUpdated(changedSymbols) {
+                    if (secWin.chartCache !== root.chartCache)
+                        secWin.chartCache = root.chartCache;
                     if (secWin.quotes !== root.quotes)
                         secWin.quotes = root.quotes;
                     if (typeof secWin.notifyQuotesUpdated === "function")
                         secWin.notifyQuotesUpdated(changedSymbols);
+                }
+                function onSessionBoundaryCrossed(sessionState) {
+                    if (typeof secWin.handleSessionBoundary === "function")
+                        secWin.handleSessionBoundary(sessionState);
                 }
             }
 

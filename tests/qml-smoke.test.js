@@ -869,3 +869,46 @@ test("charts support 1-bar minimum zoom and interactive price scale (cursor, dra
   assert.match(sector, /signal resetAllPriceScalesRequested/)
   assert.match(sector, /\(event\.modifiers & Qt\.AltModifier\) && event\.key === Qt\.Key_R/)
 })
+
+test("real-time chart reliability: cache prune broadcast, onQuotesUpdated sync, stale-while-revalidate, session boundary, and RTH watchdog", () => {
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+  const hub = fs.readFileSync(source("HubRegistry.js"), "utf8")
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const sector = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
+  const stream = fs.readFileSync(path.join(root, "scripts", "market-stream.js"), "utf8")
+
+  // 1. Prune notifies all child windows & follower panels; onQuotesUpdated defensively syncs chartCache
+  assert.match(panel, /function pruneInMemoryChartCache[\s\S]*?root\.candleCacheUpdated\(""\);[\s\S]*?HubRegistry\.broadcastCandleKey\(root, root\.chartCache, ""\);/)
+  assert.match(panel, /function onQuotesUpdated\(changedSymbols\)\s*\{\s*if \(gridWin\.chartCache !== root\.chartCache\)\s*gridWin\.chartCache = root\.chartCache;/)
+  assert.match(panel, /function onQuotesUpdated\(changedSymbols\)\s*\{\s*if \(secWin\.chartCache !== root\.chartCache\)\s*secWin\.chartCache = root\.chartCache;/)
+  assert.match(panel, /function collectProtectedCacheKeys\(\)[\s\S]*?HubRegistry\.allPanels\(\)/)
+
+  // 2. Stale-while-revalidate on fromCache hits, 20s in-flight TTL, and intraday TFs in developing candle updates
+  assert.match(panel, /msg\.fromCache && Model\.isCandleSeriesStale\(/)
+  assert.match(panel, /\(Date\.now\(\) - inFlightTs\) < 20000/)
+  assert.match(panel, /var tfs = \["1", "5", "15", "30", "60", "1D", "1W", "1M", "1Y"\];/)
+
+  // 3. Centralized 09:30 / 16:00 ET session boundary detector + detail chartLiveTimer across all ranges
+  assert.match(panel, /signal sessionBoundaryCrossed\(string sessionState\)/)
+  assert.match(panel, /id:\s*sessionBoundaryTimer/)
+  assert.match(panel, /running:\s*root\.opened && root\.view === "detail" && root\.detailSymbol !== ""/)
+  assert.match(hub, /function broadcastSessionBoundary\(/)
+
+  // 4. GridWindow does not stamp chartFetchedAt blindly in notifyCacheKeyUpdated; uses stale check and session boundary handler
+  assert.doesNotMatch(grid, /function notifyCacheKeyUpdated\(key\)\s*\{[\s\S]*?root\.chartFetchedAt\[k\]\s*=\s*Date\.now\(\)/)
+  assert.match(grid, /Model\.isCandleSeriesStale\(/)
+  assert.match(grid, /function handleSessionBoundary\(/)
+
+  // 5. SectorAnalysisWindow has viewport-only refresh, session boundary handler, pending cleanup, and no periodic tile polling timer
+  assert.match(sector, /function refreshViewportCharts\(force\)/)
+  assert.match(sector, /function handleSessionBoundary\(/)
+  assert.match(sector, /function clearHubPendingKey\(key\)/)
+  assert.match(sector, /Model\.isCandleSeriesStale\(/)
+  assert.doesNotMatch(sector, /id:\s*tileRefreshTimer/)
+
+  // 6. market-stream.js proto3 marketHours default, 45s RTH stale-socket watchdog, and safe async command catch
+  assert.match(stream, /const hasMarketHours = decoded\[7\] !== undefined;/)
+  assert.match(stream, /staleTimeoutMs:\s*45000/)
+  assert.match(stream, /startWatchdog\(\)/)
+  assert.match(stream, /Promise\.resolve\(handleCommand\(cmd\)\)\.catch\(/)
+})

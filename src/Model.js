@@ -1232,6 +1232,7 @@ function quoteFromChart(result, fallbackSymbol, rangeKey) {
     extendedChangePercent: extendedPct,
     hasExtended: hasExtended,
     session: session,
+    timestamp: finiteOrNull(meta.regularMarketTime),
     dayHigh: finiteOrNull(meta.regularMarketDayHigh),
     dayLow: finiteOrNull(meta.regularMarketDayLow),
     volume: finiteOrNull(meta.regularMarketVolume),
@@ -1530,14 +1531,29 @@ function mergeQuotes(current, incoming) {
       var prev = out[key]
       if (prev && inc && typeof prev === "object" && typeof inc === "object") {
         var merged = Object.assign({}, prev, inc)
+        var incIsRth = !inc.session || inc.session === "regular" || inc.session === "live"
+        var prevTs = finiteOrNull(prev.timestamp)
+        var incTs = finiteOrNull(inc.timestamp)
+        var isNewRegularDay = incIsRth && (
+          (prevTs !== null && incTs !== null && marketDateEt(incTs) > marketDateEt(prevTs)) ||
+          (prev.session === "pre" && inc.session === "regular")
+        )
+        if (isNewRegularDay) {
+          if (inc.open == null) merged.open = null
+          if (inc.dayHigh == null) merged.dayHigh = null
+          if (inc.dayLow == null) merged.dayLow = null
+          if (inc.volume == null) merged.volume = null
+          if (inc.regularMarketDayHigh == null && merged.regularMarketDayHigh !== undefined) merged.regularMarketDayHigh = null
+          if (inc.regularMarketDayLow == null && merged.regularMarketDayLow !== undefined) merged.regularMarketDayLow = null
+        }
         if (!inc.name && prev.name) merged.name = prev.name
         if (!inc.currency && prev.currency) merged.currency = prev.currency
         if ((inc.priceHint === undefined || inc.priceHint === null) && prev.priceHint !== undefined) merged.priceHint = prev.priceHint
         if (inc.previousClose == null && prev.previousClose != null) merged.previousClose = prev.previousClose
-        if (inc.open == null && prev.open != null) merged.open = prev.open
-        if (inc.dayHigh == null && prev.dayHigh != null) merged.dayHigh = prev.dayHigh
-        if (inc.dayLow == null && prev.dayLow != null) merged.dayLow = prev.dayLow
-        if (inc.volume == null && prev.volume != null) merged.volume = prev.volume
+        if (!isNewRegularDay && inc.open == null && prev.open != null) merged.open = prev.open
+        if (!isNewRegularDay && inc.dayHigh == null && prev.dayHigh != null) merged.dayHigh = prev.dayHigh
+        if (!isNewRegularDay && inc.dayLow == null && prev.dayLow != null) merged.dayLow = prev.dayLow
+        if (!isNewRegularDay && inc.volume == null && prev.volume != null) merged.volume = prev.volume
         if (inc.fiftyTwoWeekHigh == null && prev.fiftyTwoWeekHigh != null) merged.fiftyTwoWeekHigh = prev.fiftyTwoWeekHigh
         if (inc.fiftyTwoWeekLow == null && prev.fiftyTwoWeekLow != null) merged.fiftyTwoWeekLow = prev.fiftyTwoWeekLow
         if (!inc.ftfcAnchors && prev.ftfcAnchors) merged.ftfcAnchors = prev.ftfcAnchors
@@ -7840,6 +7856,116 @@ function marketDateEt(timestampSec) {
   return et.getUTCFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (day < 10 ? "0" : "") + day;
 }
 
+function marketWeekStartEt(timestampSec) {
+  var utcMs = (timestampSec != null && isFinite(timestampSec)) ? (timestampSec * 1000) : Date.now();
+  var offsetMs = (isUsDstUtc(utcMs) ? -4 : -5) * 3600000;
+  var et = new Date(utcMs + offsetMs);
+  var day = et.getUTCDay();
+  var diffToMon = et.getUTCDate() - day + (day === 0 ? -6 : 1);
+  var mon = new Date(Date.UTC(et.getUTCFullYear(), et.getUTCMonth(), diffToMon));
+  var m = mon.getUTCMonth() + 1;
+  var d = mon.getUTCDate();
+  return mon.getUTCFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (d < 10 ? "0" : "") + d;
+}
+
+function isUsEquitySessionSymbol(symbol) {
+  var sym = normalizeSymbol(symbol);
+  if (!sym || isCryptoSymbol(sym)) return false;
+  if (sym.indexOf(".") !== -1) {
+    var parts = sym.split(".");
+    var sfx = parts[parts.length - 1].toUpperCase();
+    if (sfx !== "TO" && sfx !== "V") return false;
+  }
+  return true;
+}
+
+function isCandleSeriesStale(candles, symbol, rangeKey, nowDate, fetchedAtMs) {
+  if (!isArrayLike(candles) || candles.length === 0) return true;
+  var last = candles[candles.length - 1];
+  if (!last || !isFinite(last.timestamp)) return true;
+
+  var now = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate : new Date();
+  var nowMs = now.getTime();
+  var nowSec = Math.floor(nowMs / 1000);
+  var lastTs = Number(last.timestamp);
+  var sym = normalizeSymbol(symbol);
+  var tf = String(rangeKey || "1D");
+  var isIntraday = (tf === "1" || tf === "5" || tf === "15" || tf === "30" || tf === "60" || tf === "60m");
+  var tfNorm = tf === "60m" ? "60" : tf;
+
+  if (isCryptoSymbol(sym)) {
+    if (isIntraday) {
+      var cPeriod = tfNorm === "60" ? 3600 : (tfNorm === "30" ? 1800 : (tfNorm === "15" ? 900 : (tfNorm === "5" ? 300 : 60)));
+      return nowSec >= lastTs + cPeriod;
+    }
+    if (tf === "1D" || tf === "D" || tf === "1d" || tf === "day") {
+      return new Date(nowSec * 1000).toISOString().slice(0, 10) !== new Date(lastTs * 1000).toISOString().slice(0, 10);
+    }
+    var cFetched = finiteOrNull(fetchedAtMs);
+    if (cFetched !== null && cFetched > 0 && (nowMs - cFetched) < 300000) return false;
+    return (nowSec - lastTs) >= 86400;
+  }
+
+  var sched = getUsSessionSchedule(now);
+  var rthOpen = sched.isSessionOpen;
+  var fetchedMs = finiteOrNull(fetchedAtMs);
+  if (fetchedMs !== null && fetchedMs > 0 && (nowMs - fetchedMs) < 60000) {
+    if (isUsMarketOpen(new Date(fetchedMs), false) === rthOpen && !isIntraday) {
+      return false;
+    }
+  }
+
+  var curEt = marketDateEt(nowSec);
+  var lastEt = marketDateEt(lastTs);
+
+  if (rthOpen) {
+    if (isIntraday) {
+      if (lastEt !== curEt) return true;
+      var periodSec = tfNorm === "60"
+        ? candleDurationSec(last, "60", sym, now, null)
+        : (tfNorm === "30" ? 1800 : (tfNorm === "15" ? 900 : (tfNorm === "5" ? 300 : 60)));
+      return nowSec >= lastTs + periodSec;
+    }
+    if (tf === "1D" || tf === "D" || tf === "1d" || tf === "day") {
+      return lastEt !== curEt;
+    }
+    if (tf === "1W" || tf === "W" || tf === "1w" || tf === "week") {
+      if (marketWeekStartEt(lastTs) !== marketWeekStartEt(nowSec)) return true;
+    } else if (tf === "1M" || tf === "M") {
+      if (lastEt.slice(0, 7) !== curEt.slice(0, 7)) return true;
+    } else if (tf === "1Y" || tf === "Y") {
+      if (lastEt.slice(0, 4) !== curEt.slice(0, 4)) return true;
+    }
+    // For 1W/1M/1Y (whose bar timestamp is Monday / 1st / Jan 1), require at least one live fetch during today's RTH.
+    if (fetchedMs === null || fetchedMs <= 0) return true;
+    if (marketDateEt(fetchedMs / 1000) !== curEt) return true;
+    if (!isUsMarketOpen(new Date(fetchedMs), false)) return true;
+    return false;
+  }
+
+  // Outside RTH on a weekday after market close: stale if missing today's regular session
+  if (!sched.isWeekend && sched.mins >= sched.closeMins) {
+    if (isIntraday || tf === "1D" || tf === "D" || tf === "1d" || tf === "day") {
+      return lastEt < curEt;
+    }
+    if (fetchedMs !== null && fetchedMs > 0 && marketDateEt(fetchedMs / 1000) === curEt) {
+      var fetchedSched = getUsSessionSchedule(new Date(fetchedMs));
+      if (fetchedSched.mins >= sched.closeMins) return false;
+    }
+    if (tf === "1W" || tf === "W" || tf === "1w" || tf === "week") {
+      return marketWeekStartEt(lastTs) < marketWeekStartEt(nowSec);
+    }
+    if (tf === "1M" || tf === "M") {
+      return lastEt.slice(0, 7) < curEt.slice(0, 7);
+    }
+    if (tf === "1Y" || tf === "Y") {
+      return lastEt.slice(0, 4) < curEt.slice(0, 4);
+    }
+  }
+
+  return false;
+}
+
 function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
   if (!isArrayLike(candles) || candles.length === 0) return candles || [];
   if (!quote) return candles;
@@ -7877,12 +8003,12 @@ function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
       lastIdx = list.length - 1;
       last = Object.assign({}, list[lastIdx]);
     }
-  } else if (range === "60" || range === "30" || range === "15" || range === "5" || range === "1") {
-    var periodSec = range === "60" ? 3600 : (range === "30" ? 1800 : (range === "15" ? 900 : (range === "5" ? 300 : 60)));
-    if (nowSec >= last.timestamp + periodSec) {
-      var alignedTs = Math.floor(nowSec / periodSec) * periodSec;
+  } else if (range === "1W" || range === "W" || range === "1w" || range === "week") {
+    var curWeek = marketWeekStartEt(nowSec);
+    var lastWeek = marketWeekStartEt(last.timestamp);
+    if (curWeek !== lastWeek && nowSec > last.timestamp) {
       list.push({
-        timestamp: alignedTs,
+        timestamp: nowSec,
         open: price,
         high: price,
         low: price,
@@ -7891,6 +8017,67 @@ function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
       });
       lastIdx = list.length - 1;
       last = Object.assign({}, list[lastIdx]);
+    }
+  } else if (range === "1M" || range === "M") {
+    var curMonth = marketDateEt(nowSec).slice(0, 7);
+    var lastMonth = marketDateEt(last.timestamp).slice(0, 7);
+    if (curMonth !== lastMonth && nowSec > last.timestamp) {
+      list.push({
+        timestamp: nowSec,
+        open: price,
+        high: price,
+        low: price,
+        close: price,
+        volume: 0
+      });
+      lastIdx = list.length - 1;
+      last = Object.assign({}, list[lastIdx]);
+    }
+  } else if (range === "1Y" || range === "Y") {
+    var curYear = marketDateEt(nowSec).slice(0, 4);
+    var lastYear = marketDateEt(last.timestamp).slice(0, 4);
+    if (curYear !== lastYear && nowSec > last.timestamp) {
+      list.push({
+        timestamp: nowSec,
+        open: price,
+        high: price,
+        low: price,
+        close: price,
+        volume: 0
+      });
+      lastIdx = list.length - 1;
+      last = Object.assign({}, list[lastIdx]);
+    }
+  } else if (range === "60" || range === "60m" || range === "30" || range === "15" || range === "5" || range === "1") {
+    var tfNorm = range === "60m" ? "60" : range;
+    var periodSec = tfNorm === "60"
+      ? candleDurationSec(last, "60", quote.symbol, now, quote)
+      : (tfNorm === "30" ? 1800 : (tfNorm === "15" ? 900 : (tfNorm === "5" ? 300 : 60)));
+    if (nowSec >= last.timestamp + periodSec) {
+      var alignedTs;
+      if (tfNorm === "60" && isUsEquitySessionSymbol(quote.symbol)) {
+        var sched = getUsSessionSchedule(now, quote);
+        var openSec = nowSec - (sched.mins - sched.openMins) * 60 - now.getUTCSeconds();
+        if (!sched.isWeekend && sched.mins >= sched.openMins - 2) {
+          alignedTs = openSec + Math.max(0, Math.floor((nowSec - openSec) / 3600)) * 3600;
+        } else {
+          alignedTs = Math.floor(nowSec / 3600) * 3600;
+        }
+      } else {
+        alignedTs = Math.floor(nowSec / periodSec) * periodSec;
+      }
+      if (alignedTs > last.timestamp) {
+        list.push({
+          timestamp: alignedTs,
+          open: price,
+          high: price,
+          low: price,
+          close: price,
+          volume: 0
+        });
+        lastIdx = list.length - 1;
+        last = Object.assign({}, list[lastIdx]);
+      }
     }
   }
 
@@ -7907,10 +8094,14 @@ function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
   }
 
   if (range === "1D" || range === "D" || range === "1d" || range === "day") {
-    var dHigh = finiteOrNull(quote.regularMarketDayHigh != null ? quote.regularMarketDayHigh : quote.dayHigh);
-    var dLow = finiteOrNull(quote.regularMarketDayLow != null ? quote.regularMarketDayLow : quote.dayLow);
-    if (dHigh !== null) last.high = Math.max(last.high, dHigh);
-    if (dLow !== null) last.low = Math.min(last.low, dLow);
+    var qTs = finiteOrNull(quote.timestamp);
+    var quoteMatchesToday = (qTs === null) || (marketDateEt(qTs) === marketDateEt(nowSec));
+    if (quoteMatchesToday) {
+      var dHigh = finiteOrNull(quote.regularMarketDayHigh != null ? quote.regularMarketDayHigh : quote.dayHigh);
+      var dLow = finiteOrNull(quote.regularMarketDayLow != null ? quote.regularMarketDayLow : quote.dayLow);
+      if (dHigh !== null) last.high = Math.max(last.high, dHigh);
+      if (dLow !== null) last.low = Math.min(last.low, dLow);
+    }
   }
 
   list[lastIdx] = last;
@@ -8367,6 +8558,9 @@ if (typeof module !== "undefined") {
     cacheKey: cacheKey,
     isBasketSector: isBasketSector,
     chunkSymbols: chunkSymbols,
+    marketWeekStartEt: marketWeekStartEt,
+    isUsEquitySessionSymbol: isUsEquitySessionSymbol,
+    isCandleSeriesStale: isCandleSeriesStale,
     updateDevelopingCandle: updateDevelopingCandle,
     updateCachedDevelopingCandles: updateCachedDevelopingCandles,
     packCandles: packCandles,

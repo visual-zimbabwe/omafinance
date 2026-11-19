@@ -21,6 +21,8 @@ function register(panel) {
                 panel.quotes = _leader.quotes;
             if (_leader.chartCache)
                 panel.chartCache = _leader.chartCache;
+            if (_leader.streamFetchedAt)
+                panel.streamFetchedAt = _leader.streamFetchedAt;
             panel.streamReady = Boolean(_leader.streamReady);
             panel.streamConnected = Boolean(_leader.streamConnected);
             panel.streamYahooConnected = Boolean(_leader.streamYahooConnected);
@@ -91,7 +93,21 @@ function broadcastCandleKey(sourcePanel, cacheMap, key) {
         try {
             if (p.chartCache !== cacheMap)
                 p.chartCache = cacheMap;
+            if (sourcePanel && sourcePanel.streamFetchedAt && p.streamFetchedAt !== sourcePanel.streamFetchedAt)
+                p.streamFetchedAt = sourcePanel.streamFetchedAt;
             p.candleCacheUpdated(key);
+        } catch (e) {}
+    }
+}
+
+function broadcastSessionBoundary(sourcePanel, sessionState) {
+    for (var i = 0; i < _panels.length; i++) {
+        var p = _panels[i];
+        if (!p || p === sourcePanel)
+            continue;
+        try {
+            if (typeof p.handleSessionBoundary === "function")
+                p.handleSessionBoundary(sessionState);
         } catch (e) {}
     }
 }
