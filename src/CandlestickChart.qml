@@ -39,7 +39,6 @@ Item {
 
     signal crosshairMoved(real timestamp, real price, var candle)
     signal crosshairCleared
-    signal priceLevelsModified(var nextLevels)
     signal replayRequested(real timestamp)
     signal zoomChangedManually(int nextViewCount)
     signal chartPressed
@@ -75,22 +74,6 @@ Item {
     property bool dragging: false
     property bool isShiftDrag: false
 
-    property string _lastLevelSymbol: ""
-    property bool externalLevels: false
-    property var priceLevels: []
-    property int hoveredLevelIndex: -1
-    property string hoveredLevelPart: ""
-    property int draggingLevelIndex: -1
-    property string levelDragMode: ""
-    property int levelDragAnchorIdx: 0
-    property real levelDragStartX: 0
-    property real levelDragStartIdx1: 0
-    property real levelDragStartIdx2: 0
-    property real levelDragStartY: 0
-    property bool levelDragMoved: false
-    property int editingLevelIndex: -1
-    readonly property bool editingLevel: editingLevelIndex >= 0
-
     property bool hovering: false
     property bool hoveringScale: false
     property int hoveredTickIndex: -1
@@ -114,10 +97,6 @@ Item {
     }
 
     function resetZoom() {
-        if (symbol !== _lastLevelSymbol) {
-            _lastLevelSymbol = symbol;
-            clearLevels();
-        }
         viewStart = 0;
         viewCount = (root.configuredZoom >= Model.MIN_BAR_COUNT) ? root.configuredZoom : -1;
         followLatest = true;
@@ -133,59 +112,10 @@ Item {
         refreshGeometry();
     }
 
-    function setPriceLevels(next) {
-        if (!root.externalLevels)
-            root.priceLevels = next;
-        root.priceLevelsModified(next);
-        refreshGeometry();
-    }
-
     function globalIndexToX(globalIdx, g) {
         if (!g)
             return 0;
         return g.left + (globalIdx - g.vStart + 0.5) * g.slotW;
-    }
-
-    function xToGlobalIndex(px, g) {
-        if (!g || g.slotW <= 0)
-            return 0;
-        return g.vStart + (px - g.left) / g.slotW - 0.5;
-    }
-
-    function resolveLevelEndpoints(lvl, g) {
-        if (!lvl || !g || !g.allCandles || g.allCandles.length === 0)
-            return null;
-        if (!Model.isLevelVisibleOnTimeframe(lvl, root.rangeKey))
-            return null;
-
-        var all = g.allCandles;
-        var total = all.length;
-        var anchorIdx = Model.resolveLevelAnchorIndex(lvl, all, root.rangeKey);
-        var tfOff = (lvl.offsets && lvl.offsets[root.rangeKey]) ? lvl.offsets[root.rangeKey] : null;
-
-        var idx1 = (tfOff && tfOff.startDelta !== undefined) ? (anchorIdx + tfOff.startDelta) : anchorIdx;
-        var idx2 = (tfOff && tfOff.endDelta !== undefined) ? (anchorIdx + tfOff.endDelta) : (total - 1 + 0.45);
-
-        var rawX1 = globalIndexToX(idx1, g);
-        var rawX2 = globalIndexToX(idx2, g);
-        var leftX = Math.min(rawX1, rawX2);
-        var rightX = Math.max(rawX1, rawX2);
-
-        if (rightX < g.left || leftX > g.right)
-            return null;
-
-        var drawX1 = Math.max(g.left, Math.min(g.right, leftX));
-        var drawX2 = Math.max(g.left, Math.min(g.right, rightX));
-
-        return {
-            anchorIdx: anchorIdx,
-            idx1: idx1,
-            idx2: idx2,
-            rawX1: rawX1,
-            rawX2: rawX2,
-            drawX1: drawX1,
-            drawX2: drawX2
-        };
     }
 
     function priceToYVal(price, g) {
@@ -193,147 +123,6 @@ Item {
             return 0;
         var lp = Math.log(Math.max(0.00001, price));
         return g.top + g.innerH * (1 - (lp - g.logMin) / g.logSpan);
-    }
-
-    function levelToneColor(tone) {
-        if (tone === "up")
-            return root.upColor;
-        if (tone === "down")
-            return root.downColor;
-        return Color.foreground;
-    }
-
-    function hitTestLevel(px, py) {
-        var g = cachedGeometry;
-        if (!g || !root.priceLevels || root.priceLevels.length === 0 || g.innerW <= 0)
-            return null;
-        if (root.showPriceScale && px >= g.right)
-            return null;
-        var bestIdx = -1;
-        var bestDist = Style.space(7);
-        var bestPart = "move";
-        var handleRadius = Style.space(8);
-        for (var i = root.priceLevels.length - 1; i >= 0; i--) {
-            var lvl = root.priceLevels[i];
-            var ep = resolveLevelEndpoints(lvl, g);
-            if (!ep)
-                continue;
-            var ly = priceToYVal(lvl.price, g);
-            if (ly < g.top - Style.space(6) || ly > g.bot + Style.space(6))
-                continue;
-            var leftX = ep.drawX1;
-            var rightX = ep.drawX2;
-            if (px < leftX - handleRadius || px > rightX + handleRadius)
-                continue;
-            var dy = Math.abs(py - ly);
-            if (dy <= bestDist) {
-                bestDist = dy;
-                bestIdx = i;
-                if (Math.abs(px - leftX) <= handleRadius)
-                    bestPart = (ep.rawX1 <= ep.rawX2) ? "x1" : "x2";
-                else if (Math.abs(px - rightX) <= handleRadius)
-                    bestPart = (ep.rawX2 >= ep.rawX1) ? "x2" : "x1";
-                else
-                    bestPart = "move";
-            }
-        }
-        if (bestIdx < 0)
-            return null;
-        return {
-            index: bestIdx,
-            part: bestPart
-        };
-    }
-
-    function startLevelEdit(index) {
-        if (index < 0 || index >= root.priceLevels.length)
-            return;
-        root.editingLevelIndex = index;
-        levelTextInput.text = root.priceLevels[index].text || "";
-        levelTextInput.forceActiveFocus();
-        levelTextInput.selectAll();
-        canvas.requestPaint();
-    }
-
-    function commitLevelEdit() {
-        if (root.editingLevelIndex >= 0 && root.editingLevelIndex < root.priceLevels.length) {
-            var next = root.priceLevels.slice();
-            var item = Object.assign({}, next[root.editingLevelIndex]);
-            item.text = levelTextInput.text.trim();
-            next[root.editingLevelIndex] = item;
-            root.setPriceLevels(next);
-        }
-        root.editingLevelIndex = -1;
-        canvas.requestPaint();
-    }
-
-    function dismissLevelEdit() {
-        root.editingLevelIndex = -1;
-        canvas.requestPaint();
-    }
-
-    function cycleEditingLevelTone() {
-        if (root.editingLevelIndex < 0 || root.editingLevelIndex >= root.priceLevels.length)
-            return;
-        var next = root.priceLevels.slice();
-        var item = Object.assign({}, next[root.editingLevelIndex]);
-        var cur = item.tone || "fg";
-        item.tone = (cur === "fg") ? "up" : (cur === "up" ? "down" : "fg");
-        next[root.editingLevelIndex] = item;
-        root.setPriceLevels(next);
-    }
-
-    function toggleEditingLevelAlert() {
-        if (root.editingLevelIndex < 0 || root.editingLevelIndex >= root.priceLevels.length)
-            return;
-        var next = root.priceLevels.slice();
-        var item = Object.assign({}, next[root.editingLevelIndex]);
-        item.alertEnabled = !item.alertEnabled;
-        item.alertTriggered = false;
-        if (!item.alertCondition) {
-            var all = root.validCandles();
-            var lastClose = (all && all.length > 0) ? all[all.length - 1].close : 0;
-            item.alertCondition = (lastClose > 0 && item.price < lastClose) ? "CROSSES_BELOW" : "CROSSES_ABOVE";
-        }
-        next[root.editingLevelIndex] = item;
-        root.setPriceLevels(next);
-    }
-
-    function cycleEditingLevelCondition() {
-        if (root.editingLevelIndex < 0 || root.editingLevelIndex >= root.priceLevels.length)
-            return;
-        var next = root.priceLevels.slice();
-        var item = Object.assign({}, next[root.editingLevelIndex]);
-        var cur = item.alertCondition || "CROSSES_ABOVE";
-        item.alertCondition = (cur === "CROSSES_ABOVE") ? "CROSSES_BELOW" : (cur === "CROSSES_BELOW" ? "CROSSES" : "CROSSES_ABOVE");
-        item.alertEnabled = true;
-        item.alertTriggered = false;
-        next[root.editingLevelIndex] = item;
-        root.setPriceLevels(next);
-    }
-
-    function removeLevel(index) {
-        if (index < 0 || index >= root.priceLevels.length)
-            return;
-        var next = root.priceLevels.slice();
-        next.splice(index, 1);
-        if (root.editingLevelIndex === index)
-            root.editingLevelIndex = -1;
-        else if (root.editingLevelIndex > index)
-            root.editingLevelIndex -= 1;
-        root.hoveredLevelIndex = -1;
-        root.hoveredLevelPart = "";
-        root.setPriceLevels(next);
-    }
-
-    function clearLevels() {
-        if (!root.externalLevels)
-            root.priceLevels = [];
-        root.editingLevelIndex = -1;
-        root.hoveredLevelIndex = -1;
-        root.hoveredLevelPart = "";
-        root.draggingLevelIndex = -1;
-        canvas.requestPaint();
     }
 
     function yToPrice(y) {
@@ -541,19 +330,6 @@ Item {
 
         var candleMin = min;
         var candleMax = max;
-        if (root.priceLevels && root.priceLevels.length > 0) {
-            for (var pli = 0; pli < root.priceLevels.length; pli++) {
-                var pl = root.priceLevels[pli];
-                if (pl && Model.isLevelVisibleOnTimeframe(pl, root.rangeKey) && isFinite(pl.price) && pl.price > 0) {
-                    if (pl.price >= candleMin * 0.85 && pl.price <= candleMax * 1.15) {
-                        if (pl.price < min)
-                            min = pl.price;
-                        if (pl.price > max)
-                            max = pl.price;
-                    }
-                }
-            }
-        }
 
         if (root.setupLines && root.setupLines.length > 0) {
             for (var sli = 0; sli < root.setupLines.length; sli++) {
@@ -1265,85 +1041,6 @@ Item {
                 }
             }
 
-            // User-Drawn Trigger / Target Price Level Lines
-            if (root.priceLevels && root.priceLevels.length > 0 && g.innerW > 0) {
-                for (var li = 0; li < root.priceLevels.length; li++) {
-                    var lvl = root.priceLevels[li];
-                    var ep = root.resolveLevelEndpoints(lvl, g);
-                    if (!ep)
-                        continue;
-
-                    var lyRaw = root.priceToYVal(lvl.price, g);
-                    if (lyRaw < g.top - Style.space(6) || lyRaw > g.bot + Style.space(6))
-                        continue;
-
-                    var ly = Math.round(lyRaw) + 0.5;
-                    var lx1 = ep.drawX1;
-                    var lx2 = ep.drawX2;
-                    var isLvlActive = (li === root.hoveredLevelIndex || li === root.draggingLevelIndex || li === root.editingLevelIndex);
-                    var isArmedAlert = Boolean(lvl.alertEnabled) && !lvl.alertTriggered;
-                    var lvlColor = (lvl.tone === "up" || lvl.tone === "down") ? root.levelToneColor(lvl.tone) : (isArmedAlert ? Model.accessibleSemanticColor("warning", Color.background) : root.levelToneColor(lvl.tone));
-
-                    ctx.save();
-                    ctx.strokeStyle = lvlColor;
-                    ctx.lineWidth = isLvlActive ? 1.5 : 1;
-                    ctx.globalAlpha = isLvlActive ? 1.0 : (lvl.alertTriggered ? 0.55 : 0.9);
-                    if (lvl.alertEnabled && typeof ctx.setLineDash === "function") {
-                        ctx.setLineDash(lvl.alertTriggered ? [2, 3] : [5, 3]);
-                    }
-                    ctx.beginPath();
-                    ctx.moveTo(Math.round(lx1), ly);
-                    ctx.lineTo(Math.round(lx2), ly);
-                    ctx.stroke();
-                    if (typeof ctx.setLineDash === "function") {
-                        ctx.setLineDash([]);
-                    }
-
-                    // Endpoint Drag Handles when hovered, dragging, or editing
-                    if (isLvlActive) {
-                        var r = Style.space(3);
-                        ctx.fillStyle = lvlColor;
-                        ctx.beginPath();
-                        ctx.arc(Math.round(lx1), ly, r, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.beginPath();
-                        ctx.arc(Math.round(lx2), ly, r, 0, Math.PI * 2);
-                        ctx.fill();
-                    }
-
-                    // Inline Label: Custom Trigger/Target Text + Formatted Price
-                    if (li !== root.editingLevelIndex) {
-                        var priceStr = Model.formatPrice(lvl.price, root.currency, root.priceHint);
-                        var customTxt = (lvl.text !== undefined && lvl.text !== null) ? String(lvl.text).trim() : "";
-                        var fullLabel = customTxt.length > 0 ? (customTxt + " · " + priceStr) : priceStr;
-                        if (lvl.alertEnabled) {
-                            var condBadge = lvl.alertTriggered ? "HIT" : (lvl.alertCondition === "CROSSES_BELOW" ? "ALRT <=" : (lvl.alertCondition === "CROSSES" ? "ALRT <>" : "ALRT >="));
-                            fullLabel = condBadge + " · " + fullLabel;
-                        }
-
-                        ctx.font = "bold " + Style.font.bodySmall + "px " + Model.quotedFontFamily(root.fontFamily);
-                        var textW = ctx.measureText(fullLabel).width;
-                        var padX = Style.space(4);
-                        var pillW = textW + padX * 2;
-                        var pillH = Style.space(14);
-                        var preferredX = Math.max(lx1 + Style.space(2), lx2 - pillW - Style.space(2));
-                        var pillX = Math.max(g.left + Style.space(2), Math.min(g.right - pillW - Style.space(2), Math.round(preferredX)));
-                        var pillY = (ly - pillH - Style.space(2) >= g.top) ? Math.round(ly - pillH - Style.space(2)) : Math.round(ly + Style.space(2));
-
-                        ctx.globalAlpha = 0.84;
-                        ctx.fillStyle = Color.background;
-                        ctx.fillRect(pillX, pillY, pillW, pillH);
-
-                        ctx.globalAlpha = 1.0;
-                        ctx.fillStyle = lvlColor;
-                        ctx.textAlign = "left";
-                        ctx.textBaseline = "middle";
-                        ctx.fillText(fullLabel, pillX + padX, pillY + pillH / 2);
-                    }
-                    ctx.restore();
-                }
-            }
-
             // End plot-area clip before drawing right-scale badges and bottom time scale
             ctx.restore();
 
@@ -1414,7 +1111,6 @@ Item {
     onRangeKeyChanged: resetZoom()
     onCandlesChanged: refreshGeometry()
     onExtendedPriceChanged: refreshGeometry()
-    onPriceLevelsChanged: refreshGeometry()
     onUpColorChanged: canvas.requestPaint()
     onDownColorChanged: canvas.requestPaint()
     onGridColorChanged: canvas.requestPaint()
@@ -1440,14 +1136,10 @@ Item {
         enabled: root.interactive
         hoverEnabled: true
         preventStealing: true
-        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        acceptedButtons: Qt.LeftButton
         cursorShape: {
-            if (root.draggingLevelIndex >= 0)
-                return (root.levelDragMode === "x1" || root.levelDragMode === "x2") ? Qt.SizeHorCursor : Qt.ClosedHandCursor;
             if (root.draggingPriceScale)
                 return Qt.SizeVerCursor;
-            if (root.hoveredLevelIndex >= 0)
-                return (root.hoveredLevelPart === "x1" || root.hoveredLevelPart === "x2") ? Qt.SizeHorCursor : Qt.PointingHandCursor;
             if (root.hoveringScale)
                 return Qt.SizeVerCursor;
             if (root.dragging)
@@ -1458,72 +1150,12 @@ Item {
         onPressed: function (mouse) {
             root.chartPressed();
             var g = root.cachedGeometry;
-            if (mouse.button === Qt.RightButton) {
-                var rightHit = root.hitTestLevel(mouse.x, mouse.y);
-                if (rightHit) {
-                    root.removeLevel(rightHit.index);
-                    return;
-                }
-                root.updateHover(mouse.x, mouse.y);
-                if (g && g.innerW > 0 && root.hoverPrice > 0) {
-                    if (root.editingLevel)
-                        root.commitLevelEdit();
-                    var anchorTs = (!root.hoveringScale && root.hoverCandle) ? root.hoverCandle.timestamp : (g.candles.length > 0 ? g.candles[0].timestamp : 0);
-                    var ohlcField = root.hoveringScale ? "scale" : root.hoverOhlcField;
-                    var armByDefault = Boolean(mouse.modifiers & Qt.AltModifier);
-                    var lastC = (g.candles && g.candles.length > 0) ? g.candles[g.candles.length - 1].close : 0;
-                    var defaultCond = (lastC > 0 && root.hoverPrice < lastC) ? "CROSSES_BELOW" : "CROSSES_ABOVE";
-                    var nextLevels = root.priceLevels ? root.priceLevels.slice() : [];
-                    nextLevels.push({
-                        price: root.hoverPrice,
-                        sourceTf: root.rangeKey,
-                        anchorTs: anchorTs,
-                        ohlcField: ohlcField,
-                        text: "",
-                        tone: "fg",
-                        offsets: ({}),
-                        alertEnabled: armByDefault,
-                        alertCondition: defaultCond,
-                        alertTriggered: false
-                    });
-                    root.setPriceLevels(nextLevels);
-                    root.startLevelEdit(nextLevels.length - 1);
-                }
-                return;
-            }
 
             if (mouse.button === Qt.LeftButton) {
-                if (root.editingLevel)
-                    root.commitLevelEdit();
-
                 if (mouse.modifiers & Qt.AltModifier) {
                     root.updateHover(mouse.x, mouse.y);
                     if (!root.hoveringScale && root.hoverCandle && isFinite(root.hoverCandle.timestamp)) {
                         root.replayRequested(root.hoverCandle.timestamp);
-                        return;
-                    }
-                }
-
-                var leftHit = root.hitTestLevel(mouse.x, mouse.y);
-                if (leftHit && g && g.innerW > 0) {
-                    var targetLvl = root.priceLevels[leftHit.index];
-                    var ep = root.resolveLevelEndpoints(targetLvl, g);
-                    if (ep) {
-                        root.draggingLevelIndex = leftHit.index;
-                        root.levelDragMode = leftHit.part;
-                        root.levelDragStartX = mouse.x;
-                        root.levelDragStartY = mouse.y;
-                        root.levelDragAnchorIdx = ep.anchorIdx;
-                        var startIdx1 = ep.idx1;
-                        var startIdx2 = ep.idx2;
-                        if (leftHit.part === "x1" && (ep.rawX1 < g.left || ep.rawX1 > g.right))
-                            startIdx1 = root.xToGlobalIndex(ep.drawX1, g);
-                        if (leftHit.part === "x2" && (ep.rawX2 < g.left || ep.rawX2 > g.right))
-                            startIdx2 = root.xToGlobalIndex(ep.drawX2, g);
-                        root.levelDragStartIdx1 = startIdx1;
-                        root.levelDragStartIdx2 = startIdx2;
-                        root.levelDragMoved = false;
-                        canvas.requestPaint();
                         return;
                     }
                 }
@@ -1560,50 +1192,6 @@ Item {
 
         onPositionChanged: function (mouse) {
             var g = root.cachedGeometry;
-            if (root.draggingLevelIndex >= 0 && g && g.innerW > 0) {
-                var clampedX = Math.max(g.left, Math.min(g.right, mouse.x));
-                var dx = clampedX - root.levelDragStartX;
-                var dy = mouse.y - root.levelDragStartY;
-                if (Math.abs(mouse.x - root.levelDragStartX) >= 2 || Math.abs(dy) >= 2)
-                    root.levelDragMoved = true;
-                var dBars = dx / Math.max(1, g.slotW);
-                var nextLevels = root.priceLevels.slice();
-                var item = Object.assign({}, nextLevels[root.draggingLevelIndex]);
-                var nextOffsets = Object.assign({}, item.offsets || {});
-                var minBarsSpan = Math.max(0.25, 12 / Math.max(1, g.slotW));
-                var nextIdx1 = root.levelDragStartIdx1;
-                var nextIdx2 = root.levelDragStartIdx2;
-
-                if (root.levelDragMode === "x1") {
-                    nextIdx1 = root.levelDragStartIdx1 + dBars;
-                    if (Math.abs(nextIdx2 - nextIdx1) < minBarsSpan)
-                        nextIdx1 = nextIdx2 >= root.levelDragStartIdx1 ? nextIdx2 - minBarsSpan : nextIdx2 + minBarsSpan;
-                } else if (root.levelDragMode === "x2") {
-                    nextIdx2 = root.levelDragStartIdx2 + dBars;
-                    if (Math.abs(nextIdx2 - nextIdx1) < minBarsSpan)
-                        nextIdx2 = nextIdx1 <= root.levelDragStartIdx2 ? nextIdx1 + minBarsSpan : nextIdx1 - minBarsSpan;
-                } else {
-                    nextIdx1 = root.levelDragStartIdx1 + dBars;
-                    nextIdx2 = root.levelDragStartIdx2 + dBars;
-                    if (Math.abs(dy) >= 2) {
-                        var draggedPrice = root.yToPrice(mouse.y);
-                        if (draggedPrice > 0) {
-                            item.price = draggedPrice;
-                            item.alertTriggered = false;
-                        }
-                    }
-                }
-
-                nextOffsets[root.rangeKey] = {
-                    startDelta: nextIdx1 - root.levelDragAnchorIdx,
-                    endDelta: nextIdx2 - root.levelDragAnchorIdx
-                };
-                item.offsets = nextOffsets;
-                nextLevels[root.draggingLevelIndex] = item;
-                root.setPriceLevels(nextLevels);
-                root.updateHover(mouse.x, mouse.y);
-                return;
-            }
 
             if (root.draggingPriceScale && g && g.innerH > 0) {
                 var dyScale = mouse.y - root.dragStartY;
@@ -1680,31 +1268,11 @@ Item {
                         root.refreshGeometry();
                 }
             } else {
-                var hoverHit = root.hitTestLevel(mouse.x, mouse.y);
-                var nextHoverIdx = hoverHit ? hoverHit.index : -1;
-                var nextHoverPart = hoverHit ? hoverHit.part : "";
-                if (nextHoverIdx !== root.hoveredLevelIndex || nextHoverPart !== root.hoveredLevelPart) {
-                    root.hoveredLevelIndex = nextHoverIdx;
-                    root.hoveredLevelPart = nextHoverPart;
-                    canvas.requestPaint();
-                }
                 root.updateHover(mouse.x, mouse.y);
             }
         }
 
         onReleased: function (mouse) {
-            if (root.draggingLevelIndex >= 0) {
-                var releasedIdx = root.draggingLevelIndex;
-                var wasMoved = root.levelDragMoved;
-                root.draggingLevelIndex = -1;
-                root.levelDragMode = "";
-                root.levelDragMoved = false;
-                if (!wasMoved)
-                    root.startLevelEdit(releasedIdx);
-                else
-                    canvas.requestPaint();
-                return;
-            }
             root.draggingPriceScale = false;
             root.priceScaleDragMode = "";
             root.dragging = false;
@@ -1713,9 +1281,6 @@ Item {
         }
 
         onCanceled: {
-            root.draggingLevelIndex = -1;
-            root.levelDragMode = "";
-            root.levelDragMoved = false;
             root.draggingPriceScale = false;
             root.priceScaleDragMode = "";
             root.dragging = false;
@@ -1726,9 +1291,6 @@ Item {
             if (mouse.button !== Qt.LeftButton)
                 return;
             if (mouse.modifiers & Qt.AltModifier)
-                return;
-            var hit = root.hitTestLevel(mouse.x, mouse.y);
-            if (hit || root.editingLevel)
                 return;
             root.draggingPriceScale = false;
             root.priceScaleDragMode = "";
@@ -1843,168 +1405,8 @@ Item {
         }
 
         onExited: {
-            if (root.hoveredLevelIndex !== -1) {
-                root.hoveredLevelIndex = -1;
-                root.hoveredLevelPart = "";
-                canvas.requestPaint();
-            }
-            if (!root.dragging && !root.draggingPriceScale && root.draggingLevelIndex < 0)
+            if (!root.dragging && !root.draggingPriceScale)
                 root.clearHover();
-        }
-    }
-
-    // Inline Trigger / Target Level Text Editor Overlay
-    FinanceSurface {
-        id: levelEditOverlay
-        elevation: 2
-        radiusToken: "sm"
-        borderColorOverride: activeLvl ? root.levelToneColor(activeLvl.tone) : Color.foreground
-        z: Model.Z_LAYER.LEVEL_EDIT
-        visible: root.editingLevel && root.cachedGeometry !== null
-        readonly property var activeLvl: (root.editingLevelIndex >= 0 && root.editingLevelIndex < root.priceLevels.length) ? root.priceLevels[root.editingLevelIndex] : null
-        readonly property var activeEp: (activeLvl && root.cachedGeometry) ? root.resolveLevelEndpoints(activeLvl, root.cachedGeometry) : null
-        readonly property real lvlY: (activeLvl && root.cachedGeometry) ? root.priceToYVal(activeLvl.price, root.cachedGeometry) : 0
-        readonly property real lvlRightX: activeEp ? activeEp.drawX2 : (root.cachedGeometry ? root.cachedGeometry.right : root.width)
-        readonly property int minX: root.cachedGeometry ? (root.cachedGeometry.left + Style.space(4)) : root.pad
-        readonly property int maxX: Math.max(minX, (root.cachedGeometry ? root.cachedGeometry.right : (root.width - root.pad)) - width - Style.space(4))
-        x: Math.max(minX, Math.min(maxX, Math.round(lvlRightX - width)))
-        y: {
-            if (!root.cachedGeometry)
-                return root.pad;
-            var aboveY = Math.round(lvlY - height - Style.space(4));
-            return aboveY >= root.cachedGeometry.top ? aboveY : Math.round(lvlY + Style.space(4));
-        }
-        width: Math.min(Math.max(Style.space(160), levelEditRow.implicitWidth + Style.space(14)), Math.max(Style.space(120), (root.cachedGeometry ? root.cachedGeometry.innerW : root.width) - Style.space(8)))
-        height: Style.space(22)
-
-        Row {
-            id: levelEditRow
-            anchors.left: parent.left
-            anchors.leftMargin: Style.space(6)
-            anchors.right: parent.right
-            anchors.rightMargin: Style.space(6)
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(6)
-
-            Rectangle {
-                id: toneDot
-                width: Style.space(7)
-                height: Style.space(7)
-                radius: width / 2
-                anchors.verticalCenter: parent.verticalCenter
-                color: levelEditOverlay.activeLvl ? root.levelToneColor(levelEditOverlay.activeLvl.tone) : Color.foreground
-
-                MouseArea {
-                    anchors.fill: parent
-                    anchors.margins: -Style.space(3)
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.cycleEditingLevelTone()
-                }
-            }
-
-            Item {
-                width: Math.max(Style.space(76), Math.min(Style.space(180), levelTextInput.contentWidth + Style.space(12)))
-                height: parent.height
-
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    visible: levelTextInput.text.length === 0
-                    text: "Label (Tab=color)..."
-                    color: root.labelColor
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                }
-
-                TextInput {
-                    id: levelTextInput
-                    anchors.fill: parent
-                    verticalAlignment: TextInput.AlignVCenter
-                    color: levelEditOverlay.activeLvl ? root.levelToneColor(levelEditOverlay.activeLvl.tone) : Color.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.bold: true
-                    clip: true
-                    selectByMouse: true
-
-                    onTextEdited: {
-                        if (root.editingLevelIndex >= 0 && root.editingLevelIndex < root.priceLevels.length) {
-                            var next = root.priceLevels.slice();
-                            var item = Object.assign({}, next[root.editingLevelIndex]);
-                            item.text = text;
-                            next[root.editingLevelIndex] = item;
-                            root.setPriceLevels(next);
-                        }
-                    }
-
-                    Keys.onPressed: function (event) {
-                        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                            root.commitLevelEdit();
-                            event.accepted = true;
-                        } else if (event.key === Qt.Key_Escape) {
-                            root.dismissLevelEdit();
-                            event.accepted = true;
-                        } else if (event.key === Qt.Key_Tab) {
-                            root.cycleEditingLevelTone();
-                            event.accepted = true;
-                        } else if ((event.modifiers & Qt.AltModifier) && event.key === Qt.Key_A) {
-                            root.toggleEditingLevelAlert();
-                            event.accepted = true;
-                        }
-                    }
-                }
-            }
-
-            FinanceChipButton {
-                id: alertToggleBadge
-                anchors.verticalCenter: parent.verticalCenter
-                bordered: true
-                checked: Boolean(levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled)
-                text: checked ? "ALRT ON" : "ALRT OFF"
-                foreground: Color.accent
-                dimColor: root.labelColor
-                accentColor: Color.accent
-                fontFamily: root.fontFamily
-                fontSize: Style.font.bodySmall - 1
-                horizontalPadding: Style.space(4)
-                verticalPadding: Style.space(1)
-                cornerRadius: Style.space(2)
-                tooltipText: "Toggle price crossover alert (Alt+A)"
-                onClicked: root.toggleEditingLevelAlert()
-            }
-
-            FinanceChipButton {
-                id: alertCondBadge
-                visible: Boolean(levelEditOverlay.activeLvl && levelEditOverlay.activeLvl.alertEnabled)
-                anchors.verticalCenter: parent.verticalCenter
-                bordered: true
-                checked: true
-                text: {
-                    var cond = levelEditOverlay.activeLvl ? levelEditOverlay.activeLvl.alertCondition : "CROSSES_ABOVE";
-                    if (cond === "CROSSES_BELOW")
-                        return "<=";
-                    if (cond === "CROSSES")
-                        return "<>";
-                    return ">=";
-                }
-                foreground: Color.foreground
-                fontFamily: root.fontFamily
-                fontSize: Style.font.bodySmall - 1
-                horizontalPadding: Style.space(4)
-                verticalPadding: Style.space(1)
-                cornerRadius: Style.space(2)
-                tooltipText: "Cycle crossover condition"
-                onClicked: root.cycleEditingLevelCondition()
-            }
-
-            Text {
-                anchors.verticalCenter: parent.verticalCenter
-                textFormat: Text.PlainText
-                text: levelEditOverlay.activeLvl ? ("· " + Model.formatPrice(levelEditOverlay.activeLvl.price, root.currency, root.priceHint)) : ""
-                color: levelEditOverlay.activeLvl ? root.levelToneColor(levelEditOverlay.activeLvl.tone) : Color.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                font.bold: true
-            }
         }
     }
 

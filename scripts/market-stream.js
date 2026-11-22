@@ -9,6 +9,7 @@ const fsp = fs.promises;
 const path = require("path");
 const os = require("os");
 const Model = require("../src/Model.js");
+const Holdings = require("./fetch-etf-holdings.js");
 
 const YAHOO_WS_URL = "wss://streamer.finance.yahoo.com/?version=2";
 const COINBASE_WS_URL = "wss://ws-feed.exchange.coinbase.com";
@@ -157,7 +158,7 @@ function normalizeYahooTick(decoded, nowDate) {
       out.changePercent = rawChangePct;
       out.regularChangePercent = rawChangePct;
     }
-  } else if (marketHours === 0 || marketHours === 2 || marketHours === 3) {
+  } else if (marketHours === 0 || marketHours === 2 || marketHours === 3 || marketHours === 4) {
     out.session = marketHours === 0 ? "pre" : "post";
     out.extendedPrice = price;
     out.hasExtended = true;
@@ -167,13 +168,10 @@ function normalizeYahooTick(decoded, nowDate) {
       out.extendedChangePercent = rawChangePct;
     }
   } else {
-    out.session = "regular";
-    out.regularPrice = price;
+    out.session = "closed";
+    out.hasExtended = false;
     if (rawChange !== null) out.change = rawChange;
-    if (rawChangePct !== null) {
-      out.changePercent = rawChangePct;
-      out.regularChangePercent = rawChangePct;
-    }
+    if (rawChangePct !== null) out.changePercent = rawChangePct;
   }
 
   return out;
@@ -607,12 +605,21 @@ class OffThreadCandleCache {
     this.cachePath = path.join(this.cacheDir, "candles.json");
     // Store compact v2 tuple arrays ([t,o,h,l,c,v]) in RAM to minimize V8 heap footprint
     this.packedEntries = {};
+    this.fetchedAt = {};
     this.accessTimes = {};
     this.protectedKeys = {};
+    this.maxEntries = 600;
     this.loaded = false;
     this.dirty = false;
     this.saveTimer = null;
     this.writing = false;
+  }
+
+  setMaxEntries(maxEntries) {
+    const n = Number(maxEntries);
+    if (Number.isFinite(n) && n >= 600) {
+      this.maxEntries = Math.floor(n);
+    }
   }
 
   async load() {
@@ -624,6 +631,7 @@ class OffThreadCandleCache {
         if (parsed && typeof parsed === "object") {
           const isV2 = parsed.version === 2 && parsed.entries && typeof parsed.entries === "object";
           const source = isV2 ? parsed.entries : parsed;
+          const savedFetchedAt = (isV2 && parsed.fetchedAt && typeof parsed.fetchedAt === "object") ? parsed.fetchedAt : null;
           const keys = Object.keys(source);
           for (let i = 0; i < keys.length; i++) {
             const k = keys[i];
@@ -636,6 +644,9 @@ class OffThreadCandleCache {
               if (Array.isArray(packed) && packed.length > 0) {
                 this.packedEntries[k] = packed;
               }
+            }
+            if (savedFetchedAt && Number.isFinite(Number(savedFetchedAt[k])) && Number(savedFetchedAt[k]) > 0) {
+              this.fetchedAt[k] = Number(savedFetchedAt[k]);
             }
           }
           // Auto-migrate legacy v1 17MB cache file down to compact v2 (~5MB)
@@ -659,6 +670,11 @@ class OffThreadCandleCache {
     return typeof Model.unpackCandles === "function" ? Model.unpackCandles(packed) : packed;
   }
 
+  getFetchedAt(key) {
+    const ts = Number(this.fetchedAt[key]);
+    return (Number.isFinite(ts) && ts > 0) ? ts : 0;
+  }
+
   getKeys(keys) {
     const out = {};
     for (const k of keys || []) {
@@ -670,12 +686,14 @@ class OffThreadCandleCache {
     return out;
   }
 
-  put(key, candles, protectedKeys) {
+  put(key, candles, protectedKeys, fetchedAtMs) {
     if (!key || !Array.isArray(candles) || candles.length === 0) return;
     const packed = typeof Model.packCandles === "function" ? Model.packCandles(candles) : candles;
     if (!Array.isArray(packed) || packed.length === 0) return;
+    const nowMs = Date.now();
     this.packedEntries[key] = packed;
-    this.accessTimes[key] = Date.now();
+    this.fetchedAt[key] = (Number.isFinite(Number(fetchedAtMs)) && Number(fetchedAtMs) > 0) ? Number(fetchedAtMs) : nowMs;
+    this.accessTimes[key] = nowMs;
     if (protectedKeys && typeof protectedKeys === "object") {
       this.protectedKeys = protectedKeys;
     }
@@ -704,9 +722,14 @@ class OffThreadCandleCache {
     this.writing = true;
     try {
       await fsp.mkdir(this.cacheDir, { recursive: true });
-      const pruned = Model.pruneChartCache(this.packedEntries, 600, this.accessTimes, this.protectedKeys);
+      const pruned = Model.pruneChartCache(this.packedEntries, this.maxEntries, this.accessTimes, this.protectedKeys);
       this.packedEntries = pruned;
-      const payload = JSON.stringify({ version: 2, entries: pruned });
+      const prunedFetchedAt = {};
+      for (const k of Object.keys(pruned)) {
+        if (this.fetchedAt[k] > 0) prunedFetchedAt[k] = this.fetchedAt[k];
+      }
+      this.fetchedAt = prunedFetchedAt;
+      const payload = JSON.stringify({ version: 2, entries: pruned, fetchedAt: prunedFetchedAt });
       const tmpPath = this.cachePath + ".tmp." + process.pid;
       await fsp.writeFile(tmpPath, payload, "utf8");
       await fsp.rename(tmpPath, this.cachePath);
@@ -716,6 +739,603 @@ class OffThreadCandleCache {
       this.writing = false;
       if (this.dirty) this.scheduleSave();
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Off-Thread Strat Setup Line Alert Scanner
+// ---------------------------------------------------------------------------
+const ALERT_HYDRATION_TFS = ["30", "60", "1D"];
+const ALERT_EVAL_TFS = ["30", "60", "1D", "1W", "1M"];
+
+function updateTrailingCandleInPlace(candles, quote, tf, nowDate) {
+  if (!Array.isArray(candles) || candles.length === 0 || !quote) return candles;
+  if (quote.session && quote.session !== "regular" && quote.session !== "live") {
+    return candles;
+  }
+  const rawPrice = quote.regularPrice != null
+    ? quote.regularPrice
+    : (quote.regularMarketPrice != null ? quote.regularMarketPrice : quote.price);
+  const price = finitePositiveOrNull(rawPrice);
+  if (price === null) return candles;
+
+  const now = (nowDate instanceof Date && Number.isFinite(nowDate.getTime())) ? nowDate : new Date();
+  if (quote.symbol && Model.isUsEquitySessionSymbol(quote.symbol)) {
+    const rthSched = Model.getUsSessionSchedule(now, quote);
+    if (rthSched.isWeekend || rthSched.mins < rthSched.openMins - 2 || rthSched.mins > rthSched.closeMins + 2) {
+      return candles;
+    }
+  }
+  const nowSec = Math.floor(now.getTime() / 1000);
+  const last = candles[candles.length - 1];
+  if (!last || !Number.isFinite(last.timestamp)) return candles;
+
+  // Check if a bar rollover occurred; only delegate to full updateDevelopingCandle on rollover
+  let rolled = false;
+  if (tf === "30") {
+    rolled = nowSec >= last.timestamp + 1800;
+  } else if (tf === "60") {
+    const dur = Model.candleDurationSec(last, "60", quote.symbol, now, quote);
+    rolled = nowSec >= last.timestamp + dur;
+  } else if (tf === "1D") {
+    rolled = nowSec > last.timestamp && Model.marketDateEt(nowSec) !== Model.marketDateEt(last.timestamp);
+  } else if (tf === "1W") {
+    rolled = nowSec > last.timestamp && Model.marketWeekStartEt(nowSec) !== Model.marketWeekStartEt(last.timestamp);
+  } else if (tf === "1M") {
+    rolled = nowSec > last.timestamp && Model.marketDateEt(nowSec).slice(0, 7) !== Model.marketDateEt(last.timestamp).slice(0, 7);
+  }
+
+  if (rolled) {
+    return Model.updateDevelopingCandle(candles, quote, tf, now);
+  }
+
+  // O(1) in-place update without array allocation
+  last.close = price;
+  if (!Number.isFinite(last.high) || price > last.high) last.high = price;
+  if (!Number.isFinite(last.low) || price < last.low) last.low = price;
+  if (tf === "1D") {
+    const qTs = finiteOrNull(quote.timestamp);
+    if (qTs === null || Model.marketDateEt(qTs) === Model.marketDateEt(nowSec)) {
+      const dHigh = finitePositiveOrNull(quote.regularMarketDayHigh != null ? quote.regularMarketDayHigh : quote.dayHigh);
+      const dLow = finitePositiveOrNull(quote.regularMarketDayLow != null ? quote.regularMarketDayLow : quote.dayLow);
+      if (dHigh !== null && dHigh > last.high) last.high = dHigh;
+      if (dLow !== null && dLow < last.low) last.low = dLow;
+    }
+  }
+  return candles;
+}
+
+class SetupAlertScanner {
+  constructor(options) {
+    const opts = options || {};
+    this.cache = opts.cache || null;
+    this.fetchChart = opts.fetchChart || fetchChartPayload;
+    this.resolveHoldings = opts.resolveHoldings || Holdings.resolveEtfHoldings;
+    this.maxHoldingsPerBasket = Math.max(10, Number(opts.maxHoldingsPerBasket) || 75);
+    this.hydrationConcurrency = Math.max(1, Number(opts.hydrationConcurrency) || 6);
+    this.reconcileConcurrency = Math.max(1, Number(opts.reconcileConcurrency) || 4);
+    this.snapshotThrottleMs = Math.max(10, Number(opts.snapshotThrottleMs) || 300);
+    this.now = typeof opts.now === "function" ? opts.now : () => new Date();
+
+    this.onSymbolsChanged = opts.onSymbolsChanged || null;
+    this.onTrigger = opts.onTrigger || null;
+    this.onSnapshot = opts.onSnapshot || null;
+    this.onMeta = opts.onMeta || null;
+
+    this.enabled = true;
+    this.viewActive = false;
+    this.sources = [];
+    this.resolvedBaskets = {};
+    this.firedKeys = {};
+    this.liveTriggeredAt = {};
+    this.symbolState = new Map();
+
+    this.configVersion = 0;
+    this.queue = [];
+    this.queuedKeys = new Set();
+    this.inFlightCount = 0;
+    this.hydrating = false;
+
+    this.snapshotTimer = null;
+    this.lastSnapshotSig = "";
+    this.lastMetaSig = "";
+    this.boundaryTimer = null;
+    this.lastBucket30 = -1;
+    this.lastBucket60 = -1;
+    this.lastMarketDateEt = "";
+    this.disposed = false;
+  }
+
+  getTrackedSymbols() {
+    return Array.from(this.symbolState.keys());
+  }
+
+  hasTrackedSymbol(sym) {
+    return this.symbolState.has(sym);
+  }
+
+  startBoundaryTimer() {
+    if (this.boundaryTimer || this.disposed) return;
+    this.boundaryTimer = setInterval(() => this.checkBarBoundaries(), 15000);
+    if (this.boundaryTimer.unref) this.boundaryTimer.unref();
+  }
+
+  stopBoundaryTimer() {
+    if (this.boundaryTimer) {
+      clearInterval(this.boundaryTimer);
+      this.boundaryTimer = null;
+    }
+  }
+
+  dispose() {
+    this.disposed = true;
+    this.stopBoundaryTimer();
+    if (this.snapshotTimer) {
+      clearTimeout(this.snapshotTimer);
+      this.snapshotTimer = null;
+    }
+    this.queue = [];
+    this.queuedKeys.clear();
+  }
+
+  async resolveSourceMembers(source) {
+    const tok = String(source || "").trim();
+    if (!tok) return { basket: "", symbols: [], meta: null };
+    if (tok.charAt(0) === "@") {
+      const presetSyms = Model.resolveTickerPreset(tok) || [];
+      return {
+        basket: tok,
+        symbols: presetSyms,
+        meta: { kind: "preset", count: presetSyms.length, total: presetSyms.length, capped: false }
+      };
+    }
+
+    const norm = Model.normalizeSymbol(tok);
+    if (!norm) return { basket: "", symbols: [], meta: null };
+
+    // Try ETF holdings resolution (returns empty holdings for plain stocks/crypto)
+    let holdingsData = null;
+    if (!Model.isCryptoSymbol(norm)) {
+      try {
+        holdingsData = await this.resolveHoldings(norm);
+      } catch (e) {
+        holdingsData = null;
+      }
+    }
+
+    if (holdingsData && Array.isArray(holdingsData.holdings) && holdingsData.holdings.length > 0) {
+      const active = [];
+      const seen = new Set();
+      const sorted = holdingsData.holdings.slice().sort((a, b) => (Number(b && b.pctVal) || 0) - (Number(a && a.pctVal) || 0));
+      for (let i = 0; i < sorted.length; i++) {
+        const h = sorted[i];
+        if (!h || h.delisted === true) continue;
+        const s = Model.normalizeSymbol(h.symbol);
+        if (!s || seen.has(s)) continue;
+        seen.add(s);
+        active.push(s);
+      }
+      if (active.length > 0) {
+        const capped = active.length > this.maxHoldingsPerBasket;
+        const selected = capped ? active.slice(0, this.maxHoldingsPerBasket) : active;
+        return {
+          basket: norm,
+          symbols: selected,
+          meta: { kind: "etf", count: selected.length, total: active.length, capped }
+        };
+      }
+    }
+
+    return {
+      basket: "Custom",
+      symbols: [norm],
+      meta: { kind: "symbol", count: 1, total: 1, capped: false }
+    };
+  }
+
+  async setConfig(sources, persistedFiredKeys, enabled) {
+    const ver = ++this.configVersion;
+    this.enabled = enabled !== false;
+    this.sources = Model.normalizeAlertSources(sources);
+    if (persistedFiredKeys && typeof persistedFiredKeys === "object") {
+      const merged = Object.assign({}, this.firedKeys, persistedFiredKeys);
+      this.firedKeys = Model.normalizeFiredSetupKeys(merged, this.now().getTime());
+    }
+
+    if (!this.enabled || this.sources.length === 0) {
+      this.symbolState.clear();
+      this.resolvedBaskets = {};
+      this.queue = [];
+      this.queuedKeys.clear();
+      this.hydrating = false;
+      this.stopBoundaryTimer();
+      if (this.onSymbolsChanged) this.onSymbolsChanged([]);
+      this.emitMeta(true);
+      if (this.viewActive) this.emitSnapshot(true);
+      return;
+    }
+
+    const nextBasketsBySym = new Map();
+    const nextResolvedBaskets = {};
+    for (let i = 0; i < this.sources.length; i++) {
+      const src = this.sources[i];
+      const res = await this.resolveSourceMembers(src);
+      if (ver !== this.configVersion || this.disposed) return;
+      if (!res.basket || res.symbols.length === 0) continue;
+      nextResolvedBaskets[src] = res.meta;
+      for (let j = 0; j < res.symbols.length; j++) {
+        const sym = res.symbols[j];
+        if (!nextBasketsBySym.has(sym)) nextBasketsBySym.set(sym, []);
+        const list = nextBasketsBySym.get(sym);
+        if (list.indexOf(res.basket) === -1) list.push(res.basket);
+      }
+    }
+
+    if (ver !== this.configVersion || this.disposed) return;
+    this.resolvedBaskets = nextResolvedBaskets;
+
+    // Remove symbols no longer tracked
+    for (const existingSym of Array.from(this.symbolState.keys())) {
+      if (!nextBasketsBySym.has(existingSym)) {
+        this.symbolState.delete(existingSym);
+      }
+    }
+
+    // Add or update retained symbols
+    for (const [sym, baskets] of nextBasketsBySym.entries()) {
+      let st = this.symbolState.get(sym);
+      if (!st) {
+        st = {
+          symbol: sym,
+          baskets: baskets.slice(),
+          candles: { "30": [], "60": [], "1D": [], "1W": [], "1M": [] },
+          fetchedAt: { "30": 0, "60": 0, "1D": 0 },
+          seeded: { "30": false, "60": false, "1D": false, "1W": false, "1M": false },
+          quote: null,
+          activeItems: []
+        };
+        this.symbolState.set(sym, st);
+      } else {
+        st.baskets = baskets.slice();
+        // Refresh basket membership on already-computed items immediately
+        if (st.activeItems.length > 0) {
+          this.evaluateSymbol(sym, true);
+        }
+      }
+    }
+
+    if (this.cache && typeof this.cache.setMaxEntries === "function") {
+      this.cache.setMaxEntries(Math.max(600, this.symbolState.size * 4 + 200));
+    }
+
+    if (this.onSymbolsChanged) {
+      this.onSymbolsChanged(this.getTrackedSymbols());
+    }
+
+    // Prime from disk cache first, then enqueue missing/stale TFs politely
+    if (this.cache && typeof this.cache.load === "function") {
+      await this.cache.load();
+      if (ver !== this.configVersion || this.disposed) return;
+    }
+
+    const nowDate = this.now();
+    this.queue = [];
+    this.queuedKeys.clear();
+
+    for (const [sym, st] of this.symbolState.entries()) {
+      for (let ti = 0; ti < ALERT_HYDRATION_TFS.length; ti++) {
+        const tf = ALERT_HYDRATION_TFS[ti];
+        const key = Model.cacheKey(sym, tf);
+        let loadedFromCache = null;
+        if ((!st.candles[tf] || st.candles[tf].length === 0) && this.cache) {
+          const cached = this.cache.getUnpacked(key);
+          if (Array.isArray(cached) && cached.length > 0) {
+            loadedFromCache = cached;
+          }
+        }
+        const candidate = loadedFromCache || st.candles[tf];
+        const cachedFetchedAt = (this.cache && typeof this.cache.getFetchedAt === "function") ? this.cache.getFetchedAt(key) : 0;
+        const effectiveFetchedAt = st.fetchedAt[tf] || cachedFetchedAt || 0;
+        const stale = !candidate || candidate.length < 2 || Model.isCandleSeriesStale(candidate, sym, tf, nowDate, effectiveFetchedAt);
+        if (loadedFromCache) {
+          this.applyCandlesToState(st, tf, loadedFromCache, null, true, stale ? 0 : effectiveFetchedAt, !stale);
+        }
+        if (stale) {
+          this.enqueueFetch(sym, tf, false);
+        }
+      }
+    }
+
+    this.startBoundaryTimer();
+    this.drainQueue(this.hydrationConcurrency);
+    this.emitMeta(true);
+    if (this.viewActive) this.emitSnapshot(true);
+  }
+
+  setViewActive(active) {
+    const next = Boolean(active);
+    this.viewActive = next;
+    if (next) {
+      this.emitSnapshot(true);
+    }
+  }
+
+  forceRehydrate() {
+    if (!this.enabled || this.symbolState.size === 0) return;
+    for (const sym of this.symbolState.keys()) {
+      for (let ti = 0; ti < ALERT_HYDRATION_TFS.length; ti++) {
+        this.enqueueFetch(sym, ALERT_HYDRATION_TFS[ti], true);
+      }
+    }
+    this.drainQueue(this.hydrationConcurrency);
+    this.emitMeta(true);
+  }
+
+  enqueueFetch(sym, tf, force) {
+    const k = Model.cacheKey(sym, tf);
+    if (this.queuedKeys.has(k)) return;
+    this.queuedKeys.add(k);
+    this.queue.push({ sym, tf, key: k, force: Boolean(force) });
+    this.hydrating = true;
+  }
+
+  drainQueue(limit) {
+    const maxConc = Math.max(1, Number(limit) || this.hydrationConcurrency);
+    while (this.inFlightCount < maxConc && this.queue.length > 0 && !this.disposed) {
+      const job = this.queue.shift();
+      if (!job) break;
+      this.queuedKeys.delete(job.key);
+      if (!this.symbolState.has(job.sym)) continue;
+      this.inFlightCount++;
+      this.runHydrationJob(job, maxConc);
+    }
+    if (this.inFlightCount === 0 && this.queue.length === 0) {
+      if (this.hydrating) {
+        this.hydrating = false;
+        this.emitMeta(true);
+        if (this.viewActive) this.scheduleSnapshot();
+      }
+    }
+  }
+
+  async runHydrationJob(job, maxConc) {
+    const startVer = this.configVersion;
+    try {
+      const parsed = await this.fetchChart(job.sym, job.tf);
+      if (this.disposed || startVer !== this.configVersion) return;
+      const st = this.symbolState.get(job.sym);
+      if (st && parsed && Array.isArray(parsed.candles) && parsed.candles.length > 0) {
+        const quoteOnly = Object.assign({}, parsed);
+        delete quoteOnly.candles;
+        if (this.cache && typeof this.cache.put === "function") {
+          this.cache.put(job.key, parsed.candles);
+        }
+        const nowMs = this.now().getTime();
+        const isSeed = !st.seeded[job.tf];
+        this.applyCandlesToState(st, job.tf, parsed.candles, quoteOnly, isSeed, nowMs, true);
+      }
+    } catch (e) {
+      // Ignore transient chart errors; next boundary/tick will retry cleanly
+    } finally {
+      this.inFlightCount = Math.max(0, this.inFlightCount - 1);
+      if (!this.disposed) {
+        this.drainQueue(maxConc);
+      }
+    }
+  }
+
+  applyCandlesToState(st, tf, candles, quoteOnly, isSeed, fetchedAtMs, markSeeded) {
+    const copy = Array.isArray(candles) ? candles.map(c => Object.assign({}, c)) : [];
+    if (copy.length === 0) return;
+    st.candles[tf] = copy;
+    if (fetchedAtMs > 0) st.fetchedAt[tf] = fetchedAtMs;
+    if (quoteOnly && quoteOnly.symbol) {
+      st.quote = Model.mergeChartQuote(st.quote, quoteOnly);
+    }
+    if (tf === "1D") {
+      st.candles["1W"] = Model.mergePeriodCandles(copy, "1W");
+      st.candles["1M"] = Model.mergePeriodCandles(copy, "1M");
+    }
+
+    // Re-apply live quote onto developing bar if we already received a fresher live tick
+    if (st.quote) {
+      const nowDate = this.now();
+      st.candles[tf] = updateTrailingCandleInPlace(st.candles[tf], st.quote, tf, nowDate);
+      if (tf === "1D") {
+        st.candles["1W"] = updateTrailingCandleInPlace(st.candles["1W"], st.quote, "1W", nowDate);
+        st.candles["1M"] = updateTrailingCandleInPlace(st.candles["1M"], st.quote, "1M", nowDate);
+      }
+    }
+
+    this.evaluateSymbol(st.symbol, isSeed);
+
+    if (markSeeded !== false && isSeed) {
+      st.seeded[tf] = true;
+      if (tf === "1D") {
+        st.seeded["1W"] = true;
+        st.seeded["1M"] = true;
+      }
+    }
+  }
+
+  onExternalChartUpdate(sym, tf, parsed) {
+    if (!this.enabled || this.disposed) return;
+    if (tf !== "30" && tf !== "60" && tf !== "1D") return;
+    const st = this.symbolState.get(sym);
+    if (!st || !parsed || !Array.isArray(parsed.candles) || parsed.candles.length === 0) return;
+    const quoteOnly = Object.assign({}, parsed);
+    delete quoteOnly.candles;
+    const nowMs = this.now().getTime();
+    const isSeed = !st.seeded[tf];
+    this.applyCandlesToState(st, tf, parsed.candles, quoteOnly, isSeed, nowMs, true);
+    if (this.viewActive) this.scheduleSnapshot();
+  }
+
+  onTick(tick) {
+    if (!this.enabled || !tick || !tick.symbol) return;
+    const st = this.symbolState.get(tick.symbol);
+    if (!st) return;
+
+    const prevQ = st.quote;
+    st.quote = prevQ ? Object.assign({}, prevQ, tick) : Object.assign({}, tick);
+    const nowDate = this.now();
+
+    for (let i = 0; i < ALERT_EVAL_TFS.length; i++) {
+      const tf = ALERT_EVAL_TFS[i];
+      if (st.candles[tf] && st.candles[tf].length > 0) {
+        st.candles[tf] = updateTrailingCandleInPlace(st.candles[tf], st.quote, tf, nowDate);
+      }
+    }
+
+    this.evaluateSymbol(st.symbol, false);
+  }
+
+  evaluateSymbol(sym, seedOnly) {
+    const st = this.symbolState.get(sym);
+    if (!st) return;
+    const nowDate = this.now();
+    const nowMs = nowDate.getTime();
+    const items = Model.evaluateSymbolSetupAlerts(sym, st.candles, st.quote, st.baskets);
+    const sessionOpen = Model.isAlertSessionOpen(sym, st.quote, false, nowDate);
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const tf = item.timeframe;
+      const alreadyFired = Boolean(this.firedKeys[item.key]);
+      const tfSeeded = st.seeded[tf] === true;
+
+      if (seedOnly || !tfSeeded) {
+        if (!alreadyFired) {
+          this.firedKeys[item.key] = (item.activeTimestamp > 0) ? (item.activeTimestamp * 1000) : Math.max(1, nowMs - 300000);
+        }
+        item.triggeredAt = this.liveTriggeredAt[item.key] || 0;
+        continue;
+      }
+
+      if (!alreadyFired && sessionOpen) {
+        this.firedKeys[item.key] = nowMs;
+        this.liveTriggeredAt[item.key] = nowMs;
+        item.triggeredAt = nowMs;
+        this.firedKeys = Model.normalizeFiredSetupKeys(this.firedKeys, nowMs);
+        if (this.onTrigger) {
+          this.onTrigger(Object.assign({}, item), Object.assign({}, this.firedKeys));
+        }
+      } else {
+        item.triggeredAt = this.liveTriggeredAt[item.key] || 0;
+      }
+    }
+
+    st.activeItems = items;
+    this.emitMeta(false);
+    if (this.viewActive) {
+      this.scheduleSnapshot();
+    }
+  }
+
+  checkBarBoundaries() {
+    if (this.disposed || !this.enabled || this.symbolState.size === 0) return;
+    const nowDate = this.now();
+    const nowSec = Math.floor(nowDate.getTime() / 1000);
+    const usOpen = Model.isUsMarketOpen(nowDate, false);
+    const curEtDate = Model.marketDateEt(nowSec);
+    const curBucket30 = Math.floor(nowSec / 1800);
+    const sched = Model.getUsSessionSchedule(nowDate);
+    const curBucket60 = (!sched.isWeekend && sched.mins >= sched.openMins)
+      ? Math.floor((sched.mins - sched.openMins) / 60)
+      : Math.floor(nowSec / 3600);
+
+    if (this.lastBucket30 === -1) {
+      this.lastBucket30 = curBucket30;
+      this.lastBucket60 = curBucket60;
+      this.lastMarketDateEt = curEtDate;
+      return;
+    }
+
+    const rolled30 = curBucket30 !== this.lastBucket30;
+    const rolled60 = curBucket60 !== this.lastBucket60;
+    const rolledDay = usOpen && curEtDate !== this.lastMarketDateEt;
+
+    this.lastBucket30 = curBucket30;
+    this.lastBucket60 = curBucket60;
+    if (usOpen) this.lastMarketDateEt = curEtDate;
+
+    if (!rolled30 && !rolled60 && !rolledDay) return;
+
+    for (const sym of this.symbolState.keys()) {
+      const isCrypto = Model.isCryptoSymbol(sym);
+      if (!isCrypto && !usOpen) continue;
+      if (rolled30) this.enqueueFetch(sym, "30", true);
+      if (rolled60) this.enqueueFetch(sym, "60", true);
+      if (rolledDay) this.enqueueFetch(sym, "1D", true);
+    }
+
+    this.drainQueue(this.reconcileConcurrency);
+  }
+
+  collectAllItems() {
+    const out = [];
+    for (const st of this.symbolState.values()) {
+      for (let i = 0; i < st.activeItems.length; i++) {
+        out.push(st.activeItems[i]);
+      }
+    }
+    return out;
+  }
+
+  buildStatus() {
+    let hydratedSymbols = 0;
+    for (const st of this.symbolState.values()) {
+      if (st.seeded["30"] || st.seeded["60"] || st.seeded["1D"]) hydratedSymbols++;
+    }
+    return {
+      hydrating: this.hydrating || this.inFlightCount > 0 || this.queue.length > 0,
+      totalSymbols: this.symbolState.size,
+      hydratedSymbols,
+      sources: this.sources.slice(),
+      resolvedBaskets: Object.assign({}, this.resolvedBaskets)
+    };
+  }
+
+  emitMeta(force) {
+    if (!this.onMeta) return;
+    const items = this.collectAllItems();
+    let inForceCount = 0;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].inForce) inForceCount++;
+    }
+    const status = this.buildStatus();
+    const sig = `${items.length}|${inForceCount}|${status.hydrating}|${status.hydratedSymbols}|${status.totalSymbols}|${status.sources.join(",")}`;
+    if (!force && sig === this.lastMetaSig) return;
+    this.lastMetaSig = sig;
+    this.onMeta({
+      totalCount: items.length,
+      inForceCount,
+      status
+    });
+  }
+
+  scheduleSnapshot() {
+    if (!this.viewActive || this.snapshotTimer || this.disposed) return;
+    this.snapshotTimer = setTimeout(() => {
+      this.snapshotTimer = null;
+      this.emitSnapshot(false);
+    }, this.snapshotThrottleMs);
+    if (this.snapshotTimer.unref) this.snapshotTimer.unref();
+  }
+
+  emitSnapshot(force) {
+    if (!this.onSnapshot) return;
+    if (this.snapshotTimer) {
+      clearTimeout(this.snapshotTimer);
+      this.snapshotTimer = null;
+    }
+    const items = this.collectAllItems();
+    const status = this.buildStatus();
+    const payload = { items, status };
+    const sig = JSON.stringify(payload);
+    if (!force && sig === this.lastSnapshotSig) return;
+    this.lastSnapshotSig = sig;
+    this.onSnapshot(payload);
   }
 }
 
@@ -735,6 +1355,8 @@ function startDaemon() {
 
   const cache = new OffThreadCandleCache();
   const inFlightCharts = new Map();
+  const uiSymbols = new Set();
+  const alertSymbols = new Set();
   let lastStatusSig = "";
 
   function emitStatus() {
@@ -752,6 +1374,45 @@ function startDaemon() {
     }
   }
 
+  function syncProviderSockets() {
+    const combined = new Set();
+    for (const s of uiSymbols) combined.add(s);
+    for (const s of alertSymbols) combined.add(s);
+    const routed = routeSymbols(Array.from(combined));
+    yahooSock.setSymbols(routed.yahoo);
+    coinbaseSock.setSymbols(routed.coinbase);
+    hlSock.setSymbols(routed.hyperliquid);
+    emitStatus();
+  }
+
+  const scanner = new SetupAlertScanner({
+    cache,
+    onSymbolsChanged: (syms) => {
+      alertSymbols.clear();
+      for (let i = 0; i < syms.length; i++) alertSymbols.add(syms[i]);
+      syncProviderSockets();
+    },
+    onTrigger: (event, firedKeys) => {
+      emit({ type: "setupAlertTriggered", event, firedKeys });
+    },
+    onSnapshot: (payload) => {
+      emit({ type: "alertSnapshot", items: payload.items, status: payload.status });
+    },
+    onMeta: (meta) => {
+      emit({ type: "alertMeta", totalCount: meta.totalCount, inForceCount: meta.inForceCount, status: meta.status });
+    }
+  });
+
+  function dispatchIncomingTick(tick) {
+    if (!tick || !tick.symbol) return;
+    if (alertSymbols.has(tick.symbol)) {
+      scanner.onTick(tick);
+    }
+    if (uiSymbols.has(tick.symbol)) {
+      batcher.push(tick);
+    }
+  }
+
   const yahooSock = new ProviderSocket("yahoo", YAHOO_WS_URL, {
     onOpen: (ws, syms) => {
       ws.send(JSON.stringify({ subscribe: syms }));
@@ -765,7 +1426,7 @@ function startDaemon() {
       if (msg.type === "pricing" && msg.message) {
         const dec = decodeYahooPricingProtobuf(msg.message);
         const tick = normalizeYahooTick(dec);
-        if (tick) batcher.push(tick);
+        if (tick) dispatchIncomingTick(tick);
       }
     },
     staleTimeoutMs: 45000,
@@ -789,7 +1450,7 @@ function startDaemon() {
     onMessage: (raw) => {
       const msg = JSON.parse(String(raw || "{}"));
       const tick = normalizeCoinbaseTick(msg);
-      if (tick) batcher.push(tick);
+      if (tick) dispatchIncomingTick(tick);
     },
     onStatus: emitStatus
   });
@@ -804,7 +1465,7 @@ function startDaemon() {
     onMessage: (raw, syms) => {
       const msg = JSON.parse(String(raw || "{}"));
       const ticks = normalizeHyperliquidMids(msg, syms);
-      for (let i = 0; i < ticks.length; i++) batcher.push(ticks[i]);
+      for (let i = 0; i < ticks.length; i++) dispatchIncomingTick(ticks[i]);
     },
     onStatus: emitStatus
   });
@@ -814,11 +1475,28 @@ function startDaemon() {
     const op = cmd.op;
 
     if (op === "subscribe") {
-      const routed = routeSymbols(cmd.symbols || []);
-      yahooSock.setSymbols(routed.yahoo);
-      coinbaseSock.setSymbols(routed.coinbase);
-      hlSock.setSymbols(routed.hyperliquid);
-      emitStatus();
+      uiSymbols.clear();
+      const rawSyms = Array.isArray(cmd.symbols) ? cmd.symbols : [];
+      for (let i = 0; i < rawSyms.length; i++) {
+        const norm = Model.normalizeSymbol(rawSyms[i]);
+        if (norm) uiSymbols.add(norm);
+      }
+      syncProviderSockets();
+      return;
+    }
+
+    if (op === "setAlertConfig") {
+      await scanner.setConfig(cmd.sources, cmd.firedKeys, cmd.enabled !== false);
+      return;
+    }
+
+    if (op === "setAlertViewActive") {
+      scanner.setViewActive(cmd.active === true);
+      return;
+    }
+
+    if (op === "refreshAlerts") {
+      scanner.forceRehydrate();
       return;
     }
 
@@ -863,6 +1541,7 @@ function startDaemon() {
             key,
             ok: true,
             fromCache: true,
+            fetchedAt: cache.getFetchedAt(key),
             candles: hit
           });
           return;
@@ -882,6 +1561,7 @@ function startDaemon() {
         const quoteOnly = Object.assign({}, parsed);
         delete quoteOnly.candles;
         cache.put(key, parsed.candles);
+        scanner.onExternalChartUpdate(sym, rk, parsed);
         emit({
           type: "chartResult",
           id: cmd.id || "",
@@ -951,6 +1631,7 @@ function startDaemon() {
   });
 
   function shutdown() {
+    scanner.dispose();
     batcher.clear();
     yahooSock.close(true);
     coinbaseSock.close(true);
@@ -974,5 +1655,7 @@ module.exports = {
   normalizeHyperliquidMids,
   routeSymbols,
   TickBatcher,
-  OffThreadCandleCache
+  OffThreadCandleCache,
+  SetupAlertScanner,
+  updateTrailingCandleInPlace
 };

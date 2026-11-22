@@ -92,6 +92,30 @@ test("decodeYahooPricingProtobuf and normalizeYahooTick handle regular, pre/post
   assert.equal(tickCrypto.symbol, "ETH-USD")
   assert.equal(tickCrypto.session, "live")
   assert.equal(tickCrypto.hasExtended, false)
+
+  // Overnight tick (marketHours=4) maps to extended "post" and never regular; unknown marketHours maps to "closed"
+  const overnightBuf = Buffer.concat([
+    pbString(1, "MPWR"),
+    pbFloat(2, 1142.05),
+    pbVarint(6, 8),
+    pbVarint(7, 4) // OVERNIGHT_MARKET
+  ])
+  const tickOvernight = Stream.normalizeYahooTick(Stream.decodeYahooPricingProtobuf(overnightBuf))
+  assert.equal(tickOvernight.symbol, "MPWR")
+  assert.equal(tickOvernight.session, "post")
+  assert.equal(tickOvernight.hasExtended, true)
+  assert.ok(Math.abs(tickOvernight.extendedPrice - 1142.05) < 1e-2)
+  assert.equal(tickOvernight.regularPrice, undefined)
+
+  const unknownHoursBuf = Buffer.concat([
+    pbString(1, "MPWR"),
+    pbFloat(2, 1142.05),
+    pbVarint(6, 8),
+    pbVarint(7, 9) // unknown / closed
+  ])
+  const tickClosed = Stream.normalizeYahooTick(Stream.decodeYahooPricingProtobuf(unknownHoursBuf))
+  assert.equal(tickClosed.session, "closed")
+  assert.equal(tickClosed.regularPrice, undefined)
 })
 
 test("normalizeCoinbaseTick and normalizeHyperliquidMids normalize exchange WS messages", () => {
@@ -214,4 +238,222 @@ test("OffThreadCandleCache reads legacy v1 format, writes compact v2, and reload
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   }
+})
+
+test("SetupAlertScanner seeds on hydration without firing, fires once on live RTH break, tracks pullback In-Force, and lazy-emits snapshots only when viewActive", async () => {
+  const openRth = new Date("2026-07-15T15:10:00Z") // Wed 11:10 AM EDT
+  const bar60Ts = Date.UTC(2026, 6, 15, 14, 30) / 1000
+  const bar30Ts = Date.UTC(2026, 6, 15, 15, 0) / 1000
+  const dayTs = Date.UTC(2026, 6, 15, 13, 30) / 1000
+
+  const mockCharts = {
+    // 60m already triggered 2d-1-2u on startup (should seed WITHOUT firing)
+    "NVDA_60": {
+      symbol: "NVDA",
+      candles: [
+        { timestamp: bar60Ts - 10800, open: 105, high: 106, low: 102, close: 103 },
+        { timestamp: bar60Ts - 7200, open: 103, high: 104, low: 99, close: 100 },
+        { timestamp: bar60Ts - 3600, open: 100.5, high: 102.5, low: 100, close: 102 },
+        { timestamp: bar60Ts, open: 102.1, high: 103.0, low: 102.0, close: 102.8 }
+      ]
+    },
+    // 30m currently inside bar (1) waiting to break above 103.50 (2d-1-2u)
+    "NVDA_30": {
+      symbol: "NVDA",
+      candles: [
+        { timestamp: bar30Ts - 5400, open: 105, high: 106, low: 103, close: 104 },
+        { timestamp: bar30Ts - 3600, open: 104, high: 104.5, low: 101, close: 101.5 },
+        { timestamp: bar30Ts - 1800, open: 102, high: 103.5, low: 101.8, close: 103.0 },
+        { timestamp: bar30Ts, open: 102.8, high: 103.2, low: 102.6, close: 102.8 }
+      ]
+    },
+    "NVDA_1D": {
+      symbol: "NVDA",
+      candles: [
+        { timestamp: Date.UTC(2026, 4, 15, 13, 30) / 1000, open: 90, high: 95, low: 88, close: 94 },
+        { timestamp: Date.UTC(2026, 5, 15, 13, 30) / 1000, open: 94, high: 100, low: 93, close: 99 },
+        { timestamp: Date.UTC(2026, 6, 14, 13, 30) / 1000, open: 100, high: 105, low: 99, close: 102 },
+        { timestamp: dayTs, open: 102, high: 103.2, low: 101.5, close: 102.8 }
+      ]
+    }
+  }
+
+  const triggered = []
+  const snapshots = []
+  const metas = []
+
+  const scanner = new Stream.SetupAlertScanner({
+    fetchChart: async (sym, tf) => mockCharts[`${sym}_${tf}`] || null,
+    resolveHoldings: async (sym) => {
+      if (sym === "SMH") return { symbol: "SMH", holdings: [{ symbol: "NVDA", pctVal: 20 }] }
+      if (sym === "XLK") return { symbol: "XLK", holdings: [{ symbol: "NVDA", pctVal: 18 }] }
+      return { symbol: sym, holdings: [] }
+    },
+    now: () => openRth,
+    snapshotThrottleMs: 10,
+    onTrigger: (ev) => triggered.push(ev),
+    onSnapshot: (snap) => snapshots.push(snap),
+    onMeta: (m) => metas.push(m)
+  })
+
+  try {
+    await scanner.setConfig(["SMH", "XLK"], {}, true)
+    // Wait briefly for async hydration jobs to finish
+    await new Promise(r => setTimeout(r, 30))
+
+    // 1. Seeded 60m setup must NOT fire on startup, and closed view receives 0 snapshots
+    assert.equal(triggered.length, 0)
+    assert.equal(snapshots.length, 0)
+    assert.ok(metas.length > 0)
+    assert.equal(scanner.collectAllItems().filter(i => i.timeframe === "60").length, 1)
+    assert.deepEqual(scanner.collectAllItems()[0].baskets, ["SMH", "XLK"])
+
+    // 2. Live tick breaks 30m trigger (103.50 -> 103.65): fires ONCE even though NVDA is in both SMH & XLK
+    scanner.onTick({ symbol: "NVDA", price: 103.65, regularPrice: 103.65, session: "regular", timestamp: bar30Ts + 600 })
+    assert.equal(triggered.length, 1)
+    assert.equal(triggered[0].symbol, "NVDA")
+    assert.equal(triggered[0].timeframe, "30")
+    assert.equal(triggered[0].setupGroup, "2-1-2 Reversal")
+    assert.equal(triggered[0].inForce, true)
+    assert.deepEqual(triggered[0].baskets, ["SMH", "XLK"])
+
+    // 3. Subsequent ticks above trigger do NOT re-fire
+    scanner.onTick({ symbol: "NVDA", price: 103.9, regularPrice: 103.9, session: "regular", timestamp: bar30Ts + 605 })
+    assert.equal(triggered.length, 1)
+
+    // 4. Opening AlertsWindow immediately emits snapshot; pullback flips inForce to false without re-firing
+    scanner.setViewActive(true)
+    assert.equal(snapshots.length, 1)
+    const snap30 = snapshots[0].items.find(i => i.timeframe === "30")
+    assert.equal(snap30.inForce, true)
+
+    scanner.onTick({ symbol: "NVDA", price: 103.1, regularPrice: 103.1, session: "regular", timestamp: bar30Ts + 610 })
+    assert.equal(triggered.length, 1)
+    await new Promise(r => setTimeout(r, 30))
+    const latestSnap30 = snapshots[snapshots.length - 1].items.find(i => i.timeframe === "30")
+    assert.equal(latestSnap30.inForce, false)
+
+    // 5. After-hours equity break updates snapshot without firing; crypto fires 24/7
+    const weekendDate = new Date("2026-07-18T15:10:00Z")
+    const weekendTriggers = []
+    const cryptoTs = Date.UTC(2026, 6, 18, 15, 0) / 1000
+    const cryptoScanner = new Stream.SetupAlertScanner({
+      fetchChart: async (sym, tf) => {
+        if (tf === "30") {
+          return {
+            symbol: sym,
+            candles: [
+              { timestamp: cryptoTs - 5400, open: 105, high: 106, low: 103, close: 104 },
+              { timestamp: cryptoTs - 3600, open: 104, high: 104.5, low: 101, close: 101.5 },
+              { timestamp: cryptoTs - 1800, open: 102, high: 103.5, low: 101.8, close: 103.0 },
+              { timestamp: cryptoTs, open: 102.8, high: 103.2, low: 102.6, close: 102.8 }
+            ]
+          }
+        }
+        return null
+      },
+      resolveHoldings: async () => ({ holdings: [] }),
+      now: () => weekendDate,
+      onTrigger: (ev) => weekendTriggers.push(ev)
+    })
+    try {
+      await cryptoScanner.setConfig(["NVDA", "BTC-USD"], {}, true)
+      await new Promise(r => setTimeout(r, 30))
+      cryptoScanner.onTick({ symbol: "NVDA", price: 104.0, regularPrice: 104.0, session: "regular", timestamp: cryptoTs + 60 })
+      cryptoScanner.onTick({ symbol: "BTC-USD", price: 104.0, regularPrice: 104.0, session: "live", timestamp: cryptoTs + 60 })
+      assert.equal(weekendTriggers.length, 1)
+      assert.equal(weekendTriggers[0].symbol, "BTC-USD")
+    } finally {
+      cryptoScanner.dispose()
+    }
+  } finally {
+    scanner.dispose()
+  }
+})
+
+test("OffThreadCandleCache persists fetchedAt and SetupAlertScanner rehydrates stale prior-week cache on weekends", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "omafinance-stale-cache-"))
+  try {
+    const c1 = new Stream.OffThreadCandleCache(tmpDir)
+    await c1.load()
+    const priorFri = Date.UTC(2026, 10, 13, 14, 30) / 1000
+    const prevWeek = Date.UTC(2026, 10, 6, 14, 30) / 1000
+    const stale1D = [
+      { timestamp: prevWeek, open: 200, high: 210, low: 170, close: 180, volume: 100 },
+      { timestamp: priorFri, open: 178, high: 188, low: 173, close: 184, volume: 100 }
+    ]
+    const savedAt = Date.UTC(2026, 10, 13, 21, 10)
+    c1.put("DDOG_1D", stale1D, null, savedAt)
+    await c1.flush()
+
+    const c2 = new Stream.OffThreadCandleCache(tmpDir)
+    await c2.load()
+    assert.equal(c2.getFetchedAt("DDOG_1D"), savedAt)
+
+    const fetchedCalls = []
+    const sunNov22 = new Date("2026-11-22T22:55:00Z")
+    const freshFri = Date.UTC(2026, 10, 20, 14, 30) / 1000
+    const fresh1D = [
+      ...stale1D,
+      { timestamp: freshFri, open: 182, high: 182, low: 156, close: 157, volume: 120 }
+    ]
+    const scanner = new Stream.SetupAlertScanner({
+      cache: c2,
+      now: () => sunNov22,
+      resolveHoldings: async () => ({ holdings: [] }),
+      fetchChart: async (sym, tf) => {
+        fetchedCalls.push(`${sym}_${tf}`)
+        if (sym === "DDOG" && tf === "1D") return { symbol: "DDOG", candles: fresh1D }
+        return null
+      }
+    })
+    try {
+      await scanner.setConfig(["DDOG"], {}, true)
+      await new Promise(r => setTimeout(r, 40))
+      assert.ok(fetchedCalls.includes("DDOG_1D"), "stale prior-week 1D must be refetched on weekend")
+      const st = scanner.symbolState.get("DDOG")
+      assert.equal(st.candles["1D"].length, 3)
+      // External chart update (e.g. from GridWindow) updates tracked state immediately
+      scanner.onExternalChartUpdate("DDOG", "1D", {
+        symbol: "DDOG",
+        candles: [
+          ...fresh1D.slice(0, 2),
+          { timestamp: freshFri, open: 182, high: 182, low: 155, close: 155.5, volume: 130 }
+        ]
+      })
+      assert.equal(st.candles["1D"][2].close, 155.5)
+    } finally {
+      scanner.dispose()
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("updateTrailingCandleInPlace blocks off-RTH and weekend phantom rollovers on US equities", () => {
+  const Model = require("../src/Model.js")
+  const sunEve = new Date("2026-11-22T23:23:00Z")
+  const fri30 = [
+    { timestamp: Date.UTC(2026, 10, 20, 20, 0) / 1000, open: 1161.26, high: 1163.58, low: 1147.01, close: 1149.96, volume: 100 },
+    { timestamp: Date.UTC(2026, 10, 20, 20, 30) / 1000, open: 1149.31, high: 1157.00, low: 1132.78, close: 1142.05, volume: 100 }
+  ]
+  const fri60 = [
+    { timestamp: Date.UTC(2026, 10, 20, 19, 30) / 1000, open: 1163.74, high: 1167.92, low: 1147.01, close: 1149.96, volume: 100 },
+    { timestamp: Date.UTC(2026, 10, 20, 20, 30) / 1000, open: 1149.31, high: 1157.00, low: 1132.78, close: 1142.05, volume: 100 }
+  ]
+  const fri1D = [
+    { timestamp: Date.UTC(2026, 10, 19, 14, 30) / 1000, open: 1368.30, high: 1378.06, low: 1288.08, close: 1295.86, volume: 100 },
+    { timestamp: Date.UTC(2026, 10, 20, 14, 30) / 1000, open: 1260.38, high: 1271.13, low: 1132.78, close: 1142.05, volume: 100 }
+  ]
+  const spoofTick = { symbol: "MPWR", price: 1142.05, regularPrice: 1142.05, session: "regular" }
+
+  const res30 = Stream.updateTrailingCandleInPlace(fri30, spoofTick, "30", sunEve)
+  const res60 = Stream.updateTrailingCandleInPlace(fri60, spoofTick, "60", sunEve)
+  const res1D = Stream.updateTrailingCandleInPlace(fri1D, spoofTick, "1D", sunEve)
+  assert.equal(res30.length, 2)
+  assert.equal(res60.length, 2)
+  assert.equal(res1D.length, 2)
+  assert.equal(Model.stratScenario(res30[1], res30[0]), "2d")
+  assert.equal(Model.stratScenario(res60[1], res60[0]), "2d")
+  assert.equal(Model.stratScenario(res1D[1], res1D[0]), "2d")
 })

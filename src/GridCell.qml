@@ -15,7 +15,6 @@ Item {
     property string timeframe: "1D"
     property var quote: null
     property var candles: []
-    property var priceLevels: []
     property int zoomCount: -1
     property real replayCutoffTs: 0
     property bool syncSymbolActive: true
@@ -55,14 +54,12 @@ Item {
     signal timeframeChangedManually(int index, string nextTimeframe)
     signal crosshairMoved(real timestamp, real price, var candle)
     signal crosshairCleared
-    signal priceLevelsModified(string sym, var nextLevels)
     signal replayRequested(real timestamp)
     signal zoomChangedManually(int index, int nextZoom)
 
     onReplayCutoffTsChanged: chart.followLatestEdge()
 
     readonly property var activeHoverCandle: chart.hoverCandle
-    readonly property bool editingLevel: chart.editingLevel
     readonly property var currentBar: {
         var src = root.candles || [];
         if (src.length === 0)
@@ -96,16 +93,9 @@ Item {
         chart.resetPriceScale();
     }
 
-    function dismissLevelEdit() {
-        chart.dismissLevelEdit();
-        root.forceActiveFocus();
-    }
-
     function startSearch() {
         if (root.changingInterval)
             root.dismissIntervalInput();
-        if (root.editingLevel)
-            chart.commitLevelEdit();
         root.tfExpanded = false;
         root.searching = true;
         root.searchQuery = "";
@@ -221,8 +211,6 @@ Item {
     function startIntervalInput(initialChar) {
         if (root.searching)
             root.dismissSearch();
-        if (root.editingLevel)
-            chart.commitLevelEdit();
         root.tfExpanded = false;
         root.changingInterval = true;
         var init = (typeof initialChar === "string") ? initialChar : "";
@@ -258,32 +246,32 @@ Item {
 
     Keys.onPressed: function (event) {
         if (event.key >= Qt.Key_0 && event.key <= Qt.Key_9) {
-            if (!root.searching && !root.changingInterval && !root.editingLevel) {
+            if (!root.searching && !root.changingInterval) {
                 var digit = (event.text && event.text.length > 0) ? event.text : String(event.key - Qt.Key_0);
                 root.startIntervalInput(digit);
                 event.accepted = true;
                 return;
             }
         } else if (event.key === Qt.Key_Comma || event.key === Qt.Key_I) {
-            if (!root.searching && !root.changingInterval && !root.editingLevel) {
+            if (!root.searching && !root.changingInterval) {
                 root.startIntervalInput("");
                 event.accepted = true;
                 return;
             }
         } else if (event.key === Qt.Key_Slash || event.key === Qt.Key_S) {
-            if (!root.disableTickerSearch && !root.searching && !root.changingInterval && !root.editingLevel) {
+            if (!root.disableTickerSearch && !root.searching && !root.changingInterval) {
                 root.startSearch();
                 event.accepted = true;
                 return;
             }
         } else if (event.key === Qt.Key_R && (event.modifiers & Qt.AltModifier)) {
-            if (!root.searching && !root.changingInterval && !root.editingLevel) {
+            if (!root.searching && !root.changingInterval) {
                 root.resetZoom();
                 event.accepted = true;
                 return;
             }
         } else if (event.key === Qt.Key_R) {
-            if (!root.searching && !root.changingInterval && !root.editingLevel) {
+            if (!root.searching && !root.changingInterval) {
                 if (root.activeHoverCandle && isFinite(root.activeHoverCandle.timestamp)) {
                     root.replayRequested(root.activeHoverCandle.timestamp);
                 } else if (root.replayCutoffTs > 0) {
@@ -300,9 +288,6 @@ Item {
                 event.accepted = true;
             } else if (root.changingInterval) {
                 root.dismissIntervalInput();
-                event.accepted = true;
-            } else if (root.editingLevel) {
-                root.dismissLevelEdit();
                 event.accepted = true;
             } else if (root.tfExpanded) {
                 root.tfExpanded = false;
@@ -429,8 +414,6 @@ Item {
                 symbol: root.symbol
                 rangeKey: root.timeframe
                 candles: root.candles
-                externalLevels: true
-                priceLevels: root.priceLevels
                 configuredZoom: root.zoomCount
                 extendedPrice: (root.quote && root.quote.hasExtended && root.quote.session !== "regular" && root.quote.session !== "live") ? root.quote.extendedPrice : null
                 upColor: root.upColor
@@ -449,13 +432,6 @@ Item {
                 }
                 onCrosshairCleared: {
                     root.crosshairCleared();
-                }
-                onPriceLevelsModified: function (nextLevels) {
-                    root.priceLevelsModified(root.symbol, nextLevels);
-                }
-                onEditingLevelChanged: {
-                    if (chart.editingLevel)
-                        root.focusRequested(root.cellIndex);
                 }
                 onReplayRequested: function (ts) {
                     root.focusRequested(root.cellIndex);

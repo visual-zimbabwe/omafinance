@@ -285,44 +285,58 @@ function deleteLayout(layouts, name) {
   return current
 }
 
-function normalizeSymbolLevels(rawLevels) {
-  var out = {}
-  if (!rawLevels || typeof rawLevels !== "object") return out
-  for (var rawSym in rawLevels) {
-    if (!Object.prototype.hasOwnProperty.call(rawLevels, rawSym)) continue
-    var sym = normalizeSymbol(rawSym)
-    if (!sym || !Array.isArray(rawLevels[rawSym])) continue
-    var arr = rawLevels[rawSym]
-    var cleaned = []
-    for (var i = 0; i < arr.length && cleaned.length < 60; i++) {
-      var lvl = arr[i]
-      if (!lvl || typeof lvl !== "object") continue
-      var p = finiteOrNull(lvl.price)
-      if (p === null || p <= 0) continue
-      var cond = String(lvl.alertCondition || "CROSSES").toUpperCase()
-      if (cond !== "CROSSES_ABOVE" && cond !== "CROSSES_BELOW" && cond !== "CROSSES") {
-        cond = "CROSSES"
-      }
-      var tone = String(lvl.tone || "fg")
-      if (tone !== "up" && tone !== "down" && tone !== "fg") tone = "fg"
-      var item = {
-        id: lvl.id ? String(lvl.id) : ("lvl_" + sym + "_" + Math.round(p * 10000) + "_" + i),
-        price: p,
-        sourceTf: lvl.sourceTf ? String(lvl.sourceTf) : "1D",
-        anchorTs: isFinite(lvl.anchorTs) ? Number(lvl.anchorTs) : 0,
-        ohlcField: lvl.ohlcField ? String(lvl.ohlcField) : "scale",
-        text: (lvl.text !== undefined && lvl.text !== null) ? String(lvl.text) : "",
-        tone: tone,
-        offsets: (lvl.offsets && typeof lvl.offsets === "object") ? lvl.offsets : ({}),
-        alertEnabled: Boolean(lvl.alertEnabled),
-        alertCondition: cond,
-        alertTriggered: Boolean(lvl.alertTriggered),
-        alertTriggeredAt: isFinite(lvl.alertTriggeredAt) ? Number(lvl.alertTriggeredAt) : 0,
-        allowExtended: Boolean(lvl.allowExtended)
-      }
-      cleaned.push(item)
+var ALERT_WATCH_TIMEFRAMES = ["30", "60", "1D", "1W", "1M"]
+
+function defaultAlertSources() {
+  return ["@MARKET"]
+}
+
+function normalizeAlertSources(raw) {
+  if (raw === undefined || raw === null) return defaultAlertSources()
+  var list = null
+  if (typeof raw === "string") {
+    list = raw.split(",")
+  } else if (isArrayLike(raw)) {
+    list = toArray(raw)
+  } else {
+    return defaultAlertSources()
+  }
+  var out = []
+  var seen = {}
+  for (var i = 0; i < list.length; i++) {
+    var tok = normalizeSymbol(list[i])
+    if (!tok) continue
+    if (tok.charAt(0) === "@") {
+      var pKey = presetKeyForToken(tok)
+      if (!pKey) continue
+      tok = "@" + pKey
     }
-    if (cleaned.length > 0) out[sym] = cleaned
+    if (!seen[tok]) {
+      seen[tok] = true
+      out.push(tok)
+    }
+  }
+  return out
+}
+
+function normalizeFiredSetupKeys(raw, nowMs) {
+  var out = {}
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out
+  var refMs = (typeof nowMs === "number" && isFinite(nowMs) && nowMs > 0) ? nowMs : Date.now()
+  var maxAgeMs = 45 * 86400000
+  var pairs = []
+  var keys = Object.keys(raw)
+  for (var i = 0; i < keys.length; i++) {
+    var k = String(keys[i] || "").trim()
+    var ts = Number(raw[keys[i]])
+    if (!k || !isFinite(ts) || ts <= 0) continue
+    if (refMs - ts > maxAgeMs) continue
+    pairs.push({ key: k, ts: Math.floor(ts) })
+  }
+  pairs.sort(function (a, b) { return b.ts - a.ts })
+  var cap = Math.min(pairs.length, 500)
+  for (var j = 0; j < cap; j++) {
+    out[pairs[j].key] = pairs[j].ts
   }
   return out
 }
@@ -422,8 +436,14 @@ function parseState(raw) {
     if (data.gridSplits !== undefined && typeof data.gridSplits === "object") res.gridSplits = data.gridSplits
     if (data.layouts !== undefined && typeof data.layouts === "object") res.layouts = parseLayouts(data.layouts)
     if (data.discordWebhook !== undefined) res.discordWebhook = String(data.discordWebhook || "").trim()
-    if (data.symbolLevels !== undefined && typeof data.symbolLevels === "object") {
-      res.symbolLevels = normalizeSymbolLevels(data.symbolLevels)
+    if (data.alertSources !== undefined) {
+      res.alertSources = normalizeAlertSources(data.alertSources)
+    }
+    if (data.alertsAutoOpen !== undefined) {
+      res.alertsAutoOpen = data.alertsAutoOpen !== false
+    }
+    if (data.firedSetupKeys !== undefined && typeof data.firedSetupKeys === "object") {
+      res.firedSetupKeys = normalizeFiredSetupKeys(data.firedSetupKeys)
     }
     if (data.alertLog !== undefined && Array.isArray(data.alertLog)) {
       res.alertLog = normalizeAlertLog(data.alertLog)
@@ -476,9 +496,15 @@ function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, grid
   if (discordWebhook) obj.discordWebhook = discordWebhook
 
   if (extra) {
-    if (extra.symbolLevels && typeof extra.symbolLevels === "object") {
-      var normLevels = normalizeSymbolLevels(extra.symbolLevels)
-      if (Object.keys(normLevels).length > 0) obj.symbolLevels = normLevels
+    if (extra.alertSources !== undefined) {
+      obj.alertSources = normalizeAlertSources(extra.alertSources)
+    }
+    if (extra.alertsAutoOpen !== undefined) {
+      obj.alertsAutoOpen = extra.alertsAutoOpen !== false
+    }
+    if (extra.firedSetupKeys && typeof extra.firedSetupKeys === "object") {
+      var normFired = normalizeFiredSetupKeys(extra.firedSetupKeys)
+      if (Object.keys(normFired).length > 0) obj.firedSetupKeys = normFired
     }
     if (Array.isArray(extra.alertLog) && extra.alertLog.length > 0) {
       var normLog = normalizeAlertLog(extra.alertLog)
@@ -580,28 +606,6 @@ function sparkQuoteUrl(symbols) {
   return "https://query1.finance.yahoo.com/v7/finance/spark?symbols="
     + encodeURIComponent(list.join(","))
     + "&range=1d&interval=1d&includePrePost=false"
-}
-
-function armedAlertSymbols(symbolLevels) {
-  var out = []
-  var seen = {}
-  if (!symbolLevels || typeof symbolLevels !== "object") return out
-  var syms = Object.keys(symbolLevels)
-  for (var i = 0; i < syms.length; i++) {
-    var sym = normalizeSymbol(syms[i])
-    if (!sym || seen[sym]) continue
-    var lvls = symbolLevels[syms[i]]
-    if (!isArrayLike(lvls)) continue
-    for (var j = 0; j < lvls.length; j++) {
-      var lvl = lvls[j]
-      if (lvl && lvl.alertEnabled && !lvl.alertTriggered) {
-        seen[sym] = true
-        out.push(sym)
-        break
-      }
-    }
-  }
-  return out
 }
 
 function quoteSymbolsForView(watchlist, detailSymbol, view) {
@@ -1984,7 +1988,8 @@ function stratScenario(current, prev) {
 // so the grid's 2s live quote is honored instead of the 15s-stale candle close.
 function stratLivePrice(liveQuote) {
   if (!liveQuote) return null
-  var keys = ["regularMarketPrice", "regularPrice", "price"]
+  var isExtendedSession = liveQuote.session === "pre" || liveQuote.session === "post"
+  var keys = isExtendedSession ? ["regularMarketPrice", "regularPrice"] : ["regularMarketPrice", "regularPrice", "price"]
   for (var i = 0; i < keys.length; i++) {
     var v = finiteOrNull(liveQuote[keys[i]])
     if (v !== null) return v
@@ -3964,139 +3969,647 @@ function isAlertSessionOpen(symbol, quote, allowExtended, nowDate) {
   return true
 }
 
-function discordPriceAlertPayload(symbol, level, currentPrice, crossDir) {
-  var sym = normalizeSymbol(symbol)
-  if (!sym || !level || !isFinite(level.price)) return null
-  var dir = String(crossDir || "CROSS").toUpperCase()
-  var isAbove = (dir === "ABOVE" || level.alertCondition === "CROSSES_ABOVE")
-  var color = isAbove ? 3066993 : 15158332
-  var lvlPx = "$" + Number(level.price).toFixed(2)
-  var curPx = (currentPrice != null && isFinite(currentPrice)) ? ("$" + Number(currentPrice).toFixed(2)) : lvlPx
-  var condLabel = dir === "ABOVE" ? "Crossed Above" : (dir === "BELOW" ? "Crossed Below" : "Crossed Level")
-  var customNote = (level.text !== undefined && level.text !== null && String(level.text).trim().length > 0)
-    ? String(level.text).trim()
-    : "Chart Price Alert"
+var SETUP_GROUP_ORDER = [
+  "2-1-2 Reversal",
+  "2-1-2 Continuation",
+  "3-1-2 Reversal",
+  "3-1-2 Continuation",
+  "2-2 Reversal",
+  "3-2-2 Reversal",
+  "3-2 Reversal",
+  "1-3 RevStrat",
+  "1-2-2 RevStrat",
+  "1-3-2 RevStrat",
+  "PMG",
+  "Kicker"
+]
 
-  var fields = [
-    { name: "Alert Price", value: "`" + lvlPx + "`", inline: true },
-    { name: "Last Price", value: "`" + curPx + "`", inline: true },
-    { name: "Condition", value: "`" + condLabel + "`", inline: true }
-  ]
-  if (customNote) {
-    fields.push({ name: "Level Note", value: customNote, inline: false })
+function setupGroupName(setup) {
+  if (!setup || typeof setup !== "object") return "Setup"
+  var code = String(setup.code || "")
+  var cat = String(setup.category || "")
+  if (code === "2d-1-2u" || code === "2u-1-2d") return "2-1-2 Reversal"
+  if (code === "2u-1-2u" || code === "2d-1-2d") return "2-1-2 Continuation"
+  if (code === "3-1-2u" || code === "3-1-2d") {
+    return cat === "inside_reversal" ? "3-1-2 Reversal" : "3-1-2 Continuation"
+  }
+  if (code === "2d-2u" || code === "2u-2d") return "2-2 Reversal"
+  if (code === "3-2d-2u" || code === "3-2u-2d") return "3-2-2 Reversal"
+  if (code === "3-2u" || code === "3-2d") return "3-2 Reversal"
+  if (code === "1-3u" || code === "1-3d") return "1-3 RevStrat"
+  if (code === "1-2d-2u" || code === "1-2u-2d") return "1-2-2 RevStrat"
+  if (code === "1-3(H)-2u" || code === "1-3(S)-2d") return "1-3-2 RevStrat"
+  if (code.indexOf("PMG") === 0) return "PMG"
+  if (code.indexOf("Kicker") === 0) return "Kicker"
+  return code || String(setup.name || "Setup")
+}
+
+function setupTriggerKey(symbol, tf, setup) {
+  var sym = normalizeSymbol(symbol)
+  var tfKey = String(tf || "")
+  var ts = (setup && isFinite(setup.activeTimestamp)) ? Math.floor(Number(setup.activeTimestamp)) : 0
+  var dir = (setup && setup.direction) ? String(setup.direction).toUpperCase() : ""
+  var code = (setup && setup.code) ? String(setup.code) : ""
+  return sym + ":" + tfKey + ":" + ts + ":" + dir + ":" + code
+}
+
+function effectiveSetupCandlesByTf(candlesByTf) {
+  var src = (candlesByTf && typeof candlesByTf === "object") ? candlesByTf : ({})
+  var daily = isArrayLike(src["1D"]) ? src["1D"] : []
+  var weekly = isArrayLike(src["1W"]) ? src["1W"] : []
+  if (weekly.length < 2 && daily.length >= 2) {
+    weekly = mergePeriodCandles(daily, "1W")
+  }
+  var monthly = isArrayLike(src["1M"]) ? src["1M"] : []
+  if (monthly.length < 2 && daily.length >= 2) {
+    monthly = mergePeriodCandles(daily, "1M")
+  }
+  return {
+    "30": isArrayLike(src["30"]) ? src["30"] : [],
+    "60": isArrayLike(src["60"]) ? src["60"] : [],
+    "1D": daily,
+    "1W": weekly,
+    "1M": monthly
+  }
+}
+
+function computeTimeframeScenarioSnapshot(candlesByTf, liveQuote) {
+  var eff = effectiveSetupCandlesByTf(candlesByTf)
+  var livePx = stratLivePrice(liveQuote)
+  var out = {}
+  for (var i = 0; i < ALERT_WATCH_TIMEFRAMES.length; i++) {
+    var tf = ALERT_WATCH_TIMEFRAMES[i]
+    var arr = eff[tf]
+    if (!isArrayLike(arr) || arr.length < 2) {
+      out[tf] = { sc: "-", colorTone: "flat", open: null, close: null }
+      continue
+    }
+    var curRaw = arr[arr.length - 1]
+    var prev = arr[arr.length - 2]
+    if (!curRaw || !prev) {
+      out[tf] = { sc: "-", colorTone: "flat", open: null, close: null }
+      continue
+    }
+    var o = Number(curRaw.open)
+    var h = Number(curRaw.high)
+    var l = Number(curRaw.low)
+    var c = Number(curRaw.close)
+    if (livePx !== null && isFinite(livePx)) {
+      c = livePx
+      if (!isFinite(h) || livePx > h) h = livePx
+      if (!isFinite(l) || livePx < l) l = livePx
+    }
+    if (!isFinite(o) || !isFinite(h) || !isFinite(l) || !isFinite(c)) {
+      out[tf] = { sc: "-", colorTone: "flat", open: null, close: null }
+      continue
+    }
+    var rawSc = stratScenario({ open: o, high: h, low: l, close: c }, prev)
+    var scUpper = (rawSc && rawSc !== "-") ? String(rawSc).toUpperCase() : "-"
+    var colorTone = c > o ? "up" : (c < o ? "down" : "flat")
+    out[tf] = { sc: scUpper, colorTone: colorTone, open: o, close: c }
+  }
+  return out
+}
+
+function evaluateSymbolSetupAlerts(symbol, candlesByTf, liveQuote, baskets) {
+  var sym = normalizeSymbol(symbol)
+  if (!sym) return []
+  var eff = effectiveSetupCandlesByTf(candlesByTf)
+  var scenarios = computeTimeframeScenarioSnapshot(eff, liveQuote)
+  var basketList = []
+  var seenB = {}
+  if (isArrayLike(baskets)) {
+    for (var bi = 0; bi < baskets.length; bi++) {
+      var b = String(baskets[bi] || "").trim()
+      if (b && !seenB[b]) {
+        seenB[b] = true
+        basketList.push(b)
+      }
+    }
+  }
+  if (basketList.length === 0) basketList.push("Custom")
+
+  var out = []
+  for (var i = 0; i < ALERT_WATCH_TIMEFRAMES.length; i++) {
+    var tf = ALERT_WATCH_TIMEFRAMES[i]
+    var tfCandles = eff[tf]
+    if (!isArrayLike(tfCandles) || tfCandles.length < 2) continue
+    var setup = detectStratSetupOnCandles(tf, tfCandles, liveQuote, { requireTriggered: true })
+    if (!setup || !setup.isTriggered || !isFinite(setup.triggerPrice)) continue
+
+    var targets = resolveTimeframeSetupTargets(tf, tfCandles, setup, 2)
+    var t1Price = (targets && targets.length > 0 && isFinite(targets[0].price)) ? Number(targets[0].price) : null
+    var livePx = isFinite(setup.closePrice) ? Number(setup.closePrice) : stratLivePrice(liveQuote)
+    var trigPx = Number(setup.triggerPrice)
+    var inForce = (livePx !== null && isFinite(livePx))
+      ? (setup.isLong ? (livePx >= trigPx) : (livePx <= trigPx))
+      : false
+
+    out.push({
+      key: setupTriggerKey(sym, tf, setup),
+      symbol: sym,
+      timeframe: tf,
+      timeframeLabel: setupTimeframeLabel(tf),
+      setupGroup: setupGroupName(setup),
+      setupCode: setup.code,
+      setupName: setup.name,
+      category: setup.category,
+      direction: setup.direction,
+      isLong: Boolean(setup.isLong),
+      triggerPrice: trigPx,
+      t1Price: t1Price,
+      livePrice: livePx,
+      inForce: inForce,
+      activeTimestamp: isFinite(setup.activeTimestamp) ? Number(setup.activeTimestamp) : 0,
+      scenarios: scenarios,
+      baskets: basketList.slice()
+    })
+  }
+  return out
+}
+
+function canonicalAlertSortKey(key) {
+  var k = String(key || "").trim().toLowerCase()
+  if (k === "ticker" || k === "symbol") return "ticker"
+  if (k === "inforce" || k === "in-force") return "inForce"
+  if (k === "30") return "30"
+  if (k === "60") return "60"
+  if (k === "1d" || k === "d") return "1D"
+  if (k === "1w" || k === "w") return "1W"
+  if (k === "1m" || k === "m") return "1M"
+  return "inForce"
+}
+
+function normalizeAlertSortSpecs(sortSpecs, fallbackKey, fallbackAsc) {
+  var lockedOut = []
+  var unlockedOut = null
+  var seen = {}
+  if (isArrayLike(sortSpecs)) {
+    var arr = toArray(sortSpecs)
+    for (var i = 0; i < arr.length; i++) {
+      var sp = arr[i]
+      if (!sp || !sp.key) continue
+      var key = canonicalAlertSortKey(sp.key)
+      if (seen[key]) continue
+      seen[key] = true
+      var normalized = {
+        key: key,
+        asc: sp.asc === true,
+        locked: sp.locked === true
+      }
+      if (normalized.locked) lockedOut.push(normalized)
+      else if (!unlockedOut) unlockedOut = normalized
+    }
+  }
+  var out = lockedOut.slice()
+  if (unlockedOut) out.push(unlockedOut)
+  if (out.length === 0) {
+    var fbKey = canonicalAlertSortKey(fallbackKey || "inForce")
+    out.push({ key: fbKey, asc: fallbackAsc === true, locked: false })
+  }
+  return out
+}
+
+function applyAlertSortClick(sortSpecs, key) {
+  var target = canonicalAlertSortKey(key)
+  var specs = normalizeAlertSortSpecs(sortSpecs, "inForce", false)
+  for (var i = 0; i < specs.length; i++) {
+    if (specs[i].key === target) {
+      var next = specs.slice()
+      next[i] = {
+        key: specs[i].key,
+        asc: !specs[i].asc,
+        locked: specs[i].locked === true
+      }
+      return next
+    }
+  }
+  var lockedOnly = []
+  for (var j = 0; j < specs.length; j++) {
+    if (specs[j].locked === true) lockedOnly.push(specs[j])
+  }
+  lockedOnly.push({
+    key: target,
+    asc: target === "ticker",
+    locked: false
+  })
+  return lockedOnly
+}
+
+function toggleAlertSortLock(sortSpecs, key) {
+  var target = canonicalAlertSortKey(key)
+  var specs = normalizeAlertSortSpecs(sortSpecs, "inForce", false)
+  var idx = -1
+  for (var i = 0; i < specs.length; i++) {
+    if (specs[i].key === target) {
+      idx = i
+      break
+    }
+  }
+  if (idx !== -1) {
+    if (specs[idx].locked === true) {
+      if (specs.length === 1) {
+        return [{ key: specs[0].key, asc: specs[0].asc === true, locked: false }]
+      }
+      var remaining = specs.slice(0, idx).concat(specs.slice(idx + 1))
+      return normalizeAlertSortSpecs(remaining, "inForce", false)
+    }
+    var lockedNext = specs.slice()
+    lockedNext[idx] = {
+      key: specs[idx].key,
+      asc: specs[idx].asc === true,
+      locked: true
+    }
+    return normalizeAlertSortSpecs(lockedNext, "inForce", false)
+  }
+  var lockedPrefix = []
+  var unlockedTail = null
+  for (var j = 0; j < specs.length; j++) {
+    if (specs[j].locked === true) lockedPrefix.push(specs[j])
+    else if (!unlockedTail) unlockedTail = specs[j]
+  }
+  lockedPrefix.push({
+    key: target,
+    asc: target === "ticker",
+    locked: true
+  })
+  if (unlockedTail) lockedPrefix.push(unlockedTail)
+  return lockedPrefix
+}
+
+function buildGroupedAlertWatchlist(activeItems, options) {
+  var opts = (options && typeof options === "object") ? options : ({})
+  var tfFilter = String(opts.tfFilter || "ALL")
+  var inForceOnly = opts.inForceOnly === true
+  var query = String(opts.searchQuery || "").trim().toUpperCase()
+  var collapsed = (opts.collapsed && typeof opts.collapsed === "object") ? opts.collapsed : ({})
+  var sourceOrder = isArrayLike(opts.sourceOrder) ? toArray(opts.sourceOrder) : []
+  var activeSortSpecs = normalizeAlertSortSpecs(opts.sortSpecs, opts.sortKey || "inForce", opts.sortAsc === true)
+
+  var list = isArrayLike(activeItems) ? toArray(activeItems) : []
+  var filtered = []
+  var inForceCount = 0
+
+  for (var i = 0; i < list.length; i++) {
+    var it = list[i]
+    if (!it || !it.symbol || !it.timeframe) continue
+    if (tfFilter !== "ALL" && String(it.timeframe) !== tfFilter) continue
+    if (inForceOnly && !it.inForce) continue
+    if (query.length > 0) {
+      var symMatch = String(it.symbol).toUpperCase().indexOf(query) !== -1
+      var grpMatch = String(it.setupGroup || "").toUpperCase().indexOf(query) !== -1
+      var codeMatch = String(it.setupCode || "").toUpperCase().indexOf(query) !== -1
+      var bMatch = false
+      if (isArrayLike(it.baskets)) {
+        for (var qb = 0; qb < it.baskets.length; qb++) {
+          if (String(it.baskets[qb] || "").toUpperCase().indexOf(query) !== -1) {
+            bMatch = true
+            break
+          }
+        }
+      }
+      if (!symMatch && !grpMatch && !codeMatch && !bMatch) continue
+    }
+    filtered.push(it)
+    if (it.inForce) inForceCount++
   }
 
+  // Group: Timeframe -> Direction (LONG / SHORT) -> Basket -> Setup
+  var tfMap = {}
+  for (var fi = 0; fi < filtered.length; fi++) {
+    var item = filtered[fi]
+    var tf = String(item.timeframe)
+    var dir = item.isLong ? "LONG" : "SHORT"
+    var sGrp = String(item.setupGroup || "Setup")
+    var itemBaskets = (isArrayLike(item.baskets) && item.baskets.length > 0) ? toArray(item.baskets) : ["Custom"]
+
+    if (!tfMap[tf]) tfMap[tf] = { count: 0, dirs: {} }
+    tfMap[tf].count++
+
+    if (!tfMap[tf].dirs[dir]) tfMap[tf].dirs[dir] = { count: 0, baskets: {} }
+    tfMap[tf].dirs[dir].count++
+
+    for (var bi = 0; bi < itemBaskets.length; bi++) {
+      var bName = String(itemBaskets[bi] || "Custom")
+      if (!tfMap[tf].dirs[dir].baskets[bName]) {
+        tfMap[tf].dirs[dir].baskets[bName] = { count: 0, setups: {} }
+      }
+      tfMap[tf].dirs[dir].baskets[bName].count++
+
+      if (!tfMap[tf].dirs[dir].baskets[bName].setups[sGrp]) {
+        tfMap[tf].dirs[dir].baskets[bName].setups[sGrp] = []
+      }
+      tfMap[tf].dirs[dir].baskets[bName].setups[sGrp].push(item)
+    }
+  }
+
+  function compareSetupGroups(a, b) {
+    var ia = SETUP_GROUP_ORDER.indexOf(a)
+    var ib = SETUP_GROUP_ORDER.indexOf(b)
+    if (ia !== -1 && ib !== -1) return ia - ib
+    if (ia !== -1) return -1
+    if (ib !== -1) return 1
+    return a.localeCompare(b)
+  }
+
+  function compareBaskets(a, b) {
+    var ia = sourceOrder.indexOf(a)
+    var ib = sourceOrder.indexOf(b)
+    if (ia !== -1 && ib !== -1) return ia - ib
+    if (ia !== -1) return -1
+    if (ib !== -1) return 1
+    return a.localeCompare(b)
+  }
+
+  function scenarioSortScore(item, tf) {
+    var scObj = (item && item.scenarios && item.scenarios[tf]) ? item.scenarios[tf] : null
+    if (!scObj || !scObj.sc || scObj.sc === "-") return -1
+    var code = String(scObj.sc).toUpperCase()
+    var barRank = 0
+    if (code === "3") barRank = 4
+    else if (code === "2U") barRank = 3
+    else if (code === "2D") barRank = 2
+    else if (code === "1") barRank = 1
+    if (barRank === 0) return -1
+    var polRank = (scObj.colorTone === "up") ? 2 : (scObj.colorTone === "flat" ? 1 : 0)
+    return barRank * 10 + polRank
+  }
+
+  function compareDefaultTieBreak(a, b) {
+    if (Boolean(a.inForce) !== Boolean(b.inForce)) return a.inForce ? -1 : 1
+    var ta = isFinite(a.triggeredAt) ? Number(a.triggeredAt) : 0
+    var tb = isFinite(b.triggeredAt) ? Number(b.triggeredAt) : 0
+    if (ta !== tb) return tb - ta
+    return String(a.symbol || "").localeCompare(String(b.symbol || ""))
+  }
+
+  function compareByColumn(a, b, key, asc) {
+    if (key === "ticker") {
+      var symCmp = String(a.symbol || "").localeCompare(String(b.symbol || ""))
+      return asc ? symCmp : -symCmp
+    }
+    if (key === "inForce") {
+      if (Boolean(a.inForce) !== Boolean(b.inForce)) {
+        var ifCmp = a.inForce ? -1 : 1
+        return asc ? -ifCmp : ifCmp
+      }
+      return 0
+    }
+    var sa = scenarioSortScore(a, key)
+    var sb = scenarioSortScore(b, key)
+    if (sa !== sb) {
+      if (sa === -1) return 1
+      if (sb === -1) return -1
+      return asc ? (sa - sb) : (sb - sa)
+    }
+    return 0
+  }
+
+  function compareRows(a, b) {
+    for (var si = 0; si < activeSortSpecs.length; si++) {
+      var sp = activeSortSpecs[si]
+      var cmp = compareByColumn(a, b, sp.key, sp.asc)
+      if (cmp !== 0) return cmp
+    }
+    return compareDefaultTieBreak(a, b)
+  }
+
+  var rows = []
+  var groupIds = []
+
+  for (var ti = 0; ti < ALERT_WATCH_TIMEFRAMES.length; ti++) {
+    var tfKey = ALERT_WATCH_TIMEFRAMES[ti]
+    var tfNode = tfMap[tfKey]
+    if (!tfNode) continue
+    var tfId = "tf:" + tfKey
+    var tfCollapsed = collapsed[tfId] === true
+    groupIds.push(tfId)
+    rows.push({
+      kind: "tf",
+      id: tfId,
+      tf: tfKey,
+      label: setupTimeframeLabel(tfKey),
+      count: tfNode.count,
+      collapsed: tfCollapsed,
+      depth: 0
+    })
+    if (tfCollapsed) continue
+
+    var dirOrder = ["LONG", "SHORT"]
+    for (var di = 0; di < dirOrder.length; di++) {
+      var dk = dirOrder[di]
+      var dNode = tfNode.dirs[dk]
+      if (!dNode) continue
+      var dirId = "dir:" + tfKey + ":" + dk
+      var dirCollapsed = collapsed[dirId] === true
+      groupIds.push(dirId)
+      rows.push({
+        kind: "direction",
+        id: dirId,
+        tf: tfKey,
+        direction: dk,
+        isLong: dk === "LONG",
+        label: dk === "LONG" ? "BREAKING UP" : "BREAKING DOWN",
+        count: dNode.count,
+        collapsed: dirCollapsed,
+        depth: 1
+      })
+      if (dirCollapsed) continue
+
+      var basketKeys = Object.keys(dNode.baskets).sort(compareBaskets)
+      for (var bki = 0; bki < basketKeys.length; bki++) {
+        var bk = basketKeys[bki]
+        var bNode = dNode.baskets[bk]
+        var basketId = "basket:" + tfKey + ":" + dk + ":" + bk
+        var basketCollapsed = collapsed[basketId] === true
+        groupIds.push(basketId)
+        rows.push({
+          kind: "basket",
+          id: basketId,
+          tf: tfKey,
+          direction: dk,
+          isLong: dk === "LONG",
+          basket: bk,
+          label: bk,
+          count: bNode.count,
+          collapsed: basketCollapsed,
+          depth: 2
+        })
+        if (basketCollapsed) continue
+
+        var setupKeys = Object.keys(bNode.setups).sort(compareSetupGroups)
+        for (var si = 0; si < setupKeys.length; si++) {
+          var sk = setupKeys[si]
+          var sItems = bNode.setups[sk].slice().sort(compareRows)
+          var setupId = "setup:" + tfKey + ":" + dk + ":" + bk + ":" + sk
+          var setupCollapsed = collapsed[setupId] === true
+          groupIds.push(setupId)
+          rows.push({
+            kind: "setup",
+            id: setupId,
+            tf: tfKey,
+            direction: dk,
+            isLong: dk === "LONG",
+            basket: bk,
+            setupGroup: sk,
+            label: sk,
+            count: sItems.length,
+            collapsed: setupCollapsed,
+            depth: 3
+          })
+          if (setupCollapsed) continue
+
+          for (var ri = 0; ri < sItems.length; ri++) {
+            var rItem = sItems[ri]
+            rows.push({
+              kind: "row",
+              id: rItem.key + "@" + bk,
+              item: rItem,
+              basket: bk,
+              depth: 4
+            })
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    rows: rows,
+    totalCount: filtered.length,
+    inForceCount: inForceCount,
+    groupIds: groupIds
+  }
+}
+
+function discordSetupAlertPayload(events) {
+  var list = isArrayLike(events) ? toArray(events) : (events ? [events] : [])
+  var valid = []
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].symbol && list[i].timeframe) valid.push(list[i])
+  }
+  if (valid.length === 0) return null
+
+  if (valid.length === 1) {
+    var ev = valid[0]
+    var sym = normalizeSymbol(ev.symbol)
+    var isLong = ev.isLong === true || String(ev.direction || "").toUpperCase() === "LONG"
+    var color = isLong ? 3066993 : 15158332
+    var dirLabel = isLong ? "Breaking Up" : "Breaking Down"
+    var tfLbl = ev.timeframeLabel || setupTimeframeLabel(ev.timeframe)
+    var trigStr = isFinite(ev.triggerPrice) ? ("$" + Number(ev.triggerPrice).toFixed(2)) : "-"
+    var lastStr = isFinite(ev.livePrice) ? ("$" + Number(ev.livePrice).toFixed(2)) : trigStr
+    var t1Str = isFinite(ev.t1Price) ? ("$" + Number(ev.t1Price).toFixed(2)) : "-"
+    var basketsStr = (isArrayLike(ev.baskets) && ev.baskets.length > 0) ? toArray(ev.baskets).join(", ") : "Custom"
+    var fields = [
+      { name: "Setup", value: "`" + (ev.setupGroup || ev.setupCode || "Setup") + " (" + (ev.setupCode || "") + ")`", inline: true },
+      { name: "Direction", value: "`" + dirLabel + "`", inline: true },
+      { name: "In-Force", value: ev.inForce ? "`Yes`" : "`No`", inline: true },
+      { name: "Trigger", value: "`" + trigStr + "`", inline: true },
+      { name: "Last", value: "`" + lastStr + "`", inline: true },
+      { name: "T1 Target", value: "`" + t1Str + "`", inline: true },
+      { name: "Basket / Set", value: "`" + basketsStr + "`", inline: false }
+    ]
+    return JSON.stringify({
+      content: "@everyone **Setup Triggered: " + sym + " [" + tfLbl + " " + (ev.setupCode || "") + " " + (isLong ? "UP" : "DOWN") + "]**",
+      embeds: [
+        {
+          title: "Setup Alert: " + sym + " · " + tfLbl + " " + (ev.setupGroup || ""),
+          description: "**" + sym + "** " + dirLabel.toLowerCase() + " on **" + tfLbl + "** (Trigger `" + trigStr + "`, Last `" + lastStr + "`).",
+          color: color,
+          fields: fields,
+          footer: { text: "Omafinance Setup Line Alert Engine" },
+          timestamp: new Date().toISOString()
+        }
+      ]
+    })
+  }
+
+  var allLong = true
+  var allShort = true
+  var lines = []
+  var maxLines = Math.min(valid.length, 15)
+  for (var j = 0; j < maxLines; j++) {
+    var item = valid[j]
+    var itemLong = item.isLong === true || String(item.direction || "").toUpperCase() === "LONG"
+    if (itemLong) allShort = false
+    else allLong = false
+    var tfL = item.timeframeLabel || setupTimeframeLabel(item.timeframe)
+    var trig = isFinite(item.triggerPrice) ? ("$" + Number(item.triggerPrice).toFixed(2)) : "-"
+    var bStr = (isArrayLike(item.baskets) && item.baskets.length > 0) ? (" [" + toArray(item.baskets).join(",") + "]") : ""
+    lines.push("• **" + normalizeSymbol(item.symbol) + "** `" + tfL + "` `" + (item.setupCode || item.setupGroup) + "` " + (itemLong ? "▲ UP" : "▼ DOWN") + " @ `" + trig + "`" + bStr)
+  }
+  if (valid.length > maxLines) {
+    lines.push("• _...and " + (valid.length - maxLines) + " more_")
+  }
+  var burstColor = allLong ? 3066993 : (allShort ? 15158332 : 3447003)
   return JSON.stringify({
-    content: "@everyone **Price Alert Triggered: " + sym + " (" + condLabel + " " + lvlPx + ")**",
+    content: "@everyone **" + valid.length + " Setup Alerts Triggered**",
     embeds: [
       {
-        title: "Price Alert Triggered: " + sym + " [" + lvlPx + "]",
-        description: "**" + sym + "** " + condLabel.toLowerCase() + " **" + lvlPx + "** (Last: `" + curPx + "`).",
-        color: color,
-        fields: fields,
-        footer: { text: "Omafinance Price Level Alert Engine" },
+        title: valid.length + " Strat Setups Triggered",
+        description: lines.join("\n"),
+        color: burstColor,
+        footer: { text: "Omafinance Setup Line Alert Engine" },
         timestamp: new Date().toISOString()
       }
     ]
   })
 }
 
-function evaluatePriceLevelAlerts(symbol, levels, prevPrice, currentPrice, quote, nowDate) {
-  var sym = normalizeSymbol(symbol)
-  var srcLevels = Array.isArray(levels) ? levels : []
-  if (!sym || srcLevels.length === 0) {
-    return { triggered: [], nextLevels: srcLevels, modified: false }
+function formatSetupAlertNotification(events, nowMs) {
+  var list = isArrayLike(events) ? toArray(events) : (events ? [events] : [])
+  var valid = []
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].symbol && list[i].timeframe) valid.push(list[i])
   }
-
-  var prev = finiteOrNull(prevPrice)
-  var curr = finiteOrNull(currentPrice)
-  if (prev === null || curr === null || prev <= 0 || curr <= 0 || prev === curr) {
-    return { triggered: [], nextLevels: srcLevels, modified: false }
+  if (valid.length === 0) return null
+  var ts = (typeof nowMs === "number" && isFinite(nowMs) && nowMs > 0) ? nowMs : Date.now()
+  var first = valid[0]
+  var title, body
+  if (valid.length === 1) {
+    var tfLbl = first.timeframeLabel || setupTimeframeLabel(first.timeframe)
+    var dirWord = first.isLong ? "Breaking Up" : "Breaking Down"
+    var trigStr = isFinite(first.triggerPrice) ? ("$" + Number(first.triggerPrice).toFixed(2)) : "-"
+    var t1Str = isFinite(first.t1Price) ? (" · T1 $" + Number(first.t1Price).toFixed(2)) : ""
+    var lastStr = isFinite(first.livePrice) ? (" · Last $" + Number(first.livePrice).toFixed(2)) : ""
+    var bStr = (isArrayLike(first.baskets) && first.baskets.length > 0) ? (" [" + toArray(first.baskets).join(", ") + "]") : ""
+    title = "Setup Alert: " + first.symbol + " " + tfLbl + " " + (first.setupCode || first.setupGroup)
+    body = first.symbol + " " + dirWord + " (" + (first.setupGroup || "") + ") · Trig " + trigStr + t1Str + lastStr + bStr
+  } else {
+    title = valid.length + " Setup Alerts Triggered"
+    var parts = []
+    for (var j = 0; j < Math.min(valid.length, 6); j++) {
+      var e = valid[j]
+      parts.push(e.symbol + " " + (e.timeframeLabel || setupTimeframeLabel(e.timeframe)) + " " + (e.setupCode || e.setupGroup) + (e.isLong ? " ▲" : " ▼"))
+    }
+    if (valid.length > 6) parts.push("+" + (valid.length - 6) + " more")
+    body = parts.join(" · ")
   }
-
-  var nowMs = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate.getTime() : Date.now()
-  var nextLevels = []
-  var triggered = []
-  var modified = false
-
-  for (var i = 0; i < srcLevels.length; i++) {
-    var lvl = srcLevels[i]
-    if (!lvl || !lvl.alertEnabled || lvl.alertTriggered || !isFinite(lvl.price)) {
-      nextLevels.push(lvl)
-      continue
-    }
-
-    var sessionOk = isAlertSessionOpen(sym, quote, Boolean(lvl.allowExtended), nowDate)
-    if (!sessionOk) {
-      nextLevels.push(lvl)
-      continue
-    }
-
-    var target = Number(lvl.price)
-    var cond = String(lvl.alertCondition || "CROSSES").toUpperCase()
-    var crossedAbove = (prev < target && curr >= target)
-    var crossedBelow = (prev > target && curr <= target)
-    var hit = false
-    var crossDir = ""
-
-    if (cond === "CROSSES_ABOVE" && crossedAbove) {
-      hit = true
-      crossDir = "ABOVE"
-    } else if (cond === "CROSSES_BELOW" && crossedBelow) {
-      hit = true
-      crossDir = "BELOW"
-    } else if (cond === "CROSSES" && (crossedAbove || crossedBelow)) {
-      hit = true
-      crossDir = crossedAbove ? "ABOVE" : "BELOW"
-    }
-
-    if (hit) {
-      var updated = Object.assign({}, lvl, {
-        alertTriggered: true,
-        alertTriggeredAt: nowMs
-      })
-      nextLevels.push(updated)
-      modified = true
-
-      var dirWord = crossDir === "ABOVE" ? "Crossed Above" : "Crossed Below"
-      var noteTxt = (lvl.text && String(lvl.text).trim().length > 0) ? (" (" + String(lvl.text).trim() + ")") : ""
-      var title = "Price Alert: " + sym + " " + (crossDir === "ABOVE" ? ">=" : "<=") + " $" + target.toFixed(2)
-      var body = sym + " " + dirWord + " $" + target.toFixed(2) + noteTxt + " | Last: $" + curr.toFixed(2)
-
-      triggered.push({
-        symbol: sym,
-        level: updated,
-        crossDir: crossDir,
-        direction: crossDir,
-        currentPrice: curr,
-        title: title,
-        body: body,
-        discordPayload: discordPriceAlertPayload(sym, updated, curr, crossDir),
-        logEntry: {
-          id: "price_" + sym + "_" + (updated.id || Math.round(target * 100)) + "_" + nowMs,
-          timestamp: nowMs,
-          timestampMs: nowMs,
-          symbol: sym,
-          kind: "PRICE",
-          eventType: "PRICE_CROSS",
-          direction: crossDir,
-          timeframe: updated.sourceTf || "1D",
-          price: curr,
-          triggerPrice: target,
-          title: title,
-          summary: body,
-          body: body
-        }
-      })
-    } else {
-      nextLevels.push(lvl)
-    }
-  }
-
   return {
-    triggered: triggered,
-    nextLevels: nextLevels,
-    modified: modified
+    title: title,
+    body: body,
+    discordPayload: discordSetupAlertPayload(valid),
+    logEntries: valid.map(function (ev) {
+      var tfL = ev.timeframeLabel || setupTimeframeLabel(ev.timeframe)
+      var trig = isFinite(ev.triggerPrice) ? ("$" + Number(ev.triggerPrice).toFixed(2)) : "-"
+      var sum = ev.symbol + " " + tfL + " " + (ev.setupGroup || ev.setupCode) + " " + (ev.isLong ? "Up" : "Down") + " · Trig " + trig
+      return {
+        id: "setup_" + ev.key + "_" + ts,
+        timestamp: ts,
+        timestampMs: ts,
+        symbol: ev.symbol,
+        kind: "STRAT",
+        eventType: "SETUP_TRIGGER",
+        direction: ev.direction,
+        timeframe: ev.timeframe,
+        price: finiteOrNull(ev.livePrice),
+        triggerPrice: finiteOrNull(ev.triggerPrice),
+        title: "Setup Alert: " + ev.symbol + " " + tfL + " " + (ev.setupCode || ""),
+        summary: sum,
+        body: sum
+      }
+    })
   }
 }
 
@@ -5670,12 +6183,35 @@ function marketWeekStartEt(timestampSec) {
 function isUsEquitySessionSymbol(symbol) {
   var sym = normalizeSymbol(symbol);
   if (!sym || isCryptoSymbol(sym)) return false;
+  if (sym.indexOf("=") !== -1) return false;
   if (sym.indexOf(".") !== -1) {
     var parts = sym.split(".");
     var sfx = parts[parts.length - 1].toUpperCase();
     if (sfx !== "TO" && sfx !== "V") return false;
   }
   return true;
+}
+
+function expectedLastSessionEt(nowMs, sched) {
+  var offsetMs = (isUsDstUtc(nowMs) ? -4 : -5) * 3600000;
+  var et = new Date(nowMs + offsetMs);
+  var day = et.getUTCDay();
+  var deltaDays = 0;
+  if (day === 6) {
+    deltaDays = -1;
+  } else if (day === 0) {
+    deltaDays = -2;
+  } else if (sched.mins < sched.openMins) {
+    deltaDays = (day === 1) ? -3 : -1;
+  }
+  var target = new Date(Date.UTC(et.getUTCFullYear(), et.getUTCMonth(), et.getUTCDate() + deltaDays, 12, 0, 0));
+  var m = target.getUTCMonth() + 1;
+  var d = target.getUTCDate();
+  return {
+    dateStr: target.getUTCFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (d < 10 ? "0" : "") + d,
+    weekStart: marketWeekStartEt(Math.floor(target.getTime() / 1000)),
+    closeMins: getUsSessionSchedule(target).closeMins
+  };
 }
 
 function isCandleSeriesStale(candles, symbol, rangeKey, nowDate, fetchedAtMs) {
@@ -5742,24 +6278,46 @@ function isCandleSeriesStale(candles, symbol, rangeKey, nowDate, fetchedAtMs) {
     return false;
   }
 
-  // Outside RTH on a weekday after market close: stale if missing today's regular session
-  if (!sched.isWeekend && sched.mins >= sched.closeMins) {
-    if (isIntraday || tf === "1D" || tf === "D" || tf === "1d" || tf === "day") {
-      return lastEt < curEt;
+  // Outside RTH (weekday post-close, weekends, and weekday pre-market):
+  // Validate against the most recent completed weekday regular session.
+  var expected = expectedLastSessionEt(nowMs, sched);
+
+  if (fetchedMs !== null && fetchedMs > 0) {
+    var fetchedEt = marketDateEt(fetchedMs / 1000);
+    if (fetchedEt > expected.dateStr) {
+      return false;
     }
-    if (fetchedMs !== null && fetchedMs > 0 && marketDateEt(fetchedMs / 1000) === curEt) {
+    if (fetchedEt === expected.dateStr) {
       var fetchedSched = getUsSessionSchedule(new Date(fetchedMs));
-      if (fetchedSched.mins >= sched.closeMins) return false;
+      if (fetchedSched.mins >= fetchedSched.closeMins) {
+        return false;
+      }
+      return true;
     }
-    if (tf === "1W" || tf === "W" || tf === "1w" || tf === "week") {
-      return marketWeekStartEt(lastTs) < marketWeekStartEt(nowSec);
+    return true;
+  }
+
+  if (isIntraday) {
+    if (lastEt < expected.dateStr) return true;
+    if (lastEt === expected.dateStr) {
+      var lastOffsetMs = (isUsDstUtc(lastTs * 1000) ? -4 : -5) * 3600000;
+      var lastEtDt = new Date(lastTs * 1000 + lastOffsetMs);
+      var lastEtMins = lastEtDt.getUTCHours() * 60 + lastEtDt.getUTCMinutes();
+      var barMins = tfNorm === "60" ? 60 : (tfNorm === "30" ? 30 : (tfNorm === "15" ? 15 : (tfNorm === "5" ? 5 : 1)));
+      var finalStartMins = expected.closeMins - Math.min(30, barMins);
+      if (lastEtMins < finalStartMins) return true;
     }
-    if (tf === "1M" || tf === "M") {
-      return lastEt.slice(0, 7) < curEt.slice(0, 7);
-    }
-    if (tf === "1Y" || tf === "Y") {
-      return lastEt.slice(0, 4) < curEt.slice(0, 4);
-    }
+    return false;
+  }
+  if (tf === "1D" || tf === "D" || tf === "1d" || tf === "day") {
+    return lastEt < expected.dateStr;
+  }
+  if (tf === "1W" || tf === "W" || tf === "1w" || tf === "week" ||
+      tf === "1M" || tf === "M" ||
+      tf === "1Y" || tf === "Y") {
+    // HTF bar timestamps are anchored to period start (Monday / 1st / Jan 1), so without a
+    // known post-close fetchedAt timestamp we cannot trust mid-period cached bars.
+    return true;
   }
 
   return false;
@@ -5776,6 +6334,14 @@ function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
     return candles;
   }
 
+  var now = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate : new Date();
+  if (quote.symbol && isUsEquitySessionSymbol(quote.symbol)) {
+    var rthSched = getUsSessionSchedule(now, quote);
+    if (rthSched.isWeekend || rthSched.mins < rthSched.openMins - 2 || rthSched.mins > rthSched.closeMins + 2) {
+      return candles;
+    }
+  }
+
   var rawPrice = quote.regularPrice != null ? quote.regularPrice : (quote.regularMarketPrice != null ? quote.regularMarketPrice : (quote.price != null ? quote.price : null));
   var price = finiteOrNull(rawPrice);
   if (price === null) return candles;
@@ -5784,7 +6350,6 @@ function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
   var lastIdx = list.length - 1;
   var last = Object.assign({}, list[lastIdx]);
   var range = String(rangeKey || "1D");
-  var now = (nowDate instanceof Date) ? nowDate : new Date();
   var nowSec = Math.floor(now.getTime() / 1000);
 
   if (range === "1D" || range === "D" || range === "1d" || range === "day") {
@@ -6013,6 +6578,7 @@ function updateCachedDevelopingCandles(cache, sym, quote, timeframes, nowDate) {
   var changedKeys = [];
   var seen = {};
   var tsNow = nowDate || new Date();
+  var quoteWithSym = quote.symbol ? quote : Object.assign({ symbol: sym }, quote);
   for (var i = 0; i < timeframes.length; i++) {
     var tf = timeframes[i];
     if (!tf || seen[tf]) continue;
@@ -6020,7 +6586,7 @@ function updateCachedDevelopingCandles(cache, sym, quote, timeframes, nowDate) {
     var k = cacheKey(sym, tf);
     var existing = cache[k];
     if (existing && existing.length > 0) {
-      var updated = updateDevelopingCandle(existing, quote, tf, tsNow);
+      var updated = updateDevelopingCandle(existing, quoteWithSym, tf, tsNow);
       if (updated !== existing) {
         cache[k] = updated;
         changedKeys.push(k);
@@ -6200,7 +6766,10 @@ if (typeof module !== "undefined") {
     searchUrl: searchUrl,
     sparkUrl: sparkUrl,
     sparkQuoteUrl: sparkQuoteUrl,
-    armedAlertSymbols: armedAlertSymbols,
+    ALERT_WATCH_TIMEFRAMES: ALERT_WATCH_TIMEFRAMES,
+    defaultAlertSources: defaultAlertSources,
+    normalizeAlertSources: normalizeAlertSources,
+    normalizeFiredSetupKeys: normalizeFiredSetupKeys,
     extractFtfcAnchors: extractFtfcAnchors,
     computeFtfcFromAnchors: computeFtfcFromAnchors,
     marketDateEt: marketDateEt,
@@ -6310,7 +6879,6 @@ if (typeof module !== "undefined") {
     computeRayForOrigin: computeRayForOrigin,
     computeActiveBroadening: computeActiveBroadening,
     nodeCommand: nodeCommand,
-    normalizeSymbolLevels: normalizeSymbolLevels,
     normalizeAlertLog: normalizeAlertLog,
     appendAlertLog: appendAlertLog,
     isUsDstUtc: isUsDstUtc,
@@ -6318,8 +6886,17 @@ if (typeof module !== "undefined") {
     candleDurationSec: candleDurationSec,
     isUsMarketOpen: isUsMarketOpen,
     isAlertSessionOpen: isAlertSessionOpen,
-    discordPriceAlertPayload: discordPriceAlertPayload,
-    evaluatePriceLevelAlerts: evaluatePriceLevelAlerts,
+    SETUP_GROUP_ORDER: SETUP_GROUP_ORDER,
+    setupGroupName: setupGroupName,
+    setupTriggerKey: setupTriggerKey,
+    computeTimeframeScenarioSnapshot: computeTimeframeScenarioSnapshot,
+    evaluateSymbolSetupAlerts: evaluateSymbolSetupAlerts,
+    normalizeAlertSortSpecs: normalizeAlertSortSpecs,
+    applyAlertSortClick: applyAlertSortClick,
+    toggleAlertSortLock: toggleAlertSortLock,
+    buildGroupedAlertWatchlist: buildGroupedAlertWatchlist,
+    discordSetupAlertPayload: discordSetupAlertPayload,
+    formatSetupAlertNotification: formatSetupAlertNotification,
     ALERT_MUTE_INDEFINITE: ALERT_MUTE_INDEFINITE,
     nextUsMarketOpenMs: nextUsMarketOpenMs,
     normalizeAlertsMutedUntil: normalizeAlertsMutedUntil,

@@ -66,8 +66,12 @@ Column {
             PanelActionButton {
                 id: alertsBtn
                 iconText: controller.alertsMuted ? "\uf1f6" : "\uf0f3"
-                tooltipText: controller.alertsMuted ? ("Alerts · " + controller.alertsMuteStatus) : "Alerts"
-                foreground: controller.alertsMuted ? controller.contentUrgent : controller.dim
+                tooltipText: {
+                    var cnt = controller.activeSetupAlertCount || 0;
+                    var base = cnt > 0 ? ("Setup Alerts (" + cnt + ")") : "Setup Alerts";
+                    return controller.alertsMuted ? (base + " · " + controller.alertsMuteStatus) : base;
+                }
+                foreground: controller.alertsMuted ? controller.contentUrgent : ((controller.activeSetupAlertCount > 0) ? controller.contentForeground : controller.dim)
                 fontFamily: controller.contentFontFamily
                 hasCursor: controller.listChrome === "alerts"
                 bordered: controller.listChrome === "alerts"

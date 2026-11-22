@@ -1584,49 +1584,267 @@ test("isUsMarketOpen and isAlertSessionOpen enforce RTH market session gating fo
   assert.equal(Model.isAlertSessionOpen("BTC-USD", { session: "closed" }, false, weekendDate), true)
 })
 
-test("evaluatePriceLevelAlerts triggers only on live crossover during open session and persists state", () => {
-  const openRthDate = new Date("2026-07-15T15:00:00Z")
-  const levels = [
-    { price: 200.0, sourceTf: "60", anchorTs: 1752500000, text: "Breakout", tone: "up", alertEnabled: true, alertCondition: "CROSSES_ABOVE", alertTriggered: false }
+test("setup alert helpers normalize sources, classify Reversal vs Continuation separately, evaluate In-Force & scenarios, and persist state", () => {
+  // 1. Default and normalized alert sources
+  assert.deepEqual(Model.defaultAlertSources(), ["@MARKET"])
+  assert.deepEqual(Model.normalizeAlertSources(undefined), ["@MARKET"])
+  assert.deepEqual(Model.normalizeAlertSources([]), [])
+  assert.deepEqual(Model.normalizeAlertSources([" @m ", "smh", "XLK", "@e", "@unknown", "SMH"]), ["@MARKET", "SMH", "XLK", "@ENERGY"])
+
+  // 2. Setup group names keep Reversal & Continuation distinct
+  assert.equal(Model.setupGroupName({ code: "2d-1-2u", category: "inside_reversal" }), "2-1-2 Reversal")
+  assert.equal(Model.setupGroupName({ code: "2u-1-2d", category: "inside_reversal" }), "2-1-2 Reversal")
+  assert.equal(Model.setupGroupName({ code: "2u-1-2u", category: "inside_continuation" }), "2-1-2 Continuation")
+  assert.equal(Model.setupGroupName({ code: "2d-1-2d", category: "inside_continuation" }), "2-1-2 Continuation")
+  assert.equal(Model.setupGroupName({ code: "3-1-2u", category: "inside_reversal" }), "3-1-2 Reversal")
+  assert.equal(Model.setupGroupName({ code: "3-1-2u", category: "inside_continuation" }), "3-1-2 Continuation")
+  assert.equal(Model.setupGroupName({ code: "2d-2u", category: "2-2_reversal" }), "2-2 Reversal")
+  assert.equal(Model.setupGroupName({ code: "3-2d-2u", category: "2-2_reversal" }), "3-2-2 Reversal")
+  assert.equal(Model.setupGroupName({ code: "3-2u", category: "3-2_reversal" }), "3-2 Reversal")
+  assert.equal(Model.setupGroupName({ code: "1-3u", category: "1-bar_revstrat" }), "1-3 RevStrat")
+  assert.equal(Model.setupGroupName({ code: "1-2d-2u", category: "2-bar_revstrat" }), "1-2-2 RevStrat")
+  assert.equal(Model.setupGroupName({ code: "1-3(H)-2u", category: "2-bar_revstrat" }), "1-3-2 RevStrat")
+  assert.equal(Model.setupGroupName({ code: "PMG Up", category: "other" }), "PMG")
+  assert.equal(Model.setupGroupName({ code: "Kicker Dn", category: "other" }), "Kicker")
+
+  // 3. Evaluate setup alerts: 60m 2d-1-2u triggered & In-Force when close >= trigger, not In-Force on pullback
+  const baseTs = Date.UTC(2026, 6, 15, 13, 30) / 1000
+  const candles60 = [
+    { timestamp: baseTs - 10800, open: 105, high: 106, low: 102, close: 103 }, // p3
+    { timestamp: baseTs - 7200, open: 103, high: 104, low: 99, close: 100 },   // p2: 2d
+    { timestamp: baseTs - 3600, open: 100.5, high: 102.5, low: 100, close: 102 }, // p1: 1 (trig=102.5)
+    { timestamp: baseTs, open: 102.0, high: 103.4, low: 101.8, close: 103.2 }  // cur: 2u green, above 102.5
+  ]
+  const candles30 = [
+    { timestamp: baseTs - 1800, open: 103, high: 104, low: 101, close: 102 },
+    { timestamp: baseTs, open: 102.5, high: 102.5, low: 102.5, close: 102.5 } // flat close === open, inside bar 1
+  ]
+  // Build enough daily bars across 2 months for 1D, 1W, 1M derivation
+  const candles1D = [
+    { timestamp: Date.UTC(2026, 4, 15, 13, 30) / 1000, open: 90, high: 95, low: 88, close: 94 },
+    { timestamp: Date.UTC(2026, 5, 15, 13, 30) / 1000, open: 94, high: 101, low: 93, close: 99 },
+    { timestamp: Date.UTC(2026, 6, 6, 13, 30) / 1000, open: 99, high: 105, low: 98, close: 100 },
+    { timestamp: Date.UTC(2026, 6, 14, 13, 30) / 1000, open: 102, high: 104, low: 100, close: 101 },
+    { timestamp: Date.UTC(2026, 6, 15, 13, 30) / 1000, open: 101, high: 103.5, low: 100.5, close: 103.2 }
   ]
 
-  // Initial quote snapshot (prevPrice = null) does not fire
-  const initRes = Model.evaluatePriceLevelAlerts("AAPL", levels, null, 200.5, { session: "regular" }, openRthDate)
-  assert.equal(initRes.triggered.length, 0)
+  const activeInForce = Model.evaluateSymbolSetupAlerts("NVDA", { "30": candles30, "60": candles60, "1D": candles1D }, { regularPrice: 103.2 }, ["SMH", "XLK"])
+  const hit60 = activeInForce.find(a => a.timeframe === "60")
+  assert.ok(hit60, "60m 2d-1-2u setup detected")
+  assert.equal(hit60.setupGroup, "2-1-2 Reversal")
+  assert.equal(hit60.setupCode, "2d-1-2u")
+  assert.equal(hit60.direction, "LONG")
+  assert.equal(hit60.inForce, true)
+  assert.deepEqual(hit60.baskets, ["SMH", "XLK"])
+  // Uppercase scenario columns + strict close > open green / close < open red / close === open flat
+  assert.equal(hit60.scenarios["60"].sc, "2U")
+  assert.equal(hit60.scenarios["60"].colorTone, "up")
+  assert.equal(hit60.scenarios["30"].sc, "1")
+  assert.equal(hit60.scenarios["30"].colorTone, "up") // live 103.2 > open 102.5
 
-  // Live crossover from 199.80 to 200.10 fires alert and marks level alertTriggered = true
-  const crossRes = Model.evaluatePriceLevelAlerts("AAPL", levels, 199.80, 200.10, { session: "regular" }, openRthDate)
-  assert.equal(crossRes.triggered.length, 1)
-  assert.equal(crossRes.triggered[0].direction, "ABOVE")
-  assert.equal(crossRes.nextLevels[0].alertTriggered, true)
+  // Pullback below trigger (102.1 < 102.5) keeps setup triggered on the bar, flips inForce to false
+  const activePulledBack = Model.evaluateSymbolSetupAlerts("NVDA", { "30": candles30, "60": candles60, "1D": candles1D }, { regularPrice: 102.1 }, ["SMH", "XLK"])
+  const hit60Pb = activePulledBack.find(a => a.timeframe === "60")
+  assert.ok(hit60Pb)
+  assert.equal(hit60Pb.inForce, false)
+  assert.equal(hit60Pb.scenarios["30"].colorTone, "down") // 102.1 < 102.5
 
-  // Subsequent tick above 200 does not re-fire once alertTriggered is true
-  const repeatRes = Model.evaluatePriceLevelAlerts("AAPL", crossRes.nextLevels, 200.10, 200.40, { session: "regular" }, openRthDate)
-  assert.equal(repeatRes.triggered.length, 0)
+  // Exact close === open is flat
+  const snapFlat = Model.computeTimeframeScenarioSnapshot({ "30": candles30 }, null)
+  assert.equal(snapFlat["30"].sc, "1")
+  assert.equal(snapFlat["30"].colorTone, "flat")
 
-  // State serialization & parsing preserves symbolLevels and alertLog
+  // 4. 4-level Thinkorswim Watchlist grouping: Timeframe -> Up/Down -> Basket -> Setup (with multi-basket duplication)
+  const grouped = Model.buildGroupedAlertWatchlist([hit60], { sourceOrder: ["SMH", "XLK"] })
+  assert.equal(grouped.totalCount, 1)
+  assert.equal(grouped.inForceCount, 1)
+  const kinds = grouped.rows.map(r => r.kind)
+  assert.deepEqual(kinds, ["tf", "direction", "basket", "setup", "row", "basket", "setup", "row"])
+  assert.equal(grouped.rows[0].label, "60m")
+  assert.equal(grouped.rows[0].depth, 0)
+  assert.equal(grouped.rows[1].label, "BREAKING UP")
+  assert.equal(grouped.rows[1].depth, 1)
+  assert.equal(grouped.rows[2].label, "SMH")
+  assert.equal(grouped.rows[2].depth, 2)
+  assert.equal(grouped.rows[3].label, "2-1-2 Reversal")
+  assert.equal(grouped.rows[3].depth, 3)
+  assert.equal(grouped.rows[4].item.symbol, "NVDA")
+  assert.equal(grouped.rows[4].depth, 4)
+  assert.equal(grouped.rows[5].label, "XLK")
+  assert.equal(grouped.rows[6].label, "2-1-2 Reversal")
+  assert.equal(grouped.rows[7].item.symbol, "NVDA")
+
+  // Separate setup groups under the same basket & direction stay distinct, and direction collapse hides children
+  const contItem = Object.assign({}, hit60, {
+    key: "AMD:60:1:LONG:2u-1-2u",
+    symbol: "AMD",
+    setupGroup: "2-1-2 Continuation",
+    setupCode: "2u-1-2u",
+    baskets: ["SMH"]
+  })
+  const multiGrouped = Model.buildGroupedAlertWatchlist([hit60, contItem], { sourceOrder: ["SMH", "XLK"] })
+  const smhSetups = multiGrouped.rows.filter(r => r.kind === "setup" && r.basket === "SMH").map(r => r.label)
+  assert.deepEqual(smhSetups, ["2-1-2 Reversal", "2-1-2 Continuation"])
+  const collapsedDir = Model.buildGroupedAlertWatchlist([hit60, contItem], { collapsed: { "dir:60:LONG": true } })
+  assert.deepEqual(collapsedDir.rows.map(r => r.kind), ["tf", "direction"])
+
+  // Sortable columns within groups: ticker (asc/desc), inForce (desc/asc), and timeframe scenario rank (3 > 2U > 2D > 1, green > red, missing last)
+  const sortItems = [
+    Object.assign({}, hit60, {
+      key: "MSFT:60:1:LONG:2d-1-2u",
+      symbol: "MSFT",
+      inForce: false,
+      triggeredAt: 300,
+      baskets: ["SMH"],
+      scenarios: { "30": { sc: "1", colorTone: "down" }, "60": { sc: "2U", colorTone: "up" }, "1D": { sc: "2D", colorTone: "up" } }
+    }),
+    Object.assign({}, hit60, {
+      key: "AAPL:60:1:LONG:2d-1-2u",
+      symbol: "AAPL",
+      inForce: true,
+      triggeredAt: 100,
+      baskets: ["SMH"],
+      scenarios: { "30": { sc: "3", colorTone: "up" }, "60": { sc: "2U", colorTone: "up" }, "1D": { sc: "3", colorTone: "down" } }
+    }),
+    Object.assign({}, hit60, {
+      key: "NVDA:60:1:LONG:2d-1-2u",
+      symbol: "NVDA",
+      inForce: true,
+      triggeredAt: 200,
+      baskets: ["SMH"],
+      scenarios: { "30": { sc: "3", colorTone: "down" }, "60": { sc: "2U", colorTone: "up" }, "1D": { sc: "-", colorTone: "flat" } }
+    })
+  ]
+  const rowSymbols = (opts) => Model.buildGroupedAlertWatchlist(sortItems, opts).rows.filter(r => r.kind === "row").map(r => r.item.symbol)
+  assert.deepEqual(rowSymbols({ sortKey: "ticker", sortAsc: true }), ["AAPL", "MSFT", "NVDA"])
+  assert.deepEqual(rowSymbols({ sortKey: "ticker", sortAsc: false }), ["NVDA", "MSFT", "AAPL"])
+  assert.deepEqual(rowSymbols({ sortKey: "inForce", sortAsc: false }), ["NVDA", "AAPL", "MSFT"])
+  assert.deepEqual(rowSymbols({ sortKey: "inForce", sortAsc: true }), ["MSFT", "NVDA", "AAPL"])
+  // 30m scenario desc: 3 green (AAPL) > 3 red (NVDA) > 1 red (MSFT)
+  assert.deepEqual(rowSymbols({ sortKey: "30", sortAsc: false }), ["AAPL", "NVDA", "MSFT"])
+  // 30m scenario asc: 1 red (MSFT) < 3 red (NVDA) < 3 green (AAPL)
+  assert.deepEqual(rowSymbols({ sortKey: "30", sortAsc: true }), ["MSFT", "NVDA", "AAPL"])
+  // Missing ("-") always stays at the bottom for both asc and desc
+  assert.deepEqual(rowSymbols({ sortKey: "1D", sortAsc: false }), ["AAPL", "MSFT", "NVDA"])
+  assert.deepEqual(rowSymbols({ sortKey: "1D", sortAsc: true }), ["MSFT", "AAPL", "NVDA"])
+
+  // Multi-column sort locking: lock 1M first, then sub-sort ties by 1W, then lock 1W and sub-sort by ticker
+  const chainedItems = [
+    Object.assign({}, hit60, {
+      key: "TSLA:60:1:LONG:2d-1-2u",
+      symbol: "TSLA",
+      inForce: true,
+      triggeredAt: 100,
+      baskets: ["SMH"],
+      scenarios: { "1M": { sc: "2U", colorTone: "up" }, "1W": { sc: "1", colorTone: "up" }, "1D": { sc: "2U", colorTone: "up" } }
+    }),
+    Object.assign({}, hit60, {
+      key: "NVDA:60:1:LONG:2d-1-2u",
+      symbol: "NVDA",
+      inForce: true,
+      triggeredAt: 200,
+      baskets: ["SMH"],
+      scenarios: { "1M": { sc: "2U", colorTone: "up" }, "1W": { sc: "3", colorTone: "up" }, "1D": { sc: "2U", colorTone: "up" } }
+    }),
+    Object.assign({}, hit60, {
+      key: "AMD:60:1:LONG:2d-1-2u",
+      symbol: "AMD",
+      inForce: true,
+      triggeredAt: 300,
+      baskets: ["SMH"],
+      scenarios: { "1M": { sc: "2U", colorTone: "up" }, "1W": { sc: "3", colorTone: "up" }, "1D": { sc: "1", colorTone: "down" } }
+    }),
+    Object.assign({}, hit60, {
+      key: "AVGO:60:1:LONG:2d-1-2u",
+      symbol: "AVGO",
+      inForce: true,
+      triggeredAt: 400,
+      baskets: ["SMH"],
+      scenarios: { "1M": { sc: "3", colorTone: "up" }, "1W": { sc: "1", colorTone: "down" }, "1D": { sc: "1", colorTone: "down" } }
+    })
+  ]
+  const chainedSyms = (specs) => Model.buildGroupedAlertWatchlist(chainedItems, { sortSpecs: specs }).rows.filter(r => r.kind === "row").map(r => r.item.symbol)
+
+  // Step 1: click 1M, lock 1M, then click 1W
+  let specs = Model.applyAlertSortClick([], "1M")
+  assert.deepEqual(specs, [{ key: "1M", asc: false, locked: false }])
+  specs = Model.toggleAlertSortLock(specs, "1M")
+  assert.deepEqual(specs, [{ key: "1M", asc: false, locked: true }])
+  specs = Model.applyAlertSortClick(specs, "1W")
+  assert.deepEqual(specs, [
+    { key: "1M", asc: false, locked: true },
+    { key: "1W", asc: false, locked: false }
+  ])
+  // AVGO has 1M=3g (#1); among 1M=2Ug ties, AMD & NVDA have 1W=3g (AMD newer trigger), TSLA has 1W=1g
+  assert.deepEqual(chainedSyms(specs), ["AVGO", "AMD", "NVDA", "TSLA"])
+
+  // Step 2: lock 1W too, then click ticker (asc A->Z) to sort within 1M+1W ties
+  specs = Model.toggleAlertSortLock(specs, "1W")
+  specs = Model.applyAlertSortClick(specs, "ticker")
+  assert.deepEqual(chainedSyms(specs), ["AVGO", "AMD", "NVDA", "TSLA"])
+  // Flip ticker to desc (Z->A): NVDA before AMD while AVGO stays #1 (1M locked) and TSLA stays last (1W locked)
+  specs = Model.applyAlertSortClick(specs, "ticker")
+  assert.deepEqual(chainedSyms(specs), ["AVGO", "NVDA", "AMD", "TSLA"])
+
+  // Step 3: click locked 1M header to flip 1M to asc (2Ug before 3g) without losing locks
+  specs = Model.applyAlertSortClick(specs, "1M")
+  assert.equal(specs[0].locked, true)
+  assert.equal(specs[0].asc, true)
+  assert.deepEqual(chainedSyms(specs), ["NVDA", "AMD", "TSLA", "AVGO"])
+
+  // Step 4: unlock 1M promotes 1W to priority #1
+  specs = Model.toggleAlertSortLock(specs, "1M")
+  assert.equal(specs[0].key, "1W")
+  assert.equal(specs[0].locked, true)
+  assert.deepEqual(chainedSyms(specs), ["NVDA", "AMD", "TSLA", "AVGO"])
+
+  // inForceOnly filter hides pulled-back setups
+  const filteredOut = Model.buildGroupedAlertWatchlist([hit60Pb], { inForceOnly: true })
+  assert.equal(filteredOut.totalCount, 0)
+  assert.equal(filteredOut.rows.length, 0)
+
+  // 5. Notification & Discord payload formatting (single + coalesced burst)
+  const singleNotif = Model.formatSetupAlertNotification([hit60], 1795200000000)
+  assert.match(singleNotif.title, /NVDA/)
+  assert.match(singleNotif.body, /Breaking Up/)
+  const singleDiscord = JSON.parse(singleNotif.discordPayload)
+  assert.match(singleDiscord.content, /NVDA/)
+
+  const burstNotif = Model.formatSetupAlertNotification([hit60, Object.assign({}, hit60, { symbol: "AMD", key: "AMD:60:1:LONG:2d-1-2u" })], 1795200000000)
+  assert.match(burstNotif.title, /2 Setup Alerts Triggered/)
+  assert.equal(burstNotif.logEntries.length, 2)
+
+  // 6. State serialization & parsing persists alertSources, alertsAutoOpen, firedSetupKeys and ignores legacy symbolLevels
   const serialized = Model.serializeState(
-    ["AAPL"],
-    ["AAPL"],
+    ["SPY"],
+    ["SPY"],
     "1D",
     "2x2",
     { symbol: true, timeframe: false, crosshair: true, time: true },
-    ["AAPL"],
+    ["SPY"],
     {},
     {},
     "",
     ["60", "1D", "1W", "1M"],
     [-1, -1, -1, -1, -1],
     {
-      symbolLevels: { AAPL: crossRes.nextLevels },
-      alertLog: [crossRes.triggered[0].logEntry]
+      alertSources: ["@MARKET", "SMH", "XLK"],
+      alertsAutoOpen: false,
+      firedSetupKeys: { [hit60.key]: Date.now() },
+      alertLog: singleNotif.logEntries
     }
   )
   const parsedState = Model.parseState(serialized)
-  assert.ok(parsedState.symbolLevels && Array.isArray(parsedState.symbolLevels.AAPL))
-  assert.equal(parsedState.symbolLevels.AAPL[0].alertEnabled, true)
-  assert.equal(parsedState.symbolLevels.AAPL[0].alertTriggered, true)
+  assert.deepEqual(parsedState.alertSources, ["@MARKET", "SMH", "XLK"])
+  assert.equal(parsedState.alertsAutoOpen, false)
+  assert.ok(parsedState.firedSetupKeys && parsedState.firedSetupKeys[hit60.key] > 0)
   assert.equal(parsedState.alertLog.length, 1)
+  assert.equal(parsedState.symbolLevels, undefined)
+
+  // Legacy JSON containing symbolLevels parses cleanly without error
+  const legacyParsed = Model.parseState(JSON.stringify({ watchlist: ["SPY"], symbolLevels: { SPY: [{ price: 500 }] } }))
+  assert.deepEqual(legacyParsed.watchlist, ["SPY"])
+  assert.equal(legacyParsed.symbolLevels, undefined)
 })
 
 test("Update 3: computeSectorBreadth classifies all 2u bars under Truth #1 while distinguishing failed red 2u bars", () => {
@@ -2851,17 +3069,18 @@ test("marketDateEt matches America/New_York Intl formatter across EST, EDT, DST 
   }
 })
 
-test("armedAlertSymbols returns deduplicated symbols with active un-triggered alerts", () => {
-  const syms = Model.armedAlertSymbols({
-    "NVDA": [{ price: 150, alertEnabled: true, alertTriggered: false }],
-    "AAPL": [{ price: 200, alertEnabled: true, alertTriggered: true }],
-    "msft": [
-      { price: 400, alertEnabled: false, alertTriggered: false },
-      { price: 410, alertEnabled: true, alertTriggered: false }
-    ],
-    "TSLA": [{ price: 250, alertEnabled: false }]
-  })
-  assert.deepEqual(syms, ["NVDA", "MSFT"])
+test("normalizeFiredSetupKeys prunes expired entries and enforces max cap", () => {
+  const now = Date.UTC(2026, 10, 22, 15, 0)
+  const old = now - 50 * 86400000
+  const recent = now - 3600000
+  const norm = Model.normalizeFiredSetupKeys({
+    "SPY:60:1:LONG:2d-1-2u": recent,
+    "QQQ:60:1:SHORT:2u-1-2d": old,
+    "BAD": "not-a-number"
+  }, now)
+  assert.equal(norm["SPY:60:1:LONG:2d-1-2u"], recent)
+  assert.equal(norm["QQQ:60:1:SHORT:2u-1-2d"], undefined)
+  assert.equal(norm["BAD"], undefined)
 })
 
 test("matchesScenarioQuery bounded lookback produces identical results to full candle scan", () => {
@@ -3156,17 +3375,60 @@ test("updateDevelopingCandle preserves RTH purity, aligns 60m US equities to 09:
   assert.equal(dRes.length, 2)
   assert.equal(dRes[1].low, 160)
   assert.equal(dRes[1].high, 160)
+
+  // 6. US equities never roll over or mutate candles on weekends or outside RTH, even if quote claims session: "regular" or omits session
+  const fri30 = [
+    { timestamp: Math.floor(Date.UTC(2026, 10, 20, 20, 0, 0) / 1000), open: 1161.26, high: 1163.58, low: 1147.01, close: 1149.96, volume: 100 },
+    { timestamp: Math.floor(Date.UTC(2026, 10, 20, 20, 30, 0) / 1000), open: 1149.31, high: 1157.00, low: 1132.78, close: 1142.05, volume: 100 }
+  ]
+  const fri1D = [
+    { timestamp: Math.floor(Date.UTC(2026, 10, 19, 14, 30, 0) / 1000), open: 1368.30, high: 1378.06, low: 1288.08, close: 1295.86, volume: 100 },
+    { timestamp: Math.floor(Date.UTC(2026, 10, 20, 14, 30, 0) / 1000), open: 1260.38, high: 1271.13, low: 1132.78, close: 1142.05, volume: 100 }
+  ]
+  const sunEve = new Date(Date.UTC(2026, 10, 22, 23, 23, 0)) // Sun 18:23 ET
+  const monPre = new Date(Date.UTC(2026, 10, 23, 13, 30, 0)) // Mon 08:30 ET
+  const friPost = new Date(Date.UTC(2026, 10, 20, 21, 15, 0)) // Fri 16:15 ET
+  const spoofRegQuote = { symbol: "MPWR", price: 1142.05, regularPrice: 1142.05, session: "regular" }
+  const noSessionQuote = { symbol: "MPWR", price: 1142.05, regularPrice: 1142.05 }
+  assert.equal(Model.updateDevelopingCandle(fri30, spoofRegQuote, "30", sunEve), fri30)
+  assert.equal(Model.updateDevelopingCandle(fri30, spoofRegQuote, "60", sunEve), fri30)
+  assert.equal(Model.updateDevelopingCandle(fri1D, spoofRegQuote, "1D", sunEve), fri1D)
+  assert.equal(Model.updateDevelopingCandle(fri1D, noSessionQuote, "1D", sunEve), fri1D)
+  assert.equal(Model.updateDevelopingCandle(fri1D, spoofRegQuote, "1D", monPre), fri1D)
+  assert.equal(Model.updateDevelopingCandle(fri1D, spoofRegQuote, "1D", friPost), fri1D)
+  assert.equal(Model.stratScenario(fri1D[1], fri1D[0]), "2d")
+
+  // Crypto and Sunday-evening futures still roll over on weekends
+  const btcSun = Model.updateDevelopingCandle(btcBase, { symbol: "BTC-USD", regularPrice: 91500, session: "live" }, "60", sunEve)
+  assert.equal(btcSun.length, 2)
+  const futSun = Model.updateDevelopingCandle(
+    [{ timestamp: Math.floor(Date.UTC(2026, 10, 20, 20, 0, 0) / 1000), open: 6000, high: 6010, low: 5990, close: 6005, volume: 10 }],
+    { symbol: "ES=F", regularPrice: 6020, session: "regular" },
+    "60",
+    sunEve
+  )
+  assert.equal(futSun.length, 2)
+
+  // stratLivePrice does not leak extended/overnight price when regularPrice is absent
+  assert.equal(Model.stratLivePrice({ price: 1150, extendedPrice: 1150, session: "post" }), null)
+  assert.equal(Model.stratLivePrice({ price: 1150, regularPrice: 1142.05, extendedPrice: 1150, session: "post" }), 1142.05)
 })
 
 test("isCandleSeriesStale detects stale prior-session caches during RTH without false positives", () => {
   const wed1D = [{ timestamp: Math.floor(Date.UTC(2026, 10, 18, 14, 30, 0) / 1000), open: 100, high: 102, low: 99, close: 101, volume: 10 }]
   const thu1D = [...wed1D, { timestamp: Math.floor(Date.UTC(2026, 10, 19, 14, 30, 0) / 1000), open: 102, high: 103, low: 101, close: 102.5, volume: 10 }]
+  const fri1D = [...thu1D, { timestamp: Math.floor(Date.UTC(2026, 10, 20, 14, 30, 0) / 1000), open: 102, high: 104, low: 101, close: 103, volume: 10 }]
+  const priorFri1D = [{ timestamp: Math.floor(Date.UTC(2026, 10, 13, 14, 30, 0) / 1000), open: 95, high: 98, low: 94, close: 97, volume: 10 }]
   const mon1W = [{ timestamp: Math.floor(Date.UTC(2026, 10, 16, 14, 30, 0) / 1000), open: 98, high: 103, low: 97, close: 101, volume: 50 }]
+  const friMidday60 = [{ timestamp: Math.floor(Date.UTC(2026, 10, 20, 16, 30, 0) / 1000), open: 102, high: 103, low: 101, close: 102.5, volume: 10 }]
+  const friClose60 = [{ timestamp: Math.floor(Date.UTC(2026, 10, 20, 20, 30, 0) / 1000), open: 102, high: 103, low: 101, close: 102.5, volume: 10 }]
 
   const thuPre = new Date(Date.UTC(2026, 10, 19, 13, 30, 0))  // Thu 08:30 ET
   const thuRth = new Date(Date.UTC(2026, 10, 19, 15, 0, 0))   // Thu 10:00 ET
   const thuPost = new Date(Date.UTC(2026, 10, 19, 21, 30, 0)) // Thu 16:30 ET
   const satNoon = new Date(Date.UTC(2026, 10, 21, 17, 0, 0))  // Sat 12:00 ET
+  const sunEve = new Date(Date.UTC(2026, 10, 22, 22, 0, 0))   // Sun 17:00 ET
+  const monPre = new Date(Date.UTC(2026, 10, 23, 13, 0, 0))   // Mon 08:00 ET
 
   // Empty is always stale
   assert.equal(Model.isCandleSeriesStale([], "NVDA", "1D", thuRth, 0), true)
@@ -3180,13 +3442,29 @@ test("isCandleSeriesStale detects stale prior-session caches during RTH without 
   assert.equal(Model.isCandleSeriesStale(mon1W, "NVDA", "1W", thuRth, thuPre.getTime()), true)
   assert.equal(Model.isCandleSeriesStale(mon1W, "NVDA", "1W", thuRth, Date.UTC(2026, 10, 19, 14, 31, 0)), false)
 
-  // Pre-market & weekend: yesterday's / Friday's bars are fresh
+  // Pre-market & weekend: yesterday's / Friday's bars are fresh, older bars are stale
   assert.equal(Model.isCandleSeriesStale(wed1D, "NVDA", "1D", thuPre, 0), false)
-  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", satNoon, 0), false)
+  assert.equal(Model.isCandleSeriesStale(priorFri1D, "NVDA", "1D", thuPre, 0), true)
+  assert.equal(Model.isCandleSeriesStale(fri1D, "NVDA", "1D", satNoon, 0), false)
+  assert.equal(Model.isCandleSeriesStale(fri1D, "NVDA", "1D", sunEve, 0), false)
+  assert.equal(Model.isCandleSeriesStale(fri1D, "NVDA", "1D", monPre, 0), false)
+  assert.equal(Model.isCandleSeriesStale(priorFri1D, "NVDA", "1D", sunEve, 0), true)
+  assert.equal(Model.isCandleSeriesStale(priorFri1D, "NVDA", "1D", monPre, 0), true)
+  // Missing Friday on weekend is stale until fetched once (holiday protection once fetched on Sat/Sun)
+  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", satNoon, 0), true)
+  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", satNoon, satNoon.getTime()), false)
+  // Intraday cached mid-day Friday is stale on weekend; final 15:30 ET bar is fresh
+  assert.equal(Model.isCandleSeriesStale(friMidday60, "NVDA", "60", sunEve, 0), true)
+  assert.equal(Model.isCandleSeriesStale(friClose60, "NVDA", "60", sunEve, 0), false)
+  // HTF 1W cached with no fetchedAt on weekend refetches once, then stays fresh after post-close fetch
+  assert.equal(Model.isCandleSeriesStale(mon1W, "NVDA", "1W", sunEve, 0), true)
+  assert.equal(Model.isCandleSeriesStale(mon1W, "NVDA", "1W", sunEve, satNoon.getTime()), false)
 
-  // Post-market: missing today's 1D bar is stale, having today's 1D bar is fresh
+  // Post-market: missing today's 1D bar or mid-day fetch is stale; post-close bar is fresh
   assert.equal(Model.isCandleSeriesStale(wed1D, "NVDA", "1D", thuPost, 0), true)
   assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", thuPost, 0), false)
+  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", thuPost, thuRth.getTime()), true)
+  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", thuPost, thuPost.getTime()), false)
 })
 
 test("canonical 7-category Strat setup detector covers all approved setups and rejects removed patterns", () => {

@@ -42,8 +42,6 @@ FloatingWindow {
     property var quotes: ({})
     property var chartCache: ({})
     property var chartFetchedAt: ({})
-    property var symbolLevels: ({})
-    property var symbolPriceMemory: ({})
     property real replayCutoffTs: 0
     property string replayStepInterval: "Auto"
     property bool replayIntervalExpanded: false
@@ -55,7 +53,6 @@ FloatingWindow {
     readonly property int chartRefreshMs: Model.backoffDelay(15000, chartFailureCount, 120000)
     property bool quoteRefreshPending: false
     signal stateSaveRequested(string mode, var sync, var symbols, var splits)
-    signal symbolLevelsChangedExternally(string sym, var nextLevels)
     signal quotesReceived(var incomingQuotes)
     signal chartDataReceived(string key, var candles, var quoteEnriched)
     // Delivery (notification, sound, Discord, log) is owned by Panel.dispatchAlert so mute applies everywhere.
@@ -101,15 +98,6 @@ FloatingWindow {
             raw = root.chartCache[cacheKey(sym, activeTf)] || root.chartCache[cacheKey(sym, "30")] || root.chartCache[cacheKey(sym, "60")] || [];
         }
         root.replayCutoffTs = Model.stepReplayCutoff(raw, root.replayCutoffTs, dir);
-    }
-
-    function updateSymbolLevels(sym, nextLevels) {
-        if (!sym)
-            return;
-        var nextMap = Object.assign({}, root.symbolLevels);
-        nextMap[sym] = nextLevels || [];
-        root.symbolLevels = nextMap;
-        root.symbolLevelsChangedExternally(sym, nextLevels || []);
     }
 
     title: root.mainSymbol ? "Omafinance Grid - " + root.mainSymbol : "Omafinance Grid"
@@ -430,7 +418,6 @@ FloatingWindow {
                 root.applyQuotesToDevelopingCandles(parsedKeys);
                 root.notifyQuotesUpdated(parsedKeys);
                 root.quoteFailureCount = 0;
-                root.evaluateActivePriceLevelAlerts(parsed);
                 root.quotesReceived(parsed);
             } else {
                 root.quoteFailureCount = Math.min(10, root.quoteFailureCount + 1);
@@ -471,9 +458,6 @@ FloatingWindow {
                     if (!existingQuote) {
                         root.quotes[root.currentFetchSymbol] = mergedQuote;
                         root.notifyQuotesUpdated([root.currentFetchSymbol]);
-                        var singleQuoteMap = ({});
-                        singleQuoteMap[root.currentFetchSymbol] = mergedQuote;
-                        root.evaluateActivePriceLevelAlerts(singleQuoteMap);
                     } else if (parsed.ftfc) {
                         root.quotes[root.currentFetchSymbol] = mergedQuote;
                         root.notifyQuotesUpdated([root.currentFetchSymbol]);
@@ -490,44 +474,6 @@ FloatingWindow {
             id: chartFetchStdout
             waitForEnd: true
         }
-    }
-
-    function evaluateActivePriceLevelAlerts(incomingQuotes) {
-        if (root.replayCutoffTs > 0 || !incomingQuotes)
-            return;
-        var nextMem = Object.assign({}, root.symbolPriceMemory);
-        var nextLevelsMap = Object.assign({}, root.symbolLevels);
-        var memChanged = false;
-        var keys = Object.keys(incomingQuotes);
-        for (var i = 0; i < keys.length; i++) {
-            var sym = keys[i];
-            var q = incomingQuotes[sym] || root.quotes[sym];
-            if (!q || typeof q.price !== "number" || !isFinite(q.price))
-                continue;
-            var prevP = nextMem["PRICE:" + sym];
-            nextMem["PRICE:" + sym] = q.price;
-            memChanged = true;
-            var symLvls = nextLevelsMap[sym];
-            if (!Array.isArray(symLvls) || symLvls.length === 0)
-                continue;
-            var res = Model.evaluatePriceLevelAlerts(sym, symLvls, prevP, q.price, q, new Date());
-            if (res.triggered && res.triggered.length > 0) {
-                nextLevelsMap[sym] = res.nextLevels;
-                root.symbolLevels = nextLevelsMap;
-                root.symbolLevelsChangedExternally(sym, res.nextLevels);
-                for (var t = 0; t < res.triggered.length; t++) {
-                    var ev = res.triggered[t];
-                    root.alertDispatchRequested({
-                        title: ev.title,
-                        body: ev.body,
-                        discordPayload: ev.discordPayload,
-                        logEntry: ev.logEntry
-                    });
-                }
-            }
-        }
-        if (memChanged)
-            root.symbolPriceMemory = nextMem;
     }
 
     Timer {
@@ -816,7 +762,7 @@ FloatingWindow {
 
         Keys.onPressed: function (event) {
             var activeCell = root.getActiveCellItem();
-            var inputActive = activeCell && (activeCell.searching || activeCell.changingInterval || activeCell.editingLevel);
+            var inputActive = activeCell && (activeCell.searching || activeCell.changingInterval);
 
             if (inputActive) {
                 if (event.key === Qt.Key_Escape) {
@@ -824,8 +770,6 @@ FloatingWindow {
                         activeCell.dismissSearch();
                     else if (activeCell.changingInterval)
                         activeCell.dismissIntervalInput();
-                    else if (activeCell.editingLevel)
-                        activeCell.dismissLevelEdit();
                     event.accepted = true;
                 }
                 return;
@@ -1328,7 +1272,6 @@ FloatingWindow {
                         zoomCount: root.zoomForCell(root.activeCellIndex)
                         quote: root.getQuote(symbol, root.cellRev(cellIndex))
                         candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                        priceLevels: root.symbolLevels[symbol] || []
                         replayCutoffTs: root.replayCutoffTs
                         activeFocusCell: true
                         showBroadening: root.showBroadening
@@ -1349,9 +1292,6 @@ FloatingWindow {
                         }
                         onZoomChangedManually: function (idx, z) {
                             root.setZoomForCell(idx, z);
-                        }
-                        onPriceLevelsModified: function (sym, nextLevels) {
-                            root.updateSymbolLevels(sym, nextLevels);
                         }
                         onReplayRequested: function (ts) {
                             root.setReplayCutoff(ts);
@@ -1389,7 +1329,6 @@ FloatingWindow {
                             zoomCount: root.zoomForCell(0)
                             quote: root.getQuote(symbol, root.cellRev(cellIndex))
                             candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                            priceLevels: root.symbolLevels[symbol] || []
                             replayCutoffTs: root.replayCutoffTs
                             activeFocusCell: root.activeCellIndex === 0
                             showBroadening: root.showBroadening
@@ -1416,9 +1355,6 @@ FloatingWindow {
                             }
                             onCrosshairCleared: {
                                 root.handleCrosshairCleared(0);
-                            }
-                            onPriceLevelsModified: function (sym, nextLevels) {
-                                root.updateSymbolLevels(sym, nextLevels);
                             }
                             onReplayRequested: function (ts) {
                                 root.setReplayCutoff(ts);
@@ -1453,7 +1389,6 @@ FloatingWindow {
                             zoomCount: root.zoomForCell(1)
                             quote: root.getQuote(symbol, root.cellRev(cellIndex))
                             candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                            priceLevels: root.symbolLevels[symbol] || []
                             replayCutoffTs: root.replayCutoffTs
                             activeFocusCell: root.activeCellIndex === 1
                             showBroadening: root.showBroadening
@@ -1480,9 +1415,6 @@ FloatingWindow {
                             }
                             onCrosshairCleared: {
                                 root.handleCrosshairCleared(1);
-                            }
-                            onPriceLevelsModified: function (sym, nextLevels) {
-                                root.updateSymbolLevels(sym, nextLevels);
                             }
                             onReplayRequested: function (ts) {
                                 root.setReplayCutoff(ts);
@@ -1535,7 +1467,6 @@ FloatingWindow {
                                 zoomCount: root.zoomForCell(2)
                                 quote: root.getQuote(symbol, root.cellRev(cellIndex))
                                 candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                                priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 2
                                 showBroadening: root.showBroadening
@@ -1562,9 +1493,6 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(2);
-                                }
-                                onPriceLevelsModified: function (sym, nextLevels) {
-                                    root.updateSymbolLevels(sym, nextLevels);
                                 }
                                 onReplayRequested: function (ts) {
                                     root.setReplayCutoff(ts);
@@ -1599,7 +1527,6 @@ FloatingWindow {
                                 zoomCount: root.zoomForCell(3)
                                 quote: root.getQuote(symbol, root.cellRev(cellIndex))
                                 candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                                priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 3
                                 showBroadening: root.showBroadening
@@ -1626,9 +1553,6 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(3);
-                                }
-                                onPriceLevelsModified: function (sym, nextLevels) {
-                                    root.updateSymbolLevels(sym, nextLevels);
                                 }
                                 onReplayRequested: function (ts) {
                                     root.setReplayCutoff(ts);
@@ -1659,7 +1583,6 @@ FloatingWindow {
                                 zoomCount: root.zoomForCell(2)
                                 quote: root.getQuote(symbol, root.cellRev(cellIndex))
                                 candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                                priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 2
                                 showBroadening: root.showBroadening
@@ -1686,9 +1609,6 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(2);
-                                }
-                                onPriceLevelsModified: function (sym, nextLevels) {
-                                    root.updateSymbolLevels(sym, nextLevels);
                                 }
                                 onReplayRequested: function (ts) {
                                     root.setReplayCutoff(ts);
@@ -1723,7 +1643,6 @@ FloatingWindow {
                                 zoomCount: root.zoomForCell(3)
                                 quote: root.getQuote(symbol, root.cellRev(cellIndex))
                                 candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                                priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 3
                                 showBroadening: root.showBroadening
@@ -1750,9 +1669,6 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(3);
-                                }
-                                onPriceLevelsModified: function (sym, nextLevels) {
-                                    root.updateSymbolLevels(sym, nextLevels);
                                 }
                                 onReplayRequested: function (ts) {
                                     root.setReplayCutoff(ts);
@@ -1787,7 +1703,6 @@ FloatingWindow {
                                 zoomCount: root.zoomForCell(4)
                                 quote: root.getQuote(symbol, root.cellRev(cellIndex))
                                 candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                                priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 4
                                 showBroadening: root.showBroadening
@@ -1814,9 +1729,6 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(4);
-                                }
-                                onPriceLevelsModified: function (sym, nextLevels) {
-                                    root.updateSymbolLevels(sym, nextLevels);
                                 }
                                 onReplayRequested: function (ts) {
                                     root.setReplayCutoff(ts);
