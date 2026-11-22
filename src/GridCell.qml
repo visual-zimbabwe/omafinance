@@ -36,6 +36,7 @@ Item {
     }
     property color foreground: Color.foreground
     property bool showBroadening: false
+    property var setupLines: []
     property color dim: Model.accessibleDimColor(foreground, Color.background)
     property color upColor: Model.accessibleSemanticColor("up", Color.background)
     property color downColor: Model.accessibleSemanticColor("down", Color.background)
@@ -491,6 +492,7 @@ Item {
                 showGridLines: false
                 showTooltipHeader: false
                 showBroadening: root.showBroadening
+                setupLines: root.setupLines
 
                 onCrosshairMoved: function (timestamp, price, candle) {
                     root.crosshairMoved(timestamp, price, candle);

@@ -3039,6 +3039,7 @@ Panel {
             syncCrosshair: root.gridSync ? root.gridSync.crosshair !== false : true,
             syncTime: root.gridSync ? root.gridSync.time !== false : true,
             showBroadening: root.gridSync ? root.gridSync.broadening === true : false,
+            showSetupLines: root.gridSync ? root.gridSync.setupLines !== false : true,
             cellSymbols: [sym, sym, sym, sym, sym],
             cellTimeframes: initialTfs,
             cellZooms: initialZooms,

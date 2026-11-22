@@ -15,7 +15,7 @@ function defaultGridMode() {
 }
 
 function defaultGridSync() {
-  return { symbol: true, timeframe: false, crosshair: true, time: true, broadening: false }
+  return { symbol: true, timeframe: false, crosshair: true, time: true, broadening: false, setupLines: true }
 }
 
 function defaultGridSplits() {
@@ -63,6 +63,62 @@ function normalizeTimeframeList(raw) {
 
 var MIN_BAR_COUNT = 1
 var DEFAULT_ANALYSIS_BAR_COUNT = 8
+var DEFAULT_RIGHT_OFFSET_BARS = 9
+
+function defaultRightOffsetBars(vCount) {
+  var c = isFinite(vCount) ? Math.floor(vCount) : 0
+  if (c <= 2) return 0
+  return Math.min(DEFAULT_RIGHT_OFFSET_BARS, Math.max(1, Math.floor(c * 0.2)))
+}
+
+function minVisibleChartBars(total, vCount) {
+  var t = isFinite(total) ? Math.max(0, Math.floor(total)) : 0
+  if (t <= 1) return t
+  var c = isFinite(vCount) ? Math.max(1, Math.floor(vCount)) : t
+  return Math.min(t, Math.max(2, Math.round(c * 0.15)))
+}
+
+function maxChartViewStart(total, vCount) {
+  var t = isFinite(total) ? Math.max(0, Math.floor(total)) : 0
+  if (t <= 1) return 0
+  return Math.max(0, t - minVisibleChartBars(t, vCount))
+}
+
+// Resolve horizontal candlestick viewport with TradingView-style right-side whitespace.
+// rightOffsetBars < 0 uses the default (~9 bar) right margin scaled safely for short series.
+function resolveHorizontalViewport(total, viewCount, defaultCount, viewStart, followLatest, rightOffsetBars) {
+  var t = isFinite(total) ? Math.max(0, Math.floor(total)) : 0
+  if (t === 0) {
+    return { vStart: 0, vCount: 0, flushStart: 0, maxStart: 0, minVisibleBars: 0, rightOffsetBars: 0 }
+  }
+  var defC = (isFinite(defaultCount) && defaultCount > 0) ? Math.min(t, Math.floor(defaultCount)) : t
+  var vCount = (isFinite(viewCount) && viewCount > 0 && viewCount < t) ? Math.max(MIN_BAR_COUNT, Math.floor(viewCount)) : defC
+  var flushStart = Math.max(0, t - vCount)
+  var minVis = minVisibleChartBars(t, vCount)
+  var maxStart = Math.max(0, t - minVis)
+  var maxRight = Math.max(0, maxStart - flushStart)
+  var desiredRight = (isFinite(rightOffsetBars) && rightOffsetBars >= 0)
+    ? Math.floor(rightOffsetBars)
+    : defaultRightOffsetBars(vCount)
+  var clampedRight = Math.max(0, Math.min(maxRight, desiredRight))
+
+  var vStart
+  if (followLatest) {
+    vStart = Math.min(maxStart, flushStart + clampedRight)
+  } else {
+    var rawStart = isFinite(viewStart) ? Math.floor(viewStart) : flushStart
+    vStart = Math.max(0, Math.min(maxStart, rawStart))
+  }
+  var effectiveRight = Math.max(0, vStart - flushStart)
+  return {
+    vStart: vStart,
+    vCount: vCount,
+    flushStart: flushStart,
+    maxStart: maxStart,
+    minVisibleBars: minVis,
+    rightOffsetBars: effectiveRight
+  }
+}
 
 var PRICE_SCALE_MIN_LOG_SPAN = 0.0005
 var PRICE_SCALE_MAX_LOG_SPAN = 14
@@ -378,6 +434,9 @@ function parseState(raw) {
       }
       if (data.gridSync.broadening !== undefined) {
         res.gridSync.broadening = data.gridSync.broadening === true
+      }
+      if (data.gridSync.setupLines !== undefined) {
+        res.gridSync.setupLines = data.gridSync.setupLines !== false
       }
     }
     if (Array.isArray(data.gridSymbols)) {
@@ -2060,8 +2119,8 @@ function stratBarState(current, prev, livePrice, nowSec, periodSec) {
 // Entry state of a bar relative to the intended trade direction.
 //   WAIT_INSIDE        aligned color, Scenario 1      -> continuity, no trigger
 //   IN_FORCE           aligned color, 2 in direction  -> trigger already fired
-//   FAILED_2_REVERSAL  aligned color, opposite 2      -> failed 2u (short) / failed 2d (long)
-//   OUTSIDE            aligned color, Scenario 3      -> valid, check extension
+//   WAIT_FAILED_2      aligned color, opposite 2      -> failed 2u/2d (not a setup; wait for trigger break)
+//   OUTSIDE            aligned color, Scenario 3      -> outside chop; wait for new bar
 //   COUNTER            opposing color                 -> hour controlled against the trade
 function stratEntryState(bar, isLong) {
   var unknown = { state: "UNKNOWN", name: "Unknown", passes: false, detail: "60m bar state unavailable" }
@@ -2094,8 +2153,8 @@ function stratEntryState(bar, isLong) {
   }
   if (s === against2) {
     return {
-      state: "FAILED_2_REVERSAL", name: "Failed " + against2 + " Reversal", passes: true,
-      detail: prefix + "Failed " + against2 + " reversal (" + (isLong ? "sellers" : "buyers") + " failed back through the open)"
+      state: "WAIT_FAILED_2", name: "Failed " + against2 + " - Wait", passes: false,
+      detail: prefix + "Failed " + against2 + " (not an actionable setup; wait for trigger break of prior " + (isLong ? "high" : "low") + ")"
     }
   }
   if (s === "3") {
@@ -2314,8 +2373,8 @@ function stratHtfQuality(bar1M, bar1W, bar1D, isLong) {
   }
 }
 
-function detectCandleShape(candle, prevCandle) {
-  var empty = { isHammer: false, isShooter: false, isDoji: false, isEngulfing: false, shape: null, bodyRatio: 0, upperWickRatio: 0, lowerWickRatio: 0 }
+function detectCandleShape(candle) {
+  var empty = { isHammer: false, isShooter: false, shape: null, bodyRatio: 0, upperWickRatio: 0, lowerWickRatio: 0 }
   if (!candle) return empty
   var o = Number(candle.open)
   var h = Number(candle.high)
@@ -2337,26 +2396,10 @@ function detectCandleShape(candle, prevCandle) {
   // Shooter: body in bottom 33% of range (upper wick >= 66.7%), opposing lower wick <= 10%
   var isHammer = (bodyBot >= (l + (range * (2 / 3)) - 1e-9)) && (upperRatio <= 0.10)
   var isShooter = (bodyTop <= (l + (range / 3) + 1e-9)) && (lowerRatio <= 0.10)
-  var isDoji = (!isHammer && !isShooter && bodyRatio <= 0.20 && upperRatio >= 0.25 && lowerRatio >= 0.25)
-  var isEngulfing = false
-  if (prevCandle && isFinite(Number(prevCandle.open)) && isFinite(Number(prevCandle.close)) && isFinite(Number(prevCandle.high)) && isFinite(Number(prevCandle.low))) {
-    var po = Number(prevCandle.open)
-    var pc = Number(prevCandle.close)
-    var ph = Number(prevCandle.high)
-    var pl = Number(prevCandle.low)
-    var pBodyTop = Math.max(po, pc)
-    var pBodyBot = Math.min(po, pc)
-    var isOutside = (h > ph && l < pl)
-    if (isOutside && !isDoji && !isHammer && !isShooter && (bodyRatio >= 0.55 || (bodyTop >= pBodyTop && bodyBot <= pBodyBot && bodyRatio >= 0.45))) {
-      isEngulfing = true
-    }
-  }
-  var shape = isHammer ? "Hammer" : (isShooter ? "Shooter" : (isDoji ? "Doji" : (isEngulfing ? "Engulfing" : null)))
+  var shape = isHammer ? "Hammer" : (isShooter ? "Shooter" : null)
   return {
     isHammer: isHammer,
     isShooter: isShooter,
-    isDoji: isDoji,
-    isEngulfing: isEngulfing,
     shape: shape,
     bodyRatio: bodyRatio,
     upperWickRatio: upperRatio,
@@ -2503,6 +2546,513 @@ function detectKickerPattern(candles, livePrice) {
   }
 
   return empty
+}
+
+var SETUP_LINE_TIMEFRAMES = ["1M", "1W", "1D", "60", "30"]
+
+function isSetupLineTimeframe(tf) {
+  var key = String(tf || "")
+  for (var i = 0; i < SETUP_LINE_TIMEFRAMES.length; i++) {
+    if (SETUP_LINE_TIMEFRAMES[i] === key) return true
+  }
+  return false
+}
+
+function setupTimeframeLabel(tf) {
+  var key = String(tf || "")
+  if (key === "30") return "30m"
+  if (key === "60") return "60m"
+  return key
+}
+
+// Colors for automatic GridWindow setup lines (both line stroke and right-edge text):
+// - Target lines & target text (T1..TN): green across all timeframes
+// - Trigger lines & trigger text: 1M yellow, 1W orange, 1D/60/30 white
+function setupLineColor(tf, kind, isLightBg) {
+  if (kind === "target") {
+    return isLightBg ? "#15803D" : "#22C55E"
+  }
+  var key = String(tf || "")
+  if (key === "1M") return isLightBg ? "#B45309" : "#FACC15"
+  if (key === "1W") return isLightBg ? "#C2410C" : "#FB923C"
+  return isLightBg ? "#111827" : "#FFFFFF"
+}
+
+// Canonical 7-category TheStrat setup detector (single source of truth for checklist & GridWindow setup lines):
+// 1. Inside bar reversals:     2d-1-2u / 2u-1-2d, 3(red)-1-2u / 3(green)-1-2d
+// 2. Inside bar continuations: 2u-1-2u / 2d-1-2d, 3(green)-1-2u / 3(red)-1-2d
+// 3. 2-2 reversals:            2d-2u / 2u-2d, 3-2d-2u / 3-2u-2d
+// 4. 1-bar rev-strat:          1-3 (green bullish / red bearish)
+// 5. 3-2 reversals:            3(red)-2u / 3(green)-2d
+// 6. 2-bar rev-strat:          1-2d-2u / 1-2u-2d, 1-3(hammer)-2u / 1-3(shooter)-2d
+// 7. Other:                    PMG, Kicker
+function detectStratSetupOnCandles(tf, candles, liveQuote, options) {
+  if (!isArrayLike(candles) || candles.length < 2) return null
+  var opts = (options && typeof options === "object") ? options : ({})
+  var preferredDirection = opts.preferredDirection ? String(opts.preferredDirection).toUpperCase() : null
+  var requireTriggered = opts.requireTriggered !== false
+
+  var n = candles.length
+  var curRaw = candles[n - 1]
+  var p1 = candles[n - 2]
+  var p2 = n >= 3 ? candles[n - 3] : null
+  var p3 = n >= 4 ? candles[n - 4] : null
+  if (!curRaw || !p1) return null
+
+  var cur = {
+    timestamp: curRaw.timestamp,
+    open: Number(curRaw.open),
+    high: Number(curRaw.high),
+    low: Number(curRaw.low),
+    close: Number(curRaw.close)
+  }
+  var livePx = stratLivePrice(liveQuote)
+  if (livePx !== null && isFinite(livePx)) {
+    cur.close = livePx
+    if (!isFinite(cur.high) || livePx > cur.high) cur.high = livePx
+    if (!isFinite(cur.low) || livePx < cur.low) cur.low = livePx
+  }
+  if (!isFinite(cur.open) || !isFinite(cur.high) || !isFinite(cur.low) || !isFinite(cur.close)) return null
+
+  var p1Open = Number(p1.open), p1High = Number(p1.high), p1Low = Number(p1.low), p1Close = Number(p1.close)
+  if (!isFinite(p1Open) || !isFinite(p1High) || !isFinite(p1Low) || !isFinite(p1Close)) return null
+
+  var tfKey = String(tf || "60")
+  var tfLbl = setupTimeframeLabel(tfKey)
+  var sc_cur = stratScenario(cur, p1)
+  var sc_p1 = p2 ? stratScenario(p1, p2) : "-"
+  var sc_p2 = (p2 && p3) ? stratScenario(p2, p3) : "-"
+
+  var p1Green = p1Close >= p1Open
+  var p1Red = p1Close < p1Open
+  var p2Green = p2 ? (Number(p2.close) >= Number(p2.open)) : false
+  var p2Red = p2 ? (Number(p2.close) < Number(p2.open)) : false
+  var curGreen = cur.close >= cur.open
+
+  var brokeHigh = cur.high > p1High
+  var brokeLow = cur.low < p1Low
+  var p1Shape = detectCandleShape(p1)
+  var kickerInfo = detectKickerPattern(candles, livePx)
+
+  function buildForDirection(dirIsLong) {
+    var dir = dirIsLong ? "LONG" : "SHORT"
+    var pmgInfo = detectPivotMachineGun(candles, dirIsLong)
+    var hasKicker = Boolean(kickerInfo.isKicker && kickerInfo.direction === dir)
+    var trigBroke = dirIsLong ? brokeHigh : brokeLow
+    var category = null
+    var code = null
+    var name = null
+    var triggerPrice = dirIsLong ? p1High : p1Low
+    var anchorTs = p1.timestamp
+    var ohlcField = dirIsLong ? "high" : "low"
+    var invalidReason = null
+    var triggered = trigBroke
+
+    // 7A. Full-Gap Kicker promotes directly
+    if (hasKicker && kickerInfo.gapType === "FULL") {
+      category = "other"
+      code = dirIsLong ? "Kicker Up" : "Kicker Dn"
+      name = tfLbl + " Kicker " + (dirIsLong ? "Up" : "Down")
+      triggerPrice = kickerInfo.triggerPrice
+      anchorTs = cur.timestamp
+      ohlcField = "open"
+      triggered = true
+    } else if (sc_p1 === "1") {
+      if (sc_cur === "3") {
+        // 4. 1-bar rev-strat (1-3)
+        if (!preferredDirection && (dirIsLong !== curGreen)) {
+          return null
+        }
+        category = "1-bar_revstrat"
+        code = dirIsLong ? "1-3u" : "1-3d"
+        name = tfLbl + " 1-3 RevStrat " + (dirIsLong ? "Up" : "Down")
+      } else if (sc_p2 === "2d") {
+        if (dirIsLong) {
+          category = "inside_reversal"
+          code = "2d-1-2u"
+          name = tfLbl + " 2-1-2 Up"
+        } else {
+          category = "inside_continuation"
+          code = "2d-1-2d"
+          name = tfLbl + " 2-1-2 Down"
+        }
+      } else if (sc_p2 === "2u") {
+        if (!dirIsLong) {
+          category = "inside_reversal"
+          code = "2u-1-2d"
+          name = tfLbl + " 2-1-2 Down"
+        } else {
+          category = "inside_continuation"
+          code = "2u-1-2u"
+          name = tfLbl + " 2-1-2 Up"
+        }
+      } else if (sc_p2 === "3") {
+        // Differentiate 3-1-2 reversal vs continuation by bar 3 color vs bar 2 direction color
+        if (dirIsLong) {
+          category = p2Red ? "inside_reversal" : "inside_continuation"
+          code = "3-1-2u"
+          name = tfLbl + (p2Red ? " 3-1-2 Reversal Up" : " 3-1-2 Continuation Up")
+        } else {
+          category = p2Green ? "inside_reversal" : "inside_continuation"
+          code = "3-1-2d"
+          name = tfLbl + (p2Green ? " 3-1-2 Reversal Down" : " 3-1-2 Continuation Down")
+        }
+      } else if (sc_p2 === "-" && p2 && !p3) {
+        // Minimal 3-bar series (no p3 to classify p2): treat p2 as directional motherbar by color
+        if (dirIsLong) {
+          category = p2Red ? "inside_reversal" : "inside_continuation"
+          code = p2Red ? "2d-1-2u" : "2u-1-2u"
+          name = tfLbl + " 2-1-2 Up"
+        } else {
+          category = p2Green ? "inside_reversal" : "inside_continuation"
+          code = p2Green ? "2u-1-2d" : "2d-1-2d"
+          name = tfLbl + " 2-1-2 Down"
+        }
+      }
+      // Note: sc_p2 === "1" (1-1-2 / generic 1-2 break) is intentionally excluded
+    } else if ((sc_p1 === "2d" && dirIsLong) || (sc_p1 === "2u" && !dirIsLong)) {
+      if (sc_p2 === "1") {
+        // 6A. 2-bar rev-strat: 1-2d-2u / 1-2u-2d
+        category = "2-bar_revstrat"
+        code = dirIsLong ? "1-2d-2u" : "1-2u-2d"
+        name = tfLbl + " 1-2-2 RevStrat " + (dirIsLong ? "Up" : "Down")
+      } else if (sc_p2 === "3") {
+        // 3B. 2-2 reversal: 3-2d-2u / 3-2u-2d
+        category = "2-2_reversal"
+        code = dirIsLong ? "3-2d-2u" : "3-2u-2d"
+        name = tfLbl + " 3-2-2 Reversal " + (dirIsLong ? "Up" : "Down")
+      } else {
+        // 3A. 2-2 reversal: 2d-2u / 2u-2d
+        category = "2-2_reversal"
+        code = dirIsLong ? "2d-2u" : "2u-2d"
+        name = tfLbl + " 2-2 Reversal " + (dirIsLong ? "Up" : "Down")
+      }
+    } else if (sc_p1 === "3") {
+      if (sc_p2 === "1") {
+        // 6B. 2-bar rev-strat: 1-3(hammer)-2u / 1-3(shooter)-2d (hammer/shooter strictly required)
+        var isRevHammer = dirIsLong && p1Shape.isHammer
+        var isRevShooter = !dirIsLong && p1Shape.isShooter
+        if (isRevHammer || isRevShooter) {
+          category = "2-bar_revstrat"
+          code = dirIsLong ? "1-3(H)-2u" : "1-3(S)-2d"
+          name = tfLbl + " 1-3-2 RevStrat " + (dirIsLong ? "Up" : "Down")
+        } else {
+          invalidReason = "Scenario 3 bar failed to close as " + (dirIsLong ? "Hammer" : "Shooter") + " (rejection required for 1-3-2 RevStrat)"
+        }
+      } else {
+        // 5. 3-2 reversal: opposite color required (3 red -> 2u green; 3 green -> 2d red)
+        if ((dirIsLong && p1Red) || (!dirIsLong && p1Green)) {
+          category = "3-2_reversal"
+          code = dirIsLong ? "3-2u" : "3-2d"
+          name = tfLbl + " 3-2 Reversal " + (dirIsLong ? "Up" : "Down")
+        }
+      }
+    }
+
+    // 7B. Other fallback: Partial-Gap Kicker or PMG when no primary setup matched
+    if (!category && !invalidReason) {
+      if (hasKicker) {
+        category = "other"
+        code = dirIsLong ? "Kicker Up" : "Kicker Dn"
+        name = tfLbl + " Kicker " + (dirIsLong ? "Up" : "Down")
+        triggerPrice = kickerInfo.triggerPrice
+        triggered = trigBroke
+      } else if (pmgInfo.isPMG) {
+        var pmgTrig = pmgInfo.triggerPrice !== null ? pmgInfo.triggerPrice : (dirIsLong ? p1High : p1Low)
+        var pmgHit = dirIsLong ? (cur.high > pmgTrig || cur.close >= pmgTrig) : (cur.low < pmgTrig || cur.close <= pmgTrig)
+        if (pmgHit || !requireTriggered) {
+          category = "other"
+          code = dirIsLong ? "PMG Up" : "PMG Dn"
+          name = tfLbl + " PMG Reversal " + (dirIsLong ? "Up" : "Down")
+          triggerPrice = pmgTrig
+          triggered = pmgHit
+        }
+      }
+    }
+
+    if (!category && !invalidReason) return null
+    if (requireTriggered && (!category || !triggered)) return null
+
+    return {
+      timeframe: tfKey,
+      timeframeLabel: tfLbl,
+      category: category,
+      code: code,
+      name: name,
+      direction: dir,
+      isLong: dirIsLong,
+      valid: Boolean(category),
+      invalidReason: invalidReason,
+      isTriggered: Boolean(category && triggered),
+      triggerPrice: isFinite(triggerPrice) ? triggerPrice : null,
+      anchorTs: anchorTs,
+      ohlcField: ohlcField,
+      closePrice: cur.close,
+      barHigh: cur.high,
+      barLow: cur.low,
+      signalCandle: p1,
+      signalTimestamp: p1.timestamp,
+      activeTimestamp: cur.timestamp,
+      sc_p1: sc_p1,
+      sc_p2: sc_p2,
+      sc_cur: sc_cur,
+      signalShape: p1Shape,
+      pmg: pmgInfo,
+      kicker: hasKicker ? kickerInfo : { isKicker: false, direction: null, gapType: null, triggerPrice: null, stopPrice: null, label: null }
+    }
+  }
+
+  if (preferredDirection === "LONG" || preferredDirection === "SHORT") {
+    return buildForDirection(preferredDirection === "LONG")
+  }
+
+  // Auto-detect direction from actual trigger break on active bar
+  if (kickerInfo.isKicker && kickerInfo.gapType === "FULL") {
+    var kRes = buildForDirection(kickerInfo.direction === "LONG")
+    if (kRes && kRes.isTriggered) return kRes
+  }
+
+  if (sc_cur === "1") return null
+
+  if (sc_cur === "3" && sc_p1 === "1") {
+    return buildForDirection(curGreen)
+  }
+
+  if (brokeHigh && !brokeLow) {
+    return buildForDirection(true)
+  }
+  if (brokeLow && !brokeHigh) {
+    return buildForDirection(false)
+  }
+
+  // Both sides broken on a non-1 prior bar: check current-color side first, then alternate
+  var order = curGreen ? [true, false] : [false, true]
+  for (var oi = 0; oi < order.length; oi++) {
+    var cand = buildForDirection(order[oi])
+    if (cand && cand.isTriggered) return cand
+  }
+  return null
+}
+
+// Compute ordered structural targets T1..TN on timeframe tf for a triggered setup.
+// Uses immediate pattern magnitude first, PMG stacked pivots if present, then progressive
+// untagged prior swing extremes walking backward on tf.
+function resolveTimeframeSetupTargets(tf, candles, setup, maxTargets) {
+  if (!setup || !setup.valid || !isFinite(setup.triggerPrice) || !isArrayLike(candles) || candles.length < 3) {
+    return []
+  }
+  var n = candles.length
+  var isLong = setup.isLong
+  var trig = Number(setup.triggerPrice)
+  var ohlcField = isLong ? "high" : "low"
+  var limit = (typeof maxTargets === "number" && isFinite(maxTargets) && maxTargets > 0) ? maxTargets : 10
+
+  var p2 = n >= 3 ? candles[n - 3] : null
+  var p3 = n >= 4 ? candles[n - 4] : null
+
+  var raw = []
+  function pushTarget(price, anchorTs) {
+    var val = Number(price)
+    if (!isFinite(val)) return
+    if (isLong ? (val <= trig + 1e-6) : (val >= trig - 1e-6)) return
+    raw.push({
+      price: val,
+      anchorTs: anchorTs != null ? anchorTs : (p2 ? p2.timestamp : setup.anchorTs),
+      ohlcField: ohlcField
+    })
+  }
+
+  // 1. Immediate pattern magnitude targets
+  var scanStartIdx = n - 3
+  var runningBound = trig
+
+  if (setup.code === "1-2d-2u" || setup.code === "1-2u-2d") {
+    if (p2) {
+      var p2Val = isLong ? Number(p2.high) : Number(p2.low)
+      pushTarget(p2Val, p2.timestamp)
+      if (isFinite(p2Val) && (isLong ? p2Val > runningBound : p2Val < runningBound)) runningBound = p2Val
+    }
+    if (p3) {
+      var p3Val = isLong ? Number(p3.high) : Number(p3.low)
+      pushTarget(p3Val, p3.timestamp)
+      if (isFinite(p3Val) && (isLong ? p3Val > runningBound : p3Val < runningBound)) runningBound = p3Val
+    }
+    scanStartIdx = n - 5
+  } else if (setup.code === "1-3(H)-2u" || setup.code === "1-3(S)-2d") {
+    if (p3) {
+      var p3RevVal = isLong ? Number(p3.high) : Number(p3.low)
+      pushTarget(p3RevVal, p3.timestamp)
+      if (isFinite(p3RevVal) && (isLong ? p3RevVal > runningBound : p3RevVal < runningBound)) runningBound = p3RevVal
+    }
+    scanStartIdx = n - 5
+  } else if (
+    setup.category === "inside_reversal" ||
+    setup.category === "inside_continuation" ||
+    setup.category === "2-2_reversal" ||
+    setup.category === "1-bar_revstrat"
+  ) {
+    if (p2) {
+      var patVal = isLong ? Number(p2.high) : Number(p2.low)
+      pushTarget(patVal, p2.timestamp)
+      if (isFinite(patVal) && (isLong ? patVal > runningBound : patVal < runningBound)) runningBound = patVal
+    }
+    scanStartIdx = n - 4
+  }
+
+  // 2. PMG stacked pivots (if present)
+  if (setup.pmg && setup.pmg.isPMG && Array.isArray(setup.pmg.pivots)) {
+    for (var pi = 1; pi < setup.pmg.pivots.length; pi++) {
+      var pmgVal = Number(setup.pmg.pivots[pi])
+      var pmgTs = p2 ? p2.timestamp : setup.anchorTs
+      for (var bk = n - 3; bk >= Math.max(0, n - 40); bk--) {
+        var bVal = isLong ? Number(candles[bk].high) : Number(candles[bk].low)
+        if (isFinite(bVal) && Math.abs(bVal - pmgVal) < 0.005) {
+          pmgTs = candles[bk].timestamp
+          break
+        }
+      }
+      pushTarget(pmgVal, pmgTs)
+    }
+  }
+
+  // 3. Progressive untagged prior swing extremes on this timeframe
+  var minScanIdx = Math.max(0, n - 120)
+  for (var k = scanStartIdx; k >= minScanIdx; k--) {
+    var c = candles[k]
+    if (!c) continue
+    var val = isLong ? Number(c.high) : Number(c.low)
+    if (!isFinite(val)) continue
+    if (isLong ? (val > runningBound + 1e-6) : (val < runningBound - 1e-6)) {
+      runningBound = val
+      var hasLeft = k > 0 && candles[k - 1]
+      var leftVal = hasLeft ? (isLong ? Number(candles[k - 1].high) : Number(candles[k - 1].low)) : null
+      var isSwing = !hasLeft || !isFinite(leftVal) || (isLong ? val >= leftVal : val <= leftVal)
+      if (isSwing) {
+        pushTarget(val, c.timestamp)
+      }
+    }
+  }
+
+  // Sort strictly away from trigger and deduplicate within $0.01
+  raw.sort(function (a, b) {
+    return isLong ? (a.price - b.price) : (b.price - a.price)
+  })
+
+  var deduped = []
+  for (var di = 0; di < raw.length && deduped.length < limit; di++) {
+    var item = raw[di]
+    if (deduped.length > 0 && Math.abs(deduped[deduped.length - 1].price - item.price) < 0.01) {
+      continue
+    }
+    var idxNum = deduped.length + 1
+    deduped.push({
+      index: idxNum,
+      label: "T" + idxNum,
+      price: item.price,
+      anchorTs: item.anchorTs,
+      ohlcField: item.ohlcField
+    })
+  }
+  return deduped
+}
+
+// Compute automatic Trigger & Ratcheting [T1, T2] Target lines for a GridWindow cell on targetCellTf.
+// - Only active on 30, 60, 1D, 1W, 1M (returns [] for 1Y, 15, 5, 1, etc.)
+// - Cascades higher timeframes down (1M -> 1M/1W/1D/60/30, 1W -> 1W/1D/60/30, etc.)
+// - Draws ONLY once triggered; stays on for the full life of the active bar
+// - Max 2 target lines per timeframe (T1 and optional T2):
+//   * Once the bar's extreme hits L2 (or deeper Lk), Lk promotes to T1 and earlier hit targets drop off.
+//   * T1 stays drawn for the rest of the bar; T2 is shown only while live/close price is past T1.
+function computeTriggeredSetupLines(candlesByTf, liveQuote, targetCellTf) {
+  var tgtKey = String(targetCellTf || "")
+  if (!isSetupLineTimeframe(tgtKey)) return []
+  if (!candlesByTf || typeof candlesByTf !== "object") return []
+
+  var tgtRank = timeframeRank(tgtKey)
+  var lines = []
+
+  for (var i = 0; i < SETUP_LINE_TIMEFRAMES.length; i++) {
+    var tf = SETUP_LINE_TIMEFRAMES[i]
+    if (timeframeRank(tf) < tgtRank) continue
+
+    var tfCandles = candlesByTf[tf]
+    if (!isArrayLike(tfCandles) || tfCandles.length < 2) continue
+
+    var setup = detectStratSetupOnCandles(tf, tfCandles, liveQuote, { requireTriggered: true })
+    if (!setup || !setup.isTriggered || !isFinite(setup.triggerPrice)) continue
+
+    var tfLbl = setupTimeframeLabel(tf)
+    lines.push({
+      id: tf + ":trigger",
+      timeframe: tf,
+      sourceTf: tf,
+      kind: "trigger",
+      targetIndex: 0,
+      direction: setup.direction,
+      setupCode: setup.code,
+      price: setup.triggerPrice,
+      anchorTs: setup.anchorTs,
+      ohlcField: setup.ohlcField,
+      label: tfLbl + " " + setup.code + " TRIG"
+    })
+
+    var allTargets = resolveTimeframeSetupTargets(tf, tfCandles, setup)
+    if (allTargets.length === 0) continue
+
+    var closePx = isFinite(setup.closePrice) ? setup.closePrice : setup.triggerPrice
+    var barExtreme = setup.isLong
+      ? (isFinite(setup.barHigh) ? setup.barHigh : closePx)
+      : (isFinite(setup.barLow) ? setup.barLow : closePx)
+
+    var baseIdx = 0
+    for (var hi = 1; hi < allTargets.length; hi++) {
+      var hitTarget = setup.isLong
+        ? (barExtreme >= allTargets[hi].price)
+        : (barExtreme <= allTargets[hi].price)
+      if (hitTarget) {
+        baseIdx = hi
+      } else {
+        break
+      }
+    }
+
+    var t1Obj = allTargets[baseIdx]
+    lines.push({
+      id: tf + ":target:1",
+      timeframe: tf,
+      sourceTf: tf,
+      kind: "target",
+      targetIndex: 1,
+      direction: setup.direction,
+      setupCode: setup.code,
+      price: t1Obj.price,
+      anchorTs: t1Obj.anchorTs,
+      ohlcField: t1Obj.ohlcField,
+      label: tfLbl + " T1"
+    })
+
+    if (baseIdx + 1 < allTargets.length) {
+      var pastT1 = setup.isLong ? (closePx >= t1Obj.price) : (closePx <= t1Obj.price)
+      if (pastT1) {
+        var t2Obj = allTargets[baseIdx + 1]
+        lines.push({
+          id: tf + ":target:2",
+          timeframe: tf,
+          sourceTf: tf,
+          kind: "target",
+          targetIndex: 2,
+          direction: setup.direction,
+          setupCode: setup.code,
+          price: t2Obj.price,
+          anchorTs: t2Obj.anchorTs,
+          ohlcField: t2Obj.ohlcField,
+          label: tfLbl + " T2"
+        })
+      }
+    }
+  }
+
+  return lines
 }
 
 function stratInForce(sc) {
@@ -3728,7 +4278,7 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
 
 function stratRuleRationales() {
   return {
-    1: "Actionable Signals: Trades must strictly originate from recognized Strat combos (2-1-2, 2-2, 3-1-2, 1-3-2, PMG) on closed candles, avoiding inside bar consolidation chop.",
+    1: "Actionable Signals: Trades must strictly originate from recognized Strat setups (inside bar reversals/continuations, 2-2 reversals, 3-2 reversals, 1-bar/2-bar RevStrats, PMG, Kicker) on closed candles, avoiding inside bar consolidation chop.",
     2: "Create & Negate: Every setup must identify what higher-timeframe scenario it triggers if it works, and exactly where it is negated if it fails.",
     3: "Direction of Control: Trade in the direction where aggregated capital exerts control (Timeframe Continuity Polarity). Eliminates low-probability counter-trend traps.",
     4: "Magnitude & Targets: Structural pivots (prior highs/lows and broadening formation boundaries) provide non-negotiable liquidity targets with open room/magnitude before encountering opposing resistance.",
@@ -4528,117 +5078,43 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     r1Detail = "Partial Continuity (1D+" + setupLabel + " Override): " + r1Detail
   }
 
-  // 2. Actionable Signal on Setup TF (supports 30m when activeTimeframe === "30", 60m, or 1D)
+  // 2. Actionable Signal on Setup TF (supports 30m when activeTimeframe === "30", or 60m)
   var signalCandle = pSetup
-  var prevSignalBar = setupCandles.length >= 3 ? setupCandles[setupCandles.length - 3] : null
-  var signalShapeInfo = detectCandleShape(signalCandle, prevSignalBar)
+  var signalShapeInfo = detectCandleShape(signalCandle)
   var entryState = stratEntryState(barSetup, isLong)
-  var isFailed2 = (entryState.state === "FAILED_2_REVERSAL")
   var sc_signal = "-"
   var sc_p2_setup = "-"
-
-  var validSignal = false
-  var signalName = "-"
-  var invalidRevStratReason = null
-  if (isFailed2) {
-    validSignal = true
-    signalName = setupLabel + (isLong ? " Failed 2d Bullish Reversal" : " Failed 2u Bearish Reversal")
-  } else if (setupCandles.length >= 3) {
-    var p2_setup = setupCandles[setupCandles.length - 3]
-    var p3_setup = setupCandles.length >= 4 ? setupCandles[setupCandles.length - 4] : null
-    var p4_setup = setupCandles.length >= 5 ? setupCandles[setupCandles.length - 5] : null
-    var sc_prev = stratScenario(pSetup, p2_setup)
-    sc_p2_setup = (p2_setup && p3_setup) ? stratScenario(p2_setup, p3_setup) : "-"
-    var sc_p3_setup = (p3_setup && p4_setup) ? stratScenario(p3_setup, p4_setup) : "-"
-    sc_signal = sc_prev
-    if (sc_prev === "1") {
-      if (barSetup.scenario === "3") {
-        signalName = setupLabel + " 1-3 RevStrat " + (isLong ? "Up" : "Down")
-      } else if (sc_p2_setup === "3" && sc_p3_setup === "1") {
-        signalName = setupLabel + " 1-3-1-2 I-O-I " + (isLong ? "Up" : "Down")
-      } else if (sc_p2_setup === "3") {
-        signalName = setupLabel + " 3-1-2 " + (isLong ? "Up" : "Down")
-      } else {
-        signalName = setupLabel + " 2-1-2 " + (isLong ? "Up" : "Down")
-      }
-      validSignal = true
-    } else if ((sc_prev === "2d" && isLong) || (sc_prev === "2u" && !isLong)) {
-      if (sc_p2_setup === "1") {
-        signalName = setupLabel + " 1-2-2 RevStrat " + (isLong ? "Up" : "Down")
-      } else if (sc_p2_setup === "3") {
-        signalName = setupLabel + " 3-2-2 Reversal " + (isLong ? "Up" : "Down")
-      } else {
-        signalName = setupLabel + " 2-2 Reversal " + (isLong ? "Up" : "Down")
-      }
-      validSignal = true
-    } else if ((sc_prev === "2u" && isLong) || (sc_prev === "2d" && !isLong)) {
-      signalName = setupLabel + " 2-2 Continuation " + (isLong ? "Up" : "Down")
-      validSignal = true
-    } else if (sc_prev === "3") {
-      if (sc_p2_setup === "1") {
-        // Canonical TheStrat 1-3-2 RevStrat Rule (thestrat.ai/docs/1-3-2/):
-        // Outside bar (3) must close as a Hammer (Long) or Shooter (Short) representing round-trip rejection
-        var isRevHammer = isLong && signalShapeInfo && signalShapeInfo.isHammer
-        var isRevShooter = !isLong && signalShapeInfo && signalShapeInfo.isShooter
-        if (isRevHammer || isRevShooter) {
-          signalName = setupLabel + " 1-3-2 RevStrat " + (isLong ? "Up" : "Down")
-          validSignal = true
-        } else {
-          signalName = setupLabel + " 1-3-2 RevStrat " + (isLong ? "Up" : "Down")
-          validSignal = false
-          invalidRevStratReason = "Scenario 3 bar failed to close as " + (isLong ? "Hammer" : "Shooter") + " (rejection required for 1-3-2 RevStrat)"
-        }
-      } else {
-        signalName = setupLabel + " 3-2 " + (isLong ? "Up" : "Down")
-        validSignal = true
-      }
-    }
-  }
-  if (!validSignal && !invalidRevStratReason && daily.length >= 3) {
-    setupTf = "1D"
-    setupCandles = daily
-    cSetup = c1D
-    pSetup = p1D
-    signalCandle = p1D
-    var p2_1D = daily[daily.length - 3]
-    var sc_prev1D = stratScenario(p1D, p2_1D)
-    sc_signal = sc_prev1D
-    if (sc_prev1D === "1" || sc_prev1D === "2d" || sc_prev1D === "2u" || sc_prev1D === "3") {
-      signalName = "1D Strat Signal (" + sc_prev1D + ")"
-      validSignal = true
-    }
+  var p2_setup = setupCandles.length >= 3 ? setupCandles[setupCandles.length - 3] : null
+  var p3_setup = setupCandles.length >= 4 ? setupCandles[setupCandles.length - 4] : null
+  if (pSetup && p2_setup) {
+    sc_signal = stratScenario(pSetup, p2_setup)
+    sc_p2_setup = p3_setup ? stratScenario(p2_setup, p3_setup) : "-"
   }
 
-  var pmgInfo = detectPivotMachineGun(setupCandles, isLong)
-  var kickerInfo = detectKickerPattern(setupCandles, currentPrice)
-  if (kickerInfo.isKicker && kickerInfo.direction === direction && kickerInfo.gapType === "FULL") {
-    validSignal = true
-    signalName = setupLabel + " Kicker " + (isLong ? "Up" : "Down")
+  var detectedSetup = detectStratSetupOnCandles(setupTf, setupCandles, liveQuote, {
+    preferredDirection: isLong ? "LONG" : "SHORT",
+    requireTriggered: false
+  })
+  var validSignal = Boolean(detectedSetup && detectedSetup.valid)
+  var signalName = (detectedSetup && detectedSetup.name) ? detectedSetup.name : "-"
+  var invalidRevStratReason = (detectedSetup && detectedSetup.invalidReason) ? detectedSetup.invalidReason : null
+  if (!validSignal && invalidRevStratReason) {
+    signalName = setupLabel + " 1-3-2 RevStrat " + (isLong ? "Up" : "Down")
   }
-  if (!validSignal && pmgInfo.isPMG && signalCandle) {
-    var pmgTrig = pmgInfo.triggerPrice !== null ? pmgInfo.triggerPrice : (isLong ? Number(signalCandle.high) : Number(signalCandle.low))
-    var isPmgTriggered = isLong
-      ? ((currentPrice !== null && currentPrice >= pmgTrig) || (cSetup && Number(cSetup.high) >= pmgTrig))
-      : ((currentPrice !== null && currentPrice <= pmgTrig) || (cSetup && Number(cSetup.low) <= pmgTrig))
-    if (isPmgTriggered) {
-      validSignal = true
-      signalName = setupLabel + " PMG Reversal " + (isLong ? "Up" : "Down")
-    }
-  }
-  var tradeStyleInfo = classifyMomentumOrRetracement(setupCandles, isLong, isFailed2)
-  var isDoji3Continuation = (validSignal && sc_signal === "3" && sc_p2_setup !== "1" && signalShapeInfo.isDoji)
-  var r2Pass = validSignal && !isDoji3Continuation
+
+  var pmgInfo = (detectedSetup && detectedSetup.pmg) ? detectedSetup.pmg : detectPivotMachineGun(setupCandles, isLong)
+  var kickerInfo = (detectedSetup && detectedSetup.kicker && detectedSetup.kicker.isKicker) ? detectedSetup.kicker : detectKickerPattern(setupCandles, currentPrice)
+  var tradeStyleInfo = classifyMomentumOrRetracement(setupCandles, isLong, false)
+  var r2Pass = validSignal
   var r2Extras = []
   if (signalShapeInfo.shape) r2Extras.push(signalShapeInfo.shape)
   if (pmgInfo.isPMG) r2Extras.push("PMG: " + pmgInfo.count + " Stacked Pivots")
   if (kickerInfo.isKicker && kickerInfo.direction === direction) r2Extras.push(kickerInfo.label)
-  var r2Detail = isDoji3Continuation
-    ? "Doji 3 indecision bar — prefer 3-1-2 or 3-2-2 reversal over 3-2 continuation"
-    : (invalidRevStratReason
-      ? invalidRevStratReason
-      : (validSignal
-        ? (signalName + (r2Extras.length ? (" [" + r2Extras.join(" | ") + "]") : "") + " — " + tradeStyleInfo.label)
-        : "No actionable combo pattern"))
+  var r2Detail = invalidRevStratReason
+    ? invalidRevStratReason
+    : (validSignal
+      ? (signalName + (r2Extras.length ? (" [" + r2Extras.join(" | ") + "]") : "") + " — " + tradeStyleInfo.label)
+      : "No actionable combo pattern")
 
   // 3. Signal Candle Closed
   var r3Pass = signalCandle !== null
@@ -4714,10 +5190,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     stopLevels.wide = stopLevels.structural
   }
 
-  if (isFailed2 && cSetup) {
-    triggerPrice = Number(cSetup.open)
-    stopPrice = isLong ? Number(barSetup.low) : Number(barSetup.high)
-  } else if (signalCandle) {
+  if (signalCandle) {
     triggerPrice = isLong ? Number(signalCandle.high) : Number(signalCandle.low)
     stopPrice = isLong ? Number(signalCandle.low) : Number(signalCandle.high)
     // Per thestrat.ai/docs/hammer & shooter: anchor stop to entry bar extreme +/- $0.01, NEVER the hammer/shooter wick
@@ -4764,27 +5237,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var r5Pass = false
   var r5Detail = "No trigger available"
   if (triggerPrice !== null && currentPrice !== null) {
-    if (isFailed2) {
-      var setupHigh = (barSetup && barSetup.high !== null) ? barSetup.high : (cSetup ? Number(cSetup.high) : currentPrice)
-      var setupLow = (barSetup && barSetup.low !== null) ? barSetup.low : (cSetup ? Number(cSetup.low) : currentPrice)
-      if (isLong) {
-        var hasTriggeredF2Long = (currentPrice >= triggerPrice) || (setupHigh >= triggerPrice)
-        r5Pass = Boolean(hasTriggeredF2Long)
-        var deltaF2Long = currentPrice - triggerPrice
-        var f2SuffixLong = deltaF2Long >= 0 ? ("+$" + deltaF2Long.toFixed(2) + ") — In-Force") : ("-$" + Math.abs(deltaF2Long).toFixed(2) + " pullback) — In-Force")
-        r5Detail = r5Pass
-          ? ("Failed 2d Trigger (Reclaimed Open): $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + f2SuffixLong)
-          : ("Failed 2d Awaiting Open Reclaim: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " ($" + Math.abs(deltaF2Long).toFixed(2) + " below)")
-      } else {
-        var hasTriggeredF2Short = (currentPrice <= triggerPrice) || (setupLow <= triggerPrice)
-        r5Pass = Boolean(hasTriggeredF2Short)
-        var deltaF2Short = triggerPrice - currentPrice
-        var f2SuffixShort = deltaF2Short >= 0 ? ("-$" + deltaF2Short.toFixed(2) + ") — In-Force") : ("+$" + Math.abs(deltaF2Short).toFixed(2) + " pullback) — In-Force")
-        r5Detail = r5Pass
-          ? ("Failed 2u Trigger (Rejected Open): $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " (" + f2SuffixShort)
-          : ("Failed 2u Awaiting Open Rejection: $" + triggerPrice.toFixed(2) + " | Cur: $" + currentPrice.toFixed(2) + " ($" + Math.abs(deltaF2Short).toFixed(2) + " above)")
-      }
-    } else if (isLong) {
+    if (isLong) {
       var barH = (barSetup && barSetup.high !== null) ? barSetup.high : (cSetup ? Number(cSetup.high) : currentPrice)
       var hasTriggeredLong = (barH >= triggerPrice) || (currentPrice >= triggerPrice)
       r5Pass = Boolean(hasTriggeredLong)
@@ -4826,28 +5279,6 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var targetPrice = null
   var targetName = ""
   var targets = []
-
-  if (isFailed2 && pSetup) {
-    if (isLong && Number(pSetup.high) > currentPrice) {
-      targets.push({
-        name: setupLabel + " High (Outside Bar Trigger)",
-        price: Number(pSetup.high),
-        timeframe: setupTf,
-        dominoSignal: setupLabel + " Scenario 3 (Outside Bar)",
-        dominoScenario: "3",
-        isReversal: true
-      })
-    } else if (!isLong && Number(pSetup.low) < currentPrice) {
-      targets.push({
-        name: setupLabel + " Low (Outside Bar Trigger)",
-        price: Number(pSetup.low),
-        timeframe: setupTf,
-        dominoSignal: setupLabel + " Scenario 3 (Outside Bar)",
-        dominoScenario: "3",
-        isReversal: true
-      })
-    }
-  }
 
   // Inception entry baseline (accounts for opening gaps past prior trigger) + earlier closed 60m bars today
   var entryBaseline = null
@@ -4902,7 +5333,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
   var rawTargets = targets.slice()
 
   // 1. Setup timeframe pattern magnitude (T1)
-  if (!isFailed2 && patternMag && isFinite(patternMag.targetPrice) && (entryBaseline === null || (isLong ? patternMag.targetPrice > entryBaseline : patternMag.targetPrice < entryBaseline))) {
+  if (patternMag && isFinite(patternMag.targetPrice) && (entryBaseline === null || (isLong ? patternMag.targetPrice > entryBaseline : patternMag.targetPrice < entryBaseline))) {
     // If it's a continuation where p2 extreme has already been breached by the current bar into fresh highs, patternMag has completed
     var isContinuationCleared = false
     if (sc_signal === "1" && p2_setup && ((isLong && sc_p2_setup === "2u") || (!isLong && sc_p2_setup === "2d"))) {
@@ -5091,7 +5522,7 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
     }
   }
 
-  var isEntryBarStop = isFailed2 || isHammerStop || isShooterStop || (sc_signal === "3" && stopPrice === stopLevels.entryExtreme) || (selectedStopTier === "tightest" || selectedStopTier === "tight")
+  var isEntryBarStop = isHammerStop || isShooterStop || (sc_signal === "3" && stopPrice === stopLevels.entryExtreme) || (selectedStopTier === "tightest" || selectedStopTier === "tight")
   var isStoppedOut = false
   if (stopPrice !== null && currentPrice !== null) {
     if (isLong) {
@@ -5179,13 +5610,11 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
         ? (setupTf + " Entry Open (Tight Stop)")
         : (selectedStopTier === "fiftypct"
           ? ("50% Retracement Stop")
-          : (isFailed2
-            ? ("Failed " + (isLong ? "2d Low" : "2u High"))
-            : (isHammerStop
-              ? (setupTf + " Entry Low - $0.01 (Hammer Stop)")
-              : (isShooterStop
-                ? (setupTf + " Entry High + $0.01 (Shooter Stop)")
-                : (sc_signal === "3" && stopPrice === stopLevels.entryExtreme ? (setupTf + " Entry " + (isLong ? "Low" : "High") + " (3-Bar Capped)") : (setupTf + " Signal " + (isLong ? "Low" : "High"))))))))
+          : (isHammerStop
+            ? (setupTf + " Entry Low - $0.01 (Hammer Stop)")
+            : (isShooterStop
+              ? (setupTf + " Entry High + $0.01 (Shooter Stop)")
+              : (sc_signal === "3" && stopPrice === stopLevels.entryExtreme ? (setupTf + " Entry " + (isLong ? "Low" : "High") + " (3-Bar Capped)") : (setupTf + " Signal " + (isLong ? "Low" : "High")))))))
     var tierExtras = []
     if (stopLevels.tightest !== null && isFinite(stopLevels.tightest)) {
       tierExtras.push("Tightest: $" + stopLevels.tightest.toFixed(2))
@@ -5231,20 +5660,18 @@ function evaluateStratChecklist(symbol, hourlyCandles, dailyCandles, liveQuote, 
 
   // Canonical 11 Pre-Trade Questions (thestrat.ai/docs/trade-checklist/)
   // 1. Actionable Signals: recognized Strat combos on closed candles, avoiding inside bar consolidation chop
-  var q1Pass = Boolean(validSignal && r3Pass && entryState.passes && !motherbarProblem.isMotherbarProblem && !isDoji3Continuation)
-  var q1Detail = isDoji3Continuation
-    ? "Doji 3 indecision bar — prefer 3-1-2 or 3-2-2 reversal over 3-2 continuation"
-    : (motherbarProblem.isMotherbarProblem
-      ? motherbarProblem.detail
-      : (!r3Pass
-        ? "Signal candle still forming (awaiting close)"
-        : (!entryState.passes
-          ? entryState.detail
-          : (invalidRevStratReason
-            ? invalidRevStratReason
-            : (validSignal
-              ? (signalName + (r2Extras.length ? (" [" + r2Extras.join(" | ") + "]") : "") + (signalCandle ? (" [Closed " + Number(signalCandle.low).toFixed(2) + " - " + Number(signalCandle.high).toFixed(2) + "]") : ""))
-              : "No actionable combo pattern")))))
+  var q1Pass = Boolean(validSignal && r3Pass && entryState.passes && !motherbarProblem.isMotherbarProblem)
+  var q1Detail = motherbarProblem.isMotherbarProblem
+    ? motherbarProblem.detail
+    : (!r3Pass
+      ? "Signal candle still forming (awaiting close)"
+      : (!entryState.passes
+        ? entryState.detail
+        : (invalidRevStratReason
+          ? invalidRevStratReason
+          : (validSignal
+            ? (signalName + (r2Extras.length ? (" [" + r2Extras.join(" | ") + "]") : "") + (signalCandle ? (" [Closed " + Number(signalCandle.low).toFixed(2) + " - " + Number(signalCandle.high).toFixed(2) + "]") : ""))
+            : "No actionable combo pattern"))))
 
   // 2. Create & Negate: higher-timeframe scenario created if it works vs level of negation if it fails
   var q2Pass = Boolean(validSignal && stopPrice !== null && (targetPrice !== null || patternMag !== null))
@@ -5562,14 +5989,6 @@ function discordAlertPayload(chk, eventType) {
     fields.push({ name: "Structural Stop", value: "`" + stopStr + "`", inline: true })
     if (magDefStr !== "N/A") {
       fields.push({ name: "Magnitude & Defense", value: "`" + magDefStr + "`", inline: true })
-    }
-
-    if (chk.entryState && chk.entryState.state === "FAILED_2_REVERSAL") {
-      fields.push({
-        name: "Execution Mechanics (Failed 2 Reversal)",
-        value: chk.entryState.detail,
-        inline: false
-      })
     }
 
     // Domino Cascade Section
@@ -7567,7 +7986,7 @@ function buildScenarioContext(candles, quote, maxLookbackBars) {
 }
 
 var ATOMIC_BAR_PREFIX_REGEX = /^(f2u|f2d|f2|2u|2d|1|2|3|inside|outside)?(.*)$/;
-var ATOMIC_BAR_MODIFIER_REGEX = /^(green|red|hammer|shooter|doji|engulfing|inforce|if|[grhsde])/;
+var ATOMIC_BAR_MODIFIER_REGEX = /^(green|red|hammer|shooter|inforce|if|[grhs])/;
 
 function parseAtomicBarStep(rawStep) {
   if (!rawStep || typeof rawStep !== "string") return null;
@@ -7591,8 +8010,6 @@ function parseAtomicBarStep(rawStep) {
     reqRed: false,
     reqHammer: false,
     reqShooter: false,
-    reqDoji: false,
-    reqEngulfing: false,
     reqInForce: false
   };
 
@@ -7606,8 +8023,6 @@ function parseAtomicBarStep(rawStep) {
     else if (mod === "r" || mod === "red") spec.reqRed = true;
     else if (mod === "h" || mod === "hammer") spec.reqHammer = true;
     else if (mod === "s" || mod === "shooter") spec.reqShooter = true;
-    else if (mod === "d" || mod === "doji") spec.reqDoji = true;
-    else if (mod === "e" || mod === "engulfing") spec.reqEngulfing = true;
     else if (mod === "if" || mod === "inforce") spec.reqInForce = true;
     rest = rest.substring(mod.length);
   }
@@ -7643,8 +8058,6 @@ function matchBarDescriptor(bar, spec) {
   if (matched && spec.reqInForce && !bar.inForce) matched = false;
   if (matched && spec.reqHammer && !(bar.shapeInfo && bar.shapeInfo.isHammer)) matched = false;
   if (matched && spec.reqShooter && !(bar.shapeInfo && bar.shapeInfo.isShooter)) matched = false;
-  if (matched && spec.reqDoji && !(bar.shapeInfo && bar.shapeInfo.isDoji)) matched = false;
-  if (matched && spec.reqEngulfing && !(bar.shapeInfo && bar.shapeInfo.isEngulfing)) matched = false;
 
   return spec.negated ? !matched : matched;
 }
@@ -8449,6 +8862,13 @@ if (typeof module !== "undefined") {
     detectCandleShape: detectCandleShape,
     detectPivotMachineGun: detectPivotMachineGun,
     detectKickerPattern: detectKickerPattern,
+    SETUP_LINE_TIMEFRAMES: SETUP_LINE_TIMEFRAMES,
+    isSetupLineTimeframe: isSetupLineTimeframe,
+    setupTimeframeLabel: setupTimeframeLabel,
+    setupLineColor: setupLineColor,
+    detectStratSetupOnCandles: detectStratSetupOnCandles,
+    resolveTimeframeSetupTargets: resolveTimeframeSetupTargets,
+    computeTriggeredSetupLines: computeTriggeredSetupLines,
     detectMotherbarProblem: detectMotherbarProblem,
     classifyMomentumOrRetracement: classifyMomentumOrRetracement,
     resolvePatternMagnitude: resolvePatternMagnitude,
@@ -8571,6 +8991,11 @@ if (typeof module !== "undefined") {
     stratSpread: stratSpread,
     MIN_BAR_COUNT: MIN_BAR_COUNT,
     DEFAULT_ANALYSIS_BAR_COUNT: DEFAULT_ANALYSIS_BAR_COUNT,
+    DEFAULT_RIGHT_OFFSET_BARS: DEFAULT_RIGHT_OFFSET_BARS,
+    defaultRightOffsetBars: defaultRightOffsetBars,
+    minVisibleChartBars: minVisibleChartBars,
+    maxChartViewStart: maxChartViewStart,
+    resolveHorizontalViewport: resolveHorizontalViewport,
     clampBarCount: clampBarCount,
     PRICE_SCALE_MIN_LOG_SPAN: PRICE_SCALE_MIN_LOG_SPAN,
     PRICE_SCALE_MAX_LOG_SPAN: PRICE_SCALE_MAX_LOG_SPAN,

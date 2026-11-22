@@ -509,7 +509,7 @@ test("candlestick chart supports 30m timeframe, followLatest auto-scroll, and dr
 
   assert.match(cell, /model:\s*\["30",\s*"60",\s*"1D",\s*"1W",\s*"1M",\s*"1Y"\]/)
   assert.match(chart, /property bool followLatest:\s*true/)
-  assert.match(chart, /var vStart = root\.followLatest \? maxStart : Math\.max\(0, Math\.min\(maxStart, root\.viewStart\)\)/)
+  assert.match(chart, /Model\.resolveHorizontalViewport\(total,\s*root\.viewCount,\s*defaultCount,\s*root\.viewStart,\s*root\.followLatest,\s*root\.rightOffsetBars\)/)
   assert.match(chart, /property var priceLevels:\s*\[\]/)
   assert.match(chart, /function resolveLevelEndpoints\(lvl,\s*g\)/)
   assert.match(chart, /Model\.resolveLevelAnchorIndex\(lvl,\s*all,\s*root\.rangeKey\)/)
@@ -838,7 +838,7 @@ test("charts support 1-bar minimum zoom and interactive price scale (cursor, dra
   const sector = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
 
   // Minimum bars = Model.MIN_BAR_COUNT (1) across chart, GridWindow, and SectorAnalysisWindow (no candle width cap)
-  assert.match(chart, /var minBars = Model\.MIN_BAR_COUNT;/)
+  assert.match(chart, /Math\.max\(Model\.MIN_BAR_COUNT,/)
   assert.match(chart, /root\.configuredZoom >= Model\.MIN_BAR_COUNT/)
   assert.match(chart, /var candleW = slotW >= 7 \? Math\.max\(1, slotW - 4\)/)
   assert.match(grid, /root\.cellZooms\[index\] >= Model\.MIN_BAR_COUNT/)
@@ -911,4 +911,43 @@ test("real-time chart reliability: cache prune broadcast, onQuotesUpdated sync, 
   assert.match(stream, /staleTimeoutMs:\s*45000/)
   assert.match(stream, /startWatchdog\(\)/)
   assert.match(stream, /Promise\.resolve\(handleCommand\(cmd\)\)\.catch\(/)
+})
+
+test("GridWindow automatic Strat setup lines toggle, solid rendering, and strict GridWindow-only scoping", () => {
+  const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+  const sector = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
+  const detail = fs.readFileSync(source("FinanceDetailView.qml"), "utf8")
+
+  // GridWindow toggle defaults ON, sits beside BF chip, persists setupLines, hydrates 1W/1M, and wires all 8 GridCells
+  assert.match(grid, /property bool showSetupLines:\s*true/)
+  assert.match(grid, /id:\s*setupLinesChip[\s\S]*?text:\s*"SETUPS " \+ \(root\.showSetupLines \? "\[ON\]" : "\[OFF\]"\)/)
+  assert.match(grid, /setupLines:\s*root\.showSetupLines/)
+  assert.match(grid, /function getSetupLines\(sym, targetTf\)/)
+  assert.match(grid, /Model\.computeTriggeredSetupLines\(/)
+  assert.equal((grid.match(/setupLines:\s*root\.showSetupLines \? root\.getSetupLines\(/g) || []).length, 8)
+
+  // Panel restores gridSync.setupLines (default true)
+  assert.match(panel, /showSetupLines:\s*root\.gridSync \? root\.gridSync\.setupLines !== false : true/)
+
+  // GridCell forwards setupLines; SectorAnalysisWindow and FinanceDetailView do NOT pass setupLines
+  assert.match(cell, /property var setupLines:\s*\[\]/)
+  assert.match(cell, /setupLines:\s*root\.setupLines/)
+  assert.doesNotMatch(sector, /setupLines\s*:/)
+  assert.doesNotMatch(detail, /setupLines\s*:/)
+
+  // CandlestickChart renders solid setupLines with Model.setupLineColor (no dash pattern)
+  assert.match(chart, /property var setupLines:\s*\[\]/)
+  assert.match(chart, /onSetupLinesChanged:\s*refreshGeometry\(\)/)
+  assert.match(chart, /Model\.setupLineColor\(sLine\.timeframe, sLine\.kind, slIsLight\)/)
+  assert.match(chart, /ctx\.setLineDash\(\[\]\)/)
+
+  // CandlestickChart supports TradingView-style right-side whitespace & unrestricted left/right horizontal panning
+  assert.match(chart, /property int rightOffsetBars:\s*-1/)
+  assert.match(chart, /Model\.resolveHorizontalViewport\(/)
+  assert.match(chart, /var slotW = innerW \/ Math\.max\(1, vCount\);/)
+  assert.match(chart, /if \(g\.maxStart > 0\)/)
+  assert.match(chart, /if \(idx >= g\.candles\.length\)/)
 })
