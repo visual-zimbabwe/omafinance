@@ -50,7 +50,6 @@ FloatingWindow {
     property var quotes: ({})
     property var chartCache: ({})
     property var chartFetchedAt: ({})
-    property var symbolLevels: ({})
     property var pendingFetches: []
     property var pendingQuoteChunks: []
     property bool fetching: false
@@ -65,7 +64,6 @@ FloatingWindow {
 
     signal alertDispatchRequested(var alert)
     signal alertsMuteToggleRequested
-    signal symbolLevelsChangedExternally(string sym, var nextLevels)
     signal quotesReceived(var incomingQuotes)
     signal chartDataReceived(string key, var candles, var quoteEnriched)
     signal symbolDataUpdated(string sym)
@@ -1792,7 +1790,6 @@ FloatingWindow {
 
                             quote: (tileWrapper.dataRev >= 0) ? (root.quotes[tileWrapper.symbol] || null) : null
                             candles: (tileWrapper.dataRev >= 0) ? root.getCandles(tileWrapper.symbol, root.timeframe) : []
-                            priceLevels: root.symbolLevels[tileWrapper.symbol] || []
 
                             onFocusRequested: function (idx) {
                                 root.activeTileIndex = idx;

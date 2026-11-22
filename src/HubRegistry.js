@@ -28,6 +28,10 @@ function register(panel) {
             panel.streamYahooConnected = Boolean(_leader.streamYahooConnected);
             panel.streamCoinbaseConnected = Boolean(_leader.streamCoinbaseConnected);
             panel.streamHyperliquidConnected = Boolean(_leader.streamHyperliquidConnected);
+            panel.activeSetupAlertCount = Number(_leader.activeSetupAlertCount) || 0;
+            panel.activeSetupInForceCount = Number(_leader.activeSetupInForceCount) || 0;
+            if (_leader.alertScannerStatus)
+                panel.alertScannerStatus = _leader.alertScannerStatus;
         } catch (e) {}
     }
     return isLeader;
@@ -123,6 +127,20 @@ function broadcastStreamStatus(sourcePanel, ready, connected, yahoo, coinbase, h
             p.streamYahooConnected = Boolean(yahoo);
             p.streamCoinbaseConnected = Boolean(coinbase);
             p.streamHyperliquidConnected = Boolean(hl);
+        } catch (e) {}
+    }
+}
+
+function broadcastAlertMeta(sourcePanel, totalCount, inForceCount, status) {
+    for (var i = 0; i < _panels.length; i++) {
+        var p = _panels[i];
+        if (!p || p === sourcePanel)
+            continue;
+        try {
+            p.activeSetupAlertCount = Number(totalCount) || 0;
+            p.activeSetupInForceCount = Number(inForceCount) || 0;
+            if (status)
+                p.alertScannerStatus = status;
         } catch (e) {}
     }
 }

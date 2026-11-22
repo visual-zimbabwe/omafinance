@@ -215,3 +215,134 @@ test("OffThreadCandleCache reads legacy v1 format, writes compact v2, and reload
     fs.rmSync(tmpDir, { recursive: true, force: true })
   }
 })
+
+test("SetupAlertScanner seeds on hydration without firing, fires once on live RTH break, tracks pullback In-Force, and lazy-emits snapshots only when viewActive", async () => {
+  const openRth = new Date("2026-07-15T15:10:00Z") // Wed 11:10 AM EDT
+  const bar60Ts = Date.UTC(2026, 6, 15, 14, 30) / 1000
+  const bar30Ts = Date.UTC(2026, 6, 15, 15, 0) / 1000
+  const dayTs = Date.UTC(2026, 6, 15, 13, 30) / 1000
+
+  const mockCharts = {
+    // 60m already triggered 2d-1-2u on startup (should seed WITHOUT firing)
+    "NVDA_60": {
+      symbol: "NVDA",
+      candles: [
+        { timestamp: bar60Ts - 10800, open: 105, high: 106, low: 102, close: 103 },
+        { timestamp: bar60Ts - 7200, open: 103, high: 104, low: 99, close: 100 },
+        { timestamp: bar60Ts - 3600, open: 100.5, high: 102.5, low: 100, close: 102 },
+        { timestamp: bar60Ts, open: 102.1, high: 103.0, low: 102.0, close: 102.8 }
+      ]
+    },
+    // 30m currently inside bar (1) waiting to break above 103.50 (2d-1-2u)
+    "NVDA_30": {
+      symbol: "NVDA",
+      candles: [
+        { timestamp: bar30Ts - 5400, open: 105, high: 106, low: 103, close: 104 },
+        { timestamp: bar30Ts - 3600, open: 104, high: 104.5, low: 101, close: 101.5 },
+        { timestamp: bar30Ts - 1800, open: 102, high: 103.5, low: 101.8, close: 103.0 },
+        { timestamp: bar30Ts, open: 102.8, high: 103.2, low: 102.6, close: 102.8 }
+      ]
+    },
+    "NVDA_1D": {
+      symbol: "NVDA",
+      candles: [
+        { timestamp: Date.UTC(2026, 4, 15, 13, 30) / 1000, open: 90, high: 95, low: 88, close: 94 },
+        { timestamp: Date.UTC(2026, 5, 15, 13, 30) / 1000, open: 94, high: 100, low: 93, close: 99 },
+        { timestamp: Date.UTC(2026, 6, 14, 13, 30) / 1000, open: 100, high: 105, low: 99, close: 102 },
+        { timestamp: dayTs, open: 102, high: 103.2, low: 101.5, close: 102.8 }
+      ]
+    }
+  }
+
+  const triggered = []
+  const snapshots = []
+  const metas = []
+
+  const scanner = new Stream.SetupAlertScanner({
+    fetchChart: async (sym, tf) => mockCharts[`${sym}_${tf}`] || null,
+    resolveHoldings: async (sym) => {
+      if (sym === "SMH") return { symbol: "SMH", holdings: [{ symbol: "NVDA", pctVal: 20 }] }
+      if (sym === "XLK") return { symbol: "XLK", holdings: [{ symbol: "NVDA", pctVal: 18 }] }
+      return { symbol: sym, holdings: [] }
+    },
+    now: () => openRth,
+    snapshotThrottleMs: 10,
+    onTrigger: (ev) => triggered.push(ev),
+    onSnapshot: (snap) => snapshots.push(snap),
+    onMeta: (m) => metas.push(m)
+  })
+
+  try {
+    await scanner.setConfig(["SMH", "XLK"], {}, true)
+    // Wait briefly for async hydration jobs to finish
+    await new Promise(r => setTimeout(r, 30))
+
+    // 1. Seeded 60m setup must NOT fire on startup, and closed view receives 0 snapshots
+    assert.equal(triggered.length, 0)
+    assert.equal(snapshots.length, 0)
+    assert.ok(metas.length > 0)
+    assert.equal(scanner.collectAllItems().filter(i => i.timeframe === "60").length, 1)
+    assert.deepEqual(scanner.collectAllItems()[0].baskets, ["SMH", "XLK"])
+
+    // 2. Live tick breaks 30m trigger (103.50 -> 103.65): fires ONCE even though NVDA is in both SMH & XLK
+    scanner.onTick({ symbol: "NVDA", price: 103.65, regularPrice: 103.65, session: "regular", timestamp: bar30Ts + 600 })
+    assert.equal(triggered.length, 1)
+    assert.equal(triggered[0].symbol, "NVDA")
+    assert.equal(triggered[0].timeframe, "30")
+    assert.equal(triggered[0].setupGroup, "2-1-2 Reversal")
+    assert.equal(triggered[0].inForce, true)
+    assert.deepEqual(triggered[0].baskets, ["SMH", "XLK"])
+
+    // 3. Subsequent ticks above trigger do NOT re-fire
+    scanner.onTick({ symbol: "NVDA", price: 103.9, regularPrice: 103.9, session: "regular", timestamp: bar30Ts + 605 })
+    assert.equal(triggered.length, 1)
+
+    // 4. Opening AlertsWindow immediately emits snapshot; pullback flips inForce to false without re-firing
+    scanner.setViewActive(true)
+    assert.equal(snapshots.length, 1)
+    const snap30 = snapshots[0].items.find(i => i.timeframe === "30")
+    assert.equal(snap30.inForce, true)
+
+    scanner.onTick({ symbol: "NVDA", price: 103.1, regularPrice: 103.1, session: "regular", timestamp: bar30Ts + 610 })
+    assert.equal(triggered.length, 1)
+    await new Promise(r => setTimeout(r, 30))
+    const latestSnap30 = snapshots[snapshots.length - 1].items.find(i => i.timeframe === "30")
+    assert.equal(latestSnap30.inForce, false)
+
+    // 5. After-hours equity break updates snapshot without firing; crypto fires 24/7
+    const weekendDate = new Date("2026-07-18T15:10:00Z")
+    const weekendTriggers = []
+    const cryptoTs = Date.UTC(2026, 6, 18, 15, 0) / 1000
+    const cryptoScanner = new Stream.SetupAlertScanner({
+      fetchChart: async (sym, tf) => {
+        if (tf === "30") {
+          return {
+            symbol: sym,
+            candles: [
+              { timestamp: cryptoTs - 5400, open: 105, high: 106, low: 103, close: 104 },
+              { timestamp: cryptoTs - 3600, open: 104, high: 104.5, low: 101, close: 101.5 },
+              { timestamp: cryptoTs - 1800, open: 102, high: 103.5, low: 101.8, close: 103.0 },
+              { timestamp: cryptoTs, open: 102.8, high: 103.2, low: 102.6, close: 102.8 }
+            ]
+          }
+        }
+        return null
+      },
+      resolveHoldings: async () => ({ holdings: [] }),
+      now: () => weekendDate,
+      onTrigger: (ev) => weekendTriggers.push(ev)
+    })
+    try {
+      await cryptoScanner.setConfig(["NVDA", "BTC-USD"], {}, true)
+      await new Promise(r => setTimeout(r, 30))
+      cryptoScanner.onTick({ symbol: "NVDA", price: 104.0, regularPrice: 104.0, session: "regular", timestamp: cryptoTs + 60 })
+      cryptoScanner.onTick({ symbol: "BTC-USD", price: 104.0, regularPrice: 104.0, session: "live", timestamp: cryptoTs + 60 })
+      assert.equal(weekendTriggers.length, 1)
+      assert.equal(weekendTriggers[0].symbol, "BTC-USD")
+    } finally {
+      cryptoScanner.dispose()
+    }
+  } finally {
+    scanner.dispose()
+  }
+})

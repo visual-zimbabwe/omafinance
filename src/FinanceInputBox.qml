@@ -44,6 +44,11 @@ FinanceSurface {
         textInput.text = "";
     }
 
+    function focusInput() {
+        textInput.forceActiveFocus();
+        textInput.selectAll();
+    }
+
     onValueChanged: {
         if (!textInput.activeFocus && textInput.text !== root.value) {
             textInput.text = root.value;

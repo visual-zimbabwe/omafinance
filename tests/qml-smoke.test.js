@@ -18,7 +18,7 @@ const qmlFiles = [
   "GridSplitter.qml",
   "GridCell.qml",
   "GridWindow.qml",
-  "FinanceAlertsView.qml",
+  "AlertsWindow.qml",
   "SectorAnalysisWindow.qml",
   "BackLink.qml",
   "FtfcStrip.qml",
@@ -447,13 +447,14 @@ test("strat checklist UI, badge, popup, and checklist-driven strat alerts are co
   const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
   const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
   const panel = fs.readFileSync(source("Panel.qml"), "utf8")
-  const alertsView = fs.readFileSync(source("FinanceAlertsView.qml"), "utf8")
+  const alertsWin = fs.readFileSync(source("AlertsWindow.qml"), "utf8")
 
   assert.equal(fs.existsSync(source("StratChecklistPopup.qml")), false)
+  assert.equal(fs.existsSync(source("FinanceAlertsView.qml")), false)
   assert.doesNotMatch(cell, /stratChecklist|isExecutionTimeframeCell|stratBadgeText|cellChecklistPopup|stratTradeableDetected|hideStratBadge/)
   assert.doesNotMatch(grid, /masterStratChecklist|notifyStratTradeable|evaluateStratAlertTransition|discordAlertPayload|signalStates/)
   assert.doesNotMatch(panel, /evaluateStratChecklist|evaluateStratAlertTransition|discordAlertPayload|triggerWatchlistStratScan|armedWatchlistSetups|signalStates/)
-  assert.doesNotMatch(alertsView, /Watchlist Strat Radar|armedWatchlistSetups/)
+  assert.doesNotMatch(alertsWin, /Watchlist Strat Radar|armedWatchlistSetups/)
   assert.match(grid, /alertDispatchRequested/)
   assert.doesNotMatch(grid, /notify-send/)
 })
@@ -462,12 +463,13 @@ test("all alert delivery goes through Panel.dispatchAlert and honours mute", () 
   const panel = fs.readFileSync(source("Panel.qml"), "utf8")
   const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
   const bar = fs.readFileSync(source("BarWidget.qml"), "utf8")
-  const alertsView = fs.readFileSync(source("FinanceAlertsView.qml"), "utf8")
+  const alertsWin = fs.readFileSync(source("AlertsWindow.qml"), "utf8")
 
   const dispatch = panel.match(/function dispatchAlert\(alert\) \{[\s\S]*?\n    \}\n/)
   assert.ok(dispatch, "dispatchAlert exists")
   assert.match(dispatch[0], /Model\.isAlertsMuted\(root\.alertsMutedUntil/)
   assert.match(dispatch[0], /if \(muted\)\s*return;[\s\S]*notify-send[\s\S]*pw-play[\s\S]*curl/)
+  assert.match(dispatch[0], /root\.openAlertsWindow\(true\)/)
   // notify-send / pw-play / Discord curl appear only inside dispatchAlert
   assert.equal((panel.match(/notify-send/g) || []).length, 1)
   assert.equal((panel.match(/"pw-play"/g) || []).length, 1)
@@ -477,7 +479,7 @@ test("all alert delivery goes through Panel.dispatchAlert and honours mute", () 
   assert.doesNotMatch(grid, /pw-play|webhooks\//)
   assert.match(grid, /ALERTS /)
   assert.match(bar, /Qt\.RightButton[\s\S]*toggleAlertsMute/)
-  assert.match(alertsView, /controller\.setAlertsMute\(modelData\.mode\)/)
+  assert.match(alertsWin, /root\.alertsMuteModeRequested\(modelData\.mode\)/)
 })
 
 test("candlestick chart renders extended-hours price line and right-scale badge when session is outside regular hours", () => {
@@ -494,28 +496,22 @@ test("candlestick chart renders extended-hours price line and right-scale badge 
   assert.match(detail, /extendedPrice:\s*\(controller\.sessionQuote && controller\.sessionQuote\.hasExtended && controller\.sessionQuote\.session !== "regular" && controller\.sessionQuote\.session !== "live"\) \? controller\.sessionQuote\.extendedPrice : null/)
 })
 
-test("candlestick chart supports 30m timeframe, followLatest auto-scroll, and draggable trigger/target price levels with custom text and price", () => {
+test("candlestick chart supports 30m timeframe, followLatest auto-scroll, and has manual price level drawing removed", () => {
   const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
   const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
   const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const sector = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
 
   assert.match(cell, /model:\s*\["30",\s*"60",\s*"1D",\s*"1W",\s*"1M",\s*"1Y"\]/)
   assert.match(chart, /property bool followLatest:\s*true/)
   assert.match(chart, /Model\.resolveHorizontalViewport\(total,\s*root\.viewCount,\s*defaultCount,\s*root\.viewStart,\s*root\.followLatest,\s*root\.rightOffsetBars\)/)
-  assert.match(chart, /property var priceLevels:\s*\[\]/)
-  assert.match(chart, /function resolveLevelEndpoints\(lvl,\s*g\)/)
-  assert.match(chart, /Model\.resolveLevelAnchorIndex\(lvl,\s*all,\s*root\.rangeKey\)/)
-  assert.match(chart, /function hitTestLevel\(px,\s*py\)/)
-  assert.match(chart, /function startLevelEdit\(index\)/)
-  assert.match(chart, /function commitLevelEdit\(\)/)
-  assert.match(chart, /id:\s*levelEditOverlay/)
-  assert.match(chart, /id:\s*levelTextInput/)
-  assert.match(chart, /customTxt \+ " · " \+ priceStr/)
-  assert.match(cell, /readonly property bool editingLevel:\s*chart\.editingLevel/)
-  assert.match(cell, /signal priceLevelsModified\(string sym,\s*var nextLevels\)/)
-  assert.match(grid, /property var symbolLevels:\s*\(\{\}\)/)
-  assert.match(grid, /function updateSymbolLevels\(sym,\s*nextLevels\)/)
-  assert.match(grid, /activeCell\.editingLevel/)
+  // Setup line anchoring remains intact
+  assert.match(chart, /Model\.resolveLevelAnchorIndex\(sLine,\s*g\.allCandles,\s*root\.rangeKey\)/)
+  // Manual drawing & editing completely removed
+  assert.doesNotMatch(chart, /property var priceLevels|id:\s*levelEditOverlay|function hitTestLevel|function startLevelEdit|toggleEditingLevelAlert/)
+  assert.doesNotMatch(cell, /priceLevels|editingLevel|priceLevelsModified/)
+  assert.doesNotMatch(grid, /symbolLevels|updateSymbolLevels|evaluateActivePriceLevelAlerts|editingLevel/)
+  assert.doesNotMatch(sector, /symbolLevels|priceLevels/)
 })
 
 test("grid window and panel persist cellTimeframes across state and layouts and support multi-timeframe bar replay", () => {
@@ -576,18 +572,58 @@ test("candlestick chart renders broadening formation lines with white #FFFFFF an
   assert.match(chart, /var anchorMode = isThirtyMinChart \? "day" : \(isHourlyChart \? "week" : \(isWeeklyChart \? "quarter" : \(isMonthlyChart \? "year" : "month"\)\)\)/)
 })
 
-test("alert engine integrates RTH session gating, price level alerts, and FinanceAlertsView", () => {
-  const win = fs.readFileSync(source("GridWindow.qml"), "utf8")
-  const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
+test("setup line alert engine wires off-thread scanner, Thinkorswim-style popout AlertsWindow, burst coalescer, and auto-open", () => {
   const panel = fs.readFileSync(source("Panel.qml"), "utf8")
-  const alertsView = fs.readFileSync(source("FinanceAlertsView.qml"), "utf8")
+  const alertsWin = fs.readFileSync(source("AlertsWindow.qml"), "utf8")
+  const stream = fs.readFileSync(path.join(root, "scripts", "market-stream.js"), "utf8")
 
-  assert.match(win, /Model\.evaluatePriceLevelAlerts/)
-  assert.match(chart, /function toggleEditingLevelAlert\(\)/)
-  assert.match(chart, /function cycleEditingLevelCondition\(\)/)
-  assert.match(panel, /FinanceAlertsView\s*\{/)
-  assert.match(panel, /function evaluateWatchlistPriceAlerts\(incomingQuotes\)/)
-  assert.match(alertsView, /Alert Book/)
+  // Manual price crossover alerts completely removed
+  assert.doesNotMatch(panel, /FinanceAlertsView|createPriceAlert|evaluateWatchlistPriceAlerts|symbolLevels|armedAlertSymbols/)
+
+  // Off-thread scanner wired in market-stream.js with uiSymbols vs alertSymbols isolation
+  assert.match(stream, /class SetupAlertScanner/)
+  assert.match(stream, /op === "setAlertConfig"/)
+  assert.match(stream, /op === "setAlertViewActive"/)
+  assert.match(stream, /if \(alertSymbols\.has\(tick\.symbol\)\)/)
+  assert.match(stream, /if \(uiSymbols\.has\(tick\.symbol\)\)/)
+
+  // Panel hub wires alertSources, burst coalescer, and popout AlertsWindow with auto-open
+  assert.match(panel, /property var alertSources:\s*Model\.defaultAlertSources\(\)/)
+  assert.match(panel, /id:\s*alertBurstTimer[\s\S]*?interval:\s*1500/)
+  assert.match(panel, /msg\.type === "setupAlertTriggered"/)
+  assert.match(panel, /msg\.type === "alertSnapshot"/)
+  assert.match(panel, /function openAlertsWindow\(isAutoOpen\)/)
+  assert.match(panel, /AlertsWindow\s*\{/)
+
+  // Thinkorswim-inspired popout AlertsWindow layout & columns
+  assert.match(alertsWin, /FloatingWindow\s*\{/)
+  assert.match(alertsWin, /title:\s*"Omafinance Alerts"/)
+  assert.match(alertsWin, /Model\.buildGroupedAlertWatchlist\(/)
+  assert.match(alertsWin, /text:\s*"TICKER"/)
+  assert.match(alertsWin, /text:\s*"IN-FORCE"/)
+  assert.match(alertsWin, /\["30",\s*"60",\s*"1D",\s*"1W",\s*"1M"\]/)
+  assert.match(alertsWin, /"✓"/)
+  assert.match(alertsWin, /quickSources:\s*\["@MARKET",\s*"SMH",\s*"XLK",\s*"@ENERGY"\]/)
+  assert.match(alertsWin, /root\.openGridRequested\(tickerRow\.item\.symbol\)/)
+
+  // Execution details tooltip clears reliably on exit, header hover, empty space, scroll, hide, and live model rebuilds
+  assert.match(alertsWin, /property string hoveredRowId:\s*""/)
+  assert.match(alertsWin, /function clearRowHover\(rowId\)/)
+  assert.match(alertsWin, /function syncHoveredRow\(\)/)
+  assert.match(alertsWin, /HoverHandler\s*\{\s*id:\s*listAreaHover/)
+  assert.match(alertsWin, /id:\s*rowTooltip[\s\S]*?visible:\s*root\.visible && listAreaHover\.hovered && root\.hoveredRowItem !== null/)
+  assert.match(alertsWin, /onModelChanged:\s*\{[\s\S]*?root\.syncHoveredRow/)
+  assert.doesNotMatch(alertsWin, /root\.hoveredRowItem === tickerRow\.item/)
+  assert.match(alertsWin, /typeof root\.startSystemMove === "function"[\s\S]*?root\.startSystemMove\(\)/)
+  assert.match(alertsWin, /property var sortSpecs:/)
+  assert.match(alertsWin, /Model\.applyAlertSortClick\(root\.sortSpecs,\s*key\)/)
+  assert.match(alertsWin, /Model\.toggleAlertSortLock\(root\.sortSpecs,\s*key\)/)
+  assert.match(alertsWin, /id:\s*sortBar/)
+  assert.match(alertsWin, /id:\s*lockActiveSortBtn/)
+  assert.match(alertsWin, /mouse\.button === Qt\.RightButton/)
+  assert.match(alertsWin, /root\.toggleSortColumn\("ticker",\s*isLock\)/)
+  assert.match(alertsWin, /root\.toggleSortColumn\("inForce",\s*isLock\)/)
+  assert.match(alertsWin, /root\.toggleSortColumn\(tfHeaderCell\.modelData,\s*isLock\)/)
 })
 
 test("grid window supports F fullscreen toggle, Tab/Backtab timeframe cycling in 1x1, chart double-click, and transient 1x1 persistence protection", () => {
@@ -656,7 +692,7 @@ test("shared feedback primitives provide interactive, loading, status, empty-sta
   const surface = fs.readFileSync(source("FinanceSurface.qml"), "utf8")
   const listView = fs.readFileSync(source("FinanceListView.qml"), "utf8")
   const layoutsView = fs.readFileSync(source("FinanceLayoutsView.qml"), "utf8")
-  const alertsView = fs.readFileSync(source("FinanceAlertsView.qml"), "utf8")
+  const alertsWin = fs.readFileSync(source("AlertsWindow.qml"), "utf8")
   const gridWin = fs.readFileSync(source("GridWindow.qml"), "utf8")
   const sectorWin = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
 
@@ -672,7 +708,9 @@ test("shared feedback primitives provide interactive, loading, status, empty-sta
   assert.match(surface, /Behavior on border\.color/)
   assert.match(listView, /FinanceStatusBanner\s*\{/)
   assert.match(layoutsView, /FinanceStatusBanner\s*\{/)
-  assert.match(alertsView, /FinanceStatusBanner\s*\{/)
+  assert.match(alertsWin, /FinanceStatusBanner\s*\{/)
+  assert.match(alertsWin, /FinanceChipButton\s*\{/)
+  assert.match(alertsWin, /FinanceLoader\s*\{/)
   assert.match(gridWin, /FinanceChipButton\s*\{/)
   assert.match(gridWin, /FinanceLoader\s*\{/)
   assert.match(sectorWin, /FinanceChipButton\s*\{/)
@@ -790,7 +828,7 @@ test("real-time streaming hub, off-thread cache, active-gating, virtualized Grid
   assert.match(grid, /function isChartFresh\(/)
   assert.match(grid, /function applyQuotesToDevelopingCandles\(/)
   assert.match(panel, /function applyLiveQuotesToDetailAndCache\(/)
-  assert.match(panel, /Model\.armedAlertSymbols\(root\.symbolLevels\)/)
+  assert.match(panel, /readonly property bool hasTrackedAlerts:/)
 
   // Phase 2: Persistent NDJSON streaming daemon + active/alert-gated lifecycle + liveStreaming setting
   assert.ok(fs.existsSync(path.join(root, "scripts", "market-stream.js")))
@@ -843,7 +881,8 @@ test("charts support 1-bar minimum zoom and interactive price scale (cursor, dra
   assert.match(chart, /Model\.zoomPriceLogRange/)
   assert.match(chart, /Model\.panPriceLogRange/)
   assert.match(chart, /Model\.formatScalePrice/)
-  assert.match(chart, /if \(root\.showPriceScale && px >= g\.right\)\s*return null;/)
+  assert.match(chart, /root\.showPriceScale && g && g\.candles\.length > 0 && g\.innerH > 0 && mouse\.x >= g\.right/)
+  assert.match(chart, /root\.showPriceScale && g && g\.candles\.length > 0 && g\.innerH > 0 && wheel\.x >= g\.right/)
 
   // Plot-area clipping, hover gutter affordance, off-screen badge indicator, and Auto ('A') reset button
   assert.match(chart, /ctx\.clip\(\);/)

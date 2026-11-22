@@ -53,8 +53,21 @@ Panel {
     property string activeLayoutName: ""
     property string layoutActionStatus: ""
     property string discordWebhook: ""
-    property var symbolLevels: ({})
-    property var symbolPriceMemory: ({})
+    property var alertSources: Model.defaultAlertSources()
+    property bool alertsAutoOpen: true
+    property var firedSetupKeys: ({})
+    property var activeSetupAlerts: []
+    property int activeSetupAlertCount: 0
+    property int activeSetupInForceCount: 0
+    property var alertScannerStatus: ({
+            hydrating: false,
+            totalSymbols: 0,
+            hydratedSymbols: 0,
+            sources: [],
+            resolvedBaskets: ({})
+        })
+    property var activeAlertsWindow: null
+    property var pendingAlertBurst: []
     property var alertLog: []
     // 0 = live, -1 = muted until unmuted, >0 = muted until epoch ms (see Model.isAlertsMuted)
     property double alertsMutedUntil: 0
@@ -154,9 +167,9 @@ Panel {
     property var streamInFlightCharts: ({})
     property var streamFetchedAt: ({})
     property bool streamSparkInFlight: false
-    readonly property bool hasArmedPriceAlerts: Model.armedAlertSymbols(root.symbolLevels).length > 0
-    readonly property bool hasActiveWindows: (root.activeGridWindows && root.activeGridWindows.length > 0) || (root.activeSectorWindows && root.activeSectorWindows.length > 0)
-    readonly property bool shouldStreamLive: root.liveStreaming && (root.opened || root.hasActiveWindows || root.hasArmedPriceAlerts)
+    readonly property bool hasTrackedAlerts: Boolean(root.alertSources && root.alertSources.length > 0)
+    readonly property bool hasActiveWindows: (root.activeGridWindows && root.activeGridWindows.length > 0) || (root.activeSectorWindows && root.activeSectorWindows.length > 0) || Boolean(root.activeAlertsWindow && root.activeAlertsWindow.visible)
+    readonly property bool shouldStreamLive: root.liveStreaming && (root.opened || root.hasActiveWindows || root.hasTrackedAlerts)
     readonly property int backgroundRefreshMs: Model.backoffDelay(refreshSeconds * 1000, quoteFailureCount, 3600000)
     readonly property int liveRefreshMs: Model.backoffDelay(2000, quoteFailureCount, 60000)
     readonly property int chartRefreshMs: Model.backoffDelay(15000, chartFailureCount, 120000)
@@ -404,7 +417,9 @@ Panel {
 
     function persist() {
         stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, discordWebhook, gridTimeframes, gridZooms, {
-            symbolLevels: root.symbolLevels,
+            alertSources: root.alertSources,
+            alertsAutoOpen: root.alertsAutoOpen,
+            firedSetupKeys: root.firedSetupKeys,
             alertLog: root.alertLog,
             alertsMutedUntil: root.alertsMutedUntil
         }));
@@ -459,6 +474,7 @@ Panel {
         persistSettings({
             liveStreaming: !!enabled
         });
+        sendAlertConfigToStream();
         scheduleStreamSubSync();
     }
 
@@ -508,8 +524,7 @@ Panel {
     }
 
     function openAlerts() {
-        root.clearSearch();
-        root.view = "alerts";
+        root.openAlertsWindow(false);
     }
 
     function quoteFor(sym) {
@@ -539,18 +554,116 @@ Panel {
         root.setAlertsMute(Model.isAlertsMuted(root.alertsMutedUntil, new Date()) ? "" : "open");
     }
 
-    // Single delivery gate for every alert (watchlist background engine and grid windows).
-    // alert: { title, body, discordPayload, logEntry }
+    function setAlertSources(nextSources) {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            HubRegistry.leader().setAlertSources(nextSources);
+            return;
+        }
+        root.alertSources = Model.normalizeAlertSources(nextSources);
+        root.sendAlertConfigToStream();
+        root.scheduleStreamSubSync();
+        root.persist();
+    }
+
+    function setAlertsAutoOpen(enabled) {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            HubRegistry.leader().setAlertsAutoOpen(enabled);
+            return;
+        }
+        root.alertsAutoOpen = enabled !== false;
+        root.persist();
+    }
+
+    function sendAlertConfigToStream() {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            HubRegistry.leader().sendAlertConfigToStream();
+            return;
+        }
+        if (!streamProc.running || !root.streamReady)
+            return;
+        root.sendStreamCommand({
+            op: "setAlertConfig",
+            sources: root.alertSources || [],
+            firedKeys: root.firedSetupKeys || ({}),
+            enabled: root.liveStreaming
+        });
+    }
+
+    function syncAlertViewActive() {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            HubRegistry.leader().syncAlertViewActive();
+            return;
+        }
+        if (!streamProc.running || !root.streamReady)
+            return;
+        var active = Boolean(root.activeAlertsWindow && root.activeAlertsWindow.visible);
+        root.sendStreamCommand({
+            op: "setAlertViewActive",
+            active: active
+        });
+    }
+
+    function requestAlertRefresh() {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            HubRegistry.leader().requestAlertRefresh();
+            return;
+        }
+        if (!streamProc.running || !root.streamReady)
+            return;
+        root.sendStreamCommand({
+            op: "refreshAlerts"
+        });
+    }
+
+    function enqueueSetupAlertBurst(event) {
+        if (!event || !event.key)
+            return;
+        var next = (root.pendingAlertBurst || []).slice();
+        for (var i = 0; i < next.length; i++) {
+            if (next[i] && next[i].key === event.key)
+                return;
+        }
+        next.push(event);
+        root.pendingAlertBurst = next;
+        if (!alertBurstTimer.running)
+            alertBurstTimer.start();
+    }
+
+    function flushSetupAlertBurst() {
+        var batch = (root.pendingAlertBurst || []).slice();
+        root.pendingAlertBurst = [];
+        if (batch.length === 0)
+            return;
+        var payload = Model.formatSetupAlertNotification(batch, Date.now());
+        if (!payload)
+            return;
+        root.dispatchAlert({
+            title: payload.title,
+            body: payload.body,
+            discordPayload: payload.discordPayload,
+            logEntries: payload.logEntries,
+            autoOpen: true
+        });
+    }
+
+    // Single delivery gate for every alert (off-thread setup scanner and windows).
+    // alert: { title, body, discordPayload, logEntry | logEntries, autoOpen }
     // While muted, the event is still logged (tagged muted) but nothing is delivered.
     function dispatchAlert(alert) {
         if (!alert)
             return;
         var muted = Model.isAlertsMuted(root.alertsMutedUntil, new Date());
-        if (alert.logEntry) {
-            var entry = Object.assign({}, alert.logEntry);
-            if (muted)
-                entry.muted = true;
-            root.recordAlertEvent(entry);
+        var entries = Array.isArray(alert.logEntries) ? alert.logEntries : (alert.logEntry ? [alert.logEntry] : []);
+        if (entries.length > 0) {
+            var nextLog = root.alertLog;
+            for (var i = 0; i < entries.length; i++) {
+                var entry = Object.assign({}, entries[i]);
+                if (muted)
+                    entry.muted = true;
+                nextLog = Model.appendAlertLog(nextLog, entry, 50);
+            }
+            root.alertLog = nextLog;
+            root.persist();
         }
         if (muted)
             return;
@@ -559,121 +672,15 @@ Panel {
         var webhook = root.discordWebhook;
         if (alert.discordPayload && webhook && webhook.indexOf("https://discord.com/api/webhooks/") === 0)
             Quickshell.execDetached(["curl", "-fsS", "-H", "Content-Type: application/json", "-X", "POST", "-d", alert.discordPayload, webhook]);
-    }
-
-    function syncActiveGridsAlertState() {
-        if (!root.activeGridWindows)
-            return;
-        for (var i = 0; i < root.activeGridWindows.length; i++) {
-            var w = root.activeGridWindows[i];
-            if (w && w.visible) {
-                w.symbolLevels = root.symbolLevels;
-            }
-        }
-    }
-
-    function createPriceAlert(sym, priceVal, condition, note) {
-        var normSym = Model.normalizeSymbol(sym);
-        if (!normSym || !isFinite(Number(priceVal)) || Number(priceVal) <= 0)
-            return;
-        var nextMap = Object.assign({}, root.symbolLevels || ({}));
-        var curList = Array.isArray(nextMap[normSym]) ? nextMap[normSym].slice() : [];
-        curList.push({
-            price: Number(priceVal),
-            sourceTf: "60",
-            anchorTs: Math.floor(Date.now() / 1000) - 86400 * 5,
-            ohlcField: "scale",
-            text: String(note || "").trim(),
-            tone: "fg",
-            offsets: ({}),
-            alertEnabled: true,
-            alertCondition: condition || "CROSSES_ABOVE",
-            alertTriggered: false
-        });
-        nextMap[normSym] = curList;
-        root.symbolLevels = nextMap;
-        root.syncActiveGridsAlertState();
-        root.persist();
-    }
-
-    function rearmPriceAlert(sym, levelIndex) {
-        if (!sym || !root.symbolLevels || !Array.isArray(root.symbolLevels[sym]))
-            return;
-        var list = root.symbolLevels[sym].slice();
-        if (levelIndex < 0 || levelIndex >= list.length)
-            return;
-        var item = Object.assign({}, list[levelIndex]);
-        item.alertEnabled = true;
-        item.alertTriggered = false;
-        list[levelIndex] = item;
-        var nextMap = Object.assign({}, root.symbolLevels);
-        nextMap[sym] = list;
-        root.symbolLevels = nextMap;
-        root.syncActiveGridsAlertState();
-        root.persist();
-    }
-
-    function removePriceAlert(sym, levelIndex) {
-        if (!sym || !root.symbolLevels || !Array.isArray(root.symbolLevels[sym]))
-            return;
-        var list = root.symbolLevels[sym].slice();
-        if (levelIndex < 0 || levelIndex >= list.length)
-            return;
-        list.splice(levelIndex, 1);
-        var nextMap = Object.assign({}, root.symbolLevels);
-        nextMap[sym] = list;
-        root.symbolLevels = nextMap;
-        root.syncActiveGridsAlertState();
-        root.persist();
-    }
-
-    function evaluateWatchlistPriceAlerts(incomingQuotes) {
-        if (!incomingQuotes)
-            return;
-        var nextMem = Object.assign({}, root.symbolPriceMemory || ({}));
-        var nextLevelsMap = Object.assign({}, root.symbolLevels || ({}));
-        var memChanged = false;
-        var levelsChanged = false;
-        var keys = Object.keys(incomingQuotes);
-        for (var i = 0; i < keys.length; i++) {
-            var sym = keys[i];
-            var q = incomingQuotes[sym] || root.quotes[sym];
-            if (!q || typeof q.price !== "number" || !isFinite(q.price))
-                continue;
-            var prevP = nextMem["PRICE:" + sym];
-            nextMem["PRICE:" + sym] = q.price;
-            memChanged = true;
-            var symLvls = nextLevelsMap[sym];
-            if (!Array.isArray(symLvls) || symLvls.length === 0)
-                continue;
-            var res = Model.evaluatePriceLevelAlerts(sym, symLvls, prevP, q.price, q, new Date());
-            if (res.triggered && res.triggered.length > 0) {
-                nextLevelsMap[sym] = res.nextLevels;
-                levelsChanged = true;
-                for (var t = 0; t < res.triggered.length; t++) {
-                    var ev = res.triggered[t];
-                    root.dispatchAlert({
-                        title: ev.title,
-                        body: ev.body,
-                        discordPayload: ev.discordPayload,
-                        logEntry: ev.logEntry
-                    });
-                }
-            }
-        }
-        if (memChanged)
-            root.symbolPriceMemory = nextMem;
-        if (levelsChanged) {
-            root.symbolLevels = nextLevelsMap;
-            root.syncActiveGridsAlertState();
-            root.persist();
-        }
+        if (alert.autoOpen && root.alertsAutoOpen)
+            root.openAlertsWindow(true);
     }
 
     function applyState(raw) {
         var state = Model.parseState(raw);
         var before = (watchlist || []).join("\n");
         var after = (state.watchlist || []).join("\n");
+        var beforeSources = (alertSources || []).join(",");
         watchlist = state.watchlist;
         pinned = state.pinned;
         if (state.detailRange)
@@ -696,26 +703,28 @@ Panel {
             layouts = ({});
         if (state.discordWebhook !== undefined)
             discordWebhook = state.discordWebhook;
-        if (state.symbolLevels)
-            symbolLevels = state.symbolLevels;
+        if (state.alertSources !== undefined)
+            alertSources = state.alertSources;
+        else
+            alertSources = Model.defaultAlertSources();
+        if (state.alertsAutoOpen !== undefined)
+            alertsAutoOpen = state.alertsAutoOpen;
+        if (state.firedSetupKeys !== undefined)
+            firedSetupKeys = state.firedSetupKeys;
         if (state.alertLog)
             alertLog = state.alertLog;
         alertsMutedUntil = state.alertsMutedUntil !== undefined ? state.alertsMutedUntil : 0;
         muteClockMs = Date.now();
-        root.syncActiveGridsAlertState();
+        var afterSources = (alertSources || []).join(",");
+        if (beforeSources !== afterSources)
+            root.sendAlertConfigToStream();
         clampSelected();
         if (before !== after && (opened || showBarQuote))
             Qt.callLater(refresh);
     }
 
     function symbolsForQuoteRefresh() {
-        var base = Array.isArray(quoteSymbols) ? quoteSymbols.slice() : [];
-        var alerts = Model.armedAlertSymbols(root.symbolLevels);
-        for (var i = 0; i < alerts.length; i++) {
-            if (base.indexOf(alerts[i]) === -1)
-                base.push(alerts[i]);
-        }
-        return base;
+        return Array.isArray(quoteSymbols) ? quoteSymbols.slice() : [];
     }
 
     function refresh() {
@@ -1654,9 +1663,6 @@ Panel {
                 if (p.detailSymbol)
                     addSym(p.detailSymbol);
             }
-            var alerts = Model.armedAlertSymbols(p.symbolLevels);
-            for (i = 0; i < alerts.length; i++)
-                addSym(alerts[i]);
 
             var gWins = p.activeGridWindows || [];
             for (i = 0; i < gWins.length; i++) {
@@ -1826,8 +1832,39 @@ Panel {
             root.lastStreamSubKey = "";
             HubRegistry.broadcastStreamStatus(root, true, root.streamConnected, root.streamYahooConnected, root.streamCoinbaseConnected, root.streamHyperliquidConnected);
             root.scheduleStreamSubSync();
+            root.sendAlertConfigToStream();
+            root.syncAlertViewActive();
             // Pre-warm only watchlist + active window keys off-thread (never load all 600 keys into Qt RAM)
             root.requestCachedKeys(Object.keys(root.collectProtectedCacheKeys()));
+            return;
+        }
+
+        if (msg.type === "alertMeta") {
+            root.activeSetupAlertCount = Number(msg.totalCount) || 0;
+            root.activeSetupInForceCount = Number(msg.inForceCount) || 0;
+            if (msg.status && typeof msg.status === "object")
+                root.alertScannerStatus = msg.status;
+            HubRegistry.broadcastAlertMeta(root, root.activeSetupAlertCount, root.activeSetupInForceCount, root.alertScannerStatus);
+            return;
+        }
+
+        if (msg.type === "alertSnapshot") {
+            root.activeSetupAlerts = Array.isArray(msg.items) ? msg.items : [];
+            root.activeSetupAlertCount = root.activeSetupAlerts.length;
+            if (msg.status && typeof msg.status === "object")
+                root.alertScannerStatus = msg.status;
+            return;
+        }
+
+        if (msg.type === "setupAlertTriggered" && msg.event) {
+            if (msg.firedKeys && typeof msg.firedKeys === "object") {
+                root.firedSetupKeys = Model.normalizeFiredSetupKeys(msg.firedKeys, Date.now());
+            } else if (msg.event.key) {
+                var nextFired = Object.assign({}, root.firedSetupKeys || ({}));
+                nextFired[msg.event.key] = Date.now();
+                root.firedSetupKeys = Model.normalizeFiredSetupKeys(nextFired, Date.now());
+            }
+            root.enqueueSetupAlertBurst(msg.event);
             return;
         }
 
@@ -1874,7 +1911,6 @@ Panel {
             root.quoteError = "";
             root.quotesUpdatedAt = Date.now();
             HubRegistry.broadcastQuotes(root, root.quotes, tickSyms, root.quotesUpdatedAt);
-            root.evaluateWatchlistPriceAlerts(msg.quotes);
             return;
         }
 
@@ -1889,7 +1925,6 @@ Panel {
                 root.quoteError = "";
                 root.quotesUpdatedAt = Date.now();
                 HubRegistry.broadcastQuotes(root, root.quotes, spKeys, root.quotesUpdatedAt);
-                root.evaluateWatchlistPriceAlerts(spQuotes);
             } else if (!msg.ok) {
                 root.quoteFailureCount = Math.min(10, root.quoteFailureCount + 1);
                 if (!root.streamConnected)
@@ -1955,8 +1990,18 @@ Panel {
     onDetailSymbolChanged: scheduleStreamSubSync()
     onActiveGridWindowsChanged: scheduleStreamSubSync()
     onActiveSectorWindowsChanged: scheduleStreamSubSync()
-    onSymbolLevelsChanged: scheduleStreamSubSync()
+    onAlertSourcesChanged: {
+        sendAlertConfigToStream();
+        scheduleStreamSubSync();
+    }
     onShouldStreamLiveChanged: scheduleStreamSubSync()
+
+    Timer {
+        id: alertBurstTimer
+        interval: 1500
+        repeat: false
+        onTriggered: root.flushSetupAlertBurst()
+    }
 
     Timer {
         id: streamSubSyncTimer
@@ -2040,7 +2085,6 @@ Panel {
                 root.quoteError = "";
                 root.quotesUpdatedAt = Date.now();
                 HubRegistry.broadcastQuotes(root, root.quotes, changedSyms, root.quotesUpdatedAt);
-                root.evaluateWatchlistPriceAlerts(parsed);
             } else {
                 root.quoteFailureCount = Math.min(10, root.quoteFailureCount + 1);
                 root.quoteError = "Quotes unavailable";
@@ -2400,7 +2444,6 @@ Panel {
             root.openSectorBreadth();
         }
         function openAlerts(): void {
-            root.open();
             root.openAlerts();
         }
         function openLayout(name: string): void {
@@ -2445,7 +2488,7 @@ Panel {
             onCloseRequested: {
                 if (root.view === "detail")
                     root.closeDetail();
-                else if (root.view === "settings" || root.view === "alerts" || root.view === "layouts")
+                else if (root.view === "settings" || root.view === "layouts")
                     root.view = "list";
                 else if (root.listChrome === "gear")
                     root.focusSearchChrome();
@@ -2550,12 +2593,6 @@ Panel {
                         width: parent.width
                         controller: root
                         visible: root.view === "layouts"
-                    }
-
-                    FinanceAlertsView {
-                        width: parent.width
-                        controller: root
-                        visible: root.view === "alerts"
                     }
 
                     FinanceDetailView {
@@ -2897,8 +2934,6 @@ Panel {
             cellSymbols: [sym, sym, sym, sym, sym],
             cellTimeframes: initialTfs,
             cellZooms: initialZooms,
-            symbolLevels: root.symbolLevels || ({}),
-            symbolPriceMemory: root.symbolPriceMemory || ({}),
             rowSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].rowRatio ? currentSplits[currentMode].rowRatio : 0.5,
             topColSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].colTopRatio ? currentSplits[currentMode].colTopRatio : 0.5,
             botColSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].colBotRatio ? currentSplits[currentMode].colBotRatio : 0.5,
@@ -2963,21 +2998,10 @@ Panel {
             onQuotesReceived: function (incoming) {
                 root.quotes = Model.mergeQuotes(root.quotes, incoming);
                 root.quotesUpdated(Object.keys(incoming || ({})));
-                root.evaluateWatchlistPriceAlerts(incoming);
             }
 
             onChartDataReceived: function (key, candles, quoteEnriched) {
                 root.updateSharedCandles(key, candles, quoteEnriched);
-            }
-
-            onSymbolLevelsChangedExternally: function (sym, nextLevels) {
-                if (!sym)
-                    return;
-                var nextMap = Object.assign({}, root.symbolLevels || ({}));
-                nextMap[sym] = nextLevels || [];
-                root.symbolLevels = nextMap;
-                root.syncActiveGridsAlertState();
-                root.persist();
             }
 
             onAlertDispatchRequested: function (alert) {
@@ -3075,8 +3099,7 @@ Panel {
             sectorSymbol: sym,
             discordWebhook: root.discordWebhook,
             alertsMuted: root.alertsMuted,
-            alertsMuteStatus: root.alertsMuteStatus,
-            symbolLevels: root.symbolLevels || ({})
+            alertsMuteStatus: root.alertsMuteStatus
         });
 
         if (win) {
@@ -3144,21 +3167,10 @@ Panel {
             onQuotesReceived: function (incoming) {
                 root.quotes = Model.mergeQuotes(root.quotes, incoming);
                 root.quotesUpdated(Object.keys(incoming || ({})));
-                root.evaluateWatchlistPriceAlerts(incoming);
             }
 
             onChartDataReceived: function (key, candles, quoteEnriched) {
                 root.updateSharedCandles(key, candles, quoteEnriched);
-            }
-
-            onSymbolLevelsChangedExternally: function (sym, nextLevels) {
-                if (!sym)
-                    return;
-                var nextMap = Object.assign({}, root.symbolLevels || ({}));
-                nextMap[sym] = nextLevels || [];
-                root.symbolLevels = nextMap;
-                root.syncActiveGridsAlertState();
-                root.persist();
             }
 
             onAlertDispatchRequested: function (alert) {
@@ -3177,6 +3189,70 @@ Panel {
                     }
                     root.activeSectorWindows = remaining;
                     secWin.destroy();
+                }
+            }
+        }
+    }
+
+    function openAlertsWindow(isAutoOpen) {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            if (!isAutoOpen)
+                root.close();
+            HubRegistry.leader().openAlertsWindow(isAutoOpen);
+            return;
+        }
+        if (!isAutoOpen)
+            root.close();
+
+        if (root.activeAlertsWindow && root.activeAlertsWindow.visible) {
+            if (!isAutoOpen) {
+                if (typeof root.activeAlertsWindow.raise === "function")
+                    root.activeAlertsWindow.raise();
+                if (typeof root.activeAlertsWindow.requestActivate === "function")
+                    root.activeAlertsWindow.requestActivate();
+            }
+            return;
+        }
+
+        var win = alertsWindowComponent.createObject(root, {});
+        if (win) {
+            root.activeAlertsWindow = win;
+            root.syncAlertViewActive();
+        }
+    }
+
+    Component {
+        id: alertsWindowComponent
+        AlertsWindow {
+            id: alertsWin
+            visible: true
+            alertItems: root.activeSetupAlerts
+            alertSources: root.alertSources
+            scannerStatus: root.alertScannerStatus
+            alertsMuted: root.alertsMuted
+            alertsMuteStatus: root.alertsMuteStatus
+            alertsAutoOpen: root.alertsAutoOpen
+
+            onOpenGridRequested: function (sym) {
+                root.openGrid(sym);
+            }
+            onAlertSourcesChangedRequested: function (nextSources) {
+                root.setAlertSources(nextSources);
+            }
+            onAlertsAutoOpenToggled: function (enabled) {
+                root.setAlertsAutoOpen(enabled);
+            }
+            onAlertsMuteModeRequested: function (mode) {
+                root.setAlertsMute(mode);
+            }
+            onRefreshRequested: root.requestAlertRefresh()
+
+            onVisibleChanged: {
+                if (!visible) {
+                    if (root.activeAlertsWindow === alertsWin)
+                        root.activeAlertsWindow = null;
+                    root.syncAlertViewActive();
+                    alertsWin.destroy();
                 }
             }
         }
