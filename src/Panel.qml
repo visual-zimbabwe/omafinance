@@ -1940,6 +1940,8 @@ Panel {
             if (msg.ok && Array.isArray(msg.candles) && msg.candles.length > 0) {
                 if (!msg.fromCache)
                     root.streamFetchedAt[cKey] = Date.now();
+                else if (msg.fetchedAt > 0 && !root.streamFetchedAt[cKey])
+                    root.streamFetchedAt[cKey] = msg.fetchedAt;
                 root.updateSharedCandles(cKey, msg.candles, msg.quote || null, true);
                 if (msg.fromCache && Model.isCandleSeriesStale(msg.candles, msg.symbol, msg.rangeKey, new Date(), root.streamFetchedAt[cKey] || 0)) {
                     root.requestSharedChartFetch(msg.symbol, msg.rangeKey, true);

@@ -3375,17 +3375,60 @@ test("updateDevelopingCandle preserves RTH purity, aligns 60m US equities to 09:
   assert.equal(dRes.length, 2)
   assert.equal(dRes[1].low, 160)
   assert.equal(dRes[1].high, 160)
+
+  // 6. US equities never roll over or mutate candles on weekends or outside RTH, even if quote claims session: "regular" or omits session
+  const fri30 = [
+    { timestamp: Math.floor(Date.UTC(2026, 10, 20, 20, 0, 0) / 1000), open: 1161.26, high: 1163.58, low: 1147.01, close: 1149.96, volume: 100 },
+    { timestamp: Math.floor(Date.UTC(2026, 10, 20, 20, 30, 0) / 1000), open: 1149.31, high: 1157.00, low: 1132.78, close: 1142.05, volume: 100 }
+  ]
+  const fri1D = [
+    { timestamp: Math.floor(Date.UTC(2026, 10, 19, 14, 30, 0) / 1000), open: 1368.30, high: 1378.06, low: 1288.08, close: 1295.86, volume: 100 },
+    { timestamp: Math.floor(Date.UTC(2026, 10, 20, 14, 30, 0) / 1000), open: 1260.38, high: 1271.13, low: 1132.78, close: 1142.05, volume: 100 }
+  ]
+  const sunEve = new Date(Date.UTC(2026, 10, 22, 23, 23, 0)) // Sun 18:23 ET
+  const monPre = new Date(Date.UTC(2026, 10, 23, 13, 30, 0)) // Mon 08:30 ET
+  const friPost = new Date(Date.UTC(2026, 10, 20, 21, 15, 0)) // Fri 16:15 ET
+  const spoofRegQuote = { symbol: "MPWR", price: 1142.05, regularPrice: 1142.05, session: "regular" }
+  const noSessionQuote = { symbol: "MPWR", price: 1142.05, regularPrice: 1142.05 }
+  assert.equal(Model.updateDevelopingCandle(fri30, spoofRegQuote, "30", sunEve), fri30)
+  assert.equal(Model.updateDevelopingCandle(fri30, spoofRegQuote, "60", sunEve), fri30)
+  assert.equal(Model.updateDevelopingCandle(fri1D, spoofRegQuote, "1D", sunEve), fri1D)
+  assert.equal(Model.updateDevelopingCandle(fri1D, noSessionQuote, "1D", sunEve), fri1D)
+  assert.equal(Model.updateDevelopingCandle(fri1D, spoofRegQuote, "1D", monPre), fri1D)
+  assert.equal(Model.updateDevelopingCandle(fri1D, spoofRegQuote, "1D", friPost), fri1D)
+  assert.equal(Model.stratScenario(fri1D[1], fri1D[0]), "2d")
+
+  // Crypto and Sunday-evening futures still roll over on weekends
+  const btcSun = Model.updateDevelopingCandle(btcBase, { symbol: "BTC-USD", regularPrice: 91500, session: "live" }, "60", sunEve)
+  assert.equal(btcSun.length, 2)
+  const futSun = Model.updateDevelopingCandle(
+    [{ timestamp: Math.floor(Date.UTC(2026, 10, 20, 20, 0, 0) / 1000), open: 6000, high: 6010, low: 5990, close: 6005, volume: 10 }],
+    { symbol: "ES=F", regularPrice: 6020, session: "regular" },
+    "60",
+    sunEve
+  )
+  assert.equal(futSun.length, 2)
+
+  // stratLivePrice does not leak extended/overnight price when regularPrice is absent
+  assert.equal(Model.stratLivePrice({ price: 1150, extendedPrice: 1150, session: "post" }), null)
+  assert.equal(Model.stratLivePrice({ price: 1150, regularPrice: 1142.05, extendedPrice: 1150, session: "post" }), 1142.05)
 })
 
 test("isCandleSeriesStale detects stale prior-session caches during RTH without false positives", () => {
   const wed1D = [{ timestamp: Math.floor(Date.UTC(2026, 10, 18, 14, 30, 0) / 1000), open: 100, high: 102, low: 99, close: 101, volume: 10 }]
   const thu1D = [...wed1D, { timestamp: Math.floor(Date.UTC(2026, 10, 19, 14, 30, 0) / 1000), open: 102, high: 103, low: 101, close: 102.5, volume: 10 }]
+  const fri1D = [...thu1D, { timestamp: Math.floor(Date.UTC(2026, 10, 20, 14, 30, 0) / 1000), open: 102, high: 104, low: 101, close: 103, volume: 10 }]
+  const priorFri1D = [{ timestamp: Math.floor(Date.UTC(2026, 10, 13, 14, 30, 0) / 1000), open: 95, high: 98, low: 94, close: 97, volume: 10 }]
   const mon1W = [{ timestamp: Math.floor(Date.UTC(2026, 10, 16, 14, 30, 0) / 1000), open: 98, high: 103, low: 97, close: 101, volume: 50 }]
+  const friMidday60 = [{ timestamp: Math.floor(Date.UTC(2026, 10, 20, 16, 30, 0) / 1000), open: 102, high: 103, low: 101, close: 102.5, volume: 10 }]
+  const friClose60 = [{ timestamp: Math.floor(Date.UTC(2026, 10, 20, 20, 30, 0) / 1000), open: 102, high: 103, low: 101, close: 102.5, volume: 10 }]
 
   const thuPre = new Date(Date.UTC(2026, 10, 19, 13, 30, 0))  // Thu 08:30 ET
   const thuRth = new Date(Date.UTC(2026, 10, 19, 15, 0, 0))   // Thu 10:00 ET
   const thuPost = new Date(Date.UTC(2026, 10, 19, 21, 30, 0)) // Thu 16:30 ET
   const satNoon = new Date(Date.UTC(2026, 10, 21, 17, 0, 0))  // Sat 12:00 ET
+  const sunEve = new Date(Date.UTC(2026, 10, 22, 22, 0, 0))   // Sun 17:00 ET
+  const monPre = new Date(Date.UTC(2026, 10, 23, 13, 0, 0))   // Mon 08:00 ET
 
   // Empty is always stale
   assert.equal(Model.isCandleSeriesStale([], "NVDA", "1D", thuRth, 0), true)
@@ -3399,13 +3442,29 @@ test("isCandleSeriesStale detects stale prior-session caches during RTH without 
   assert.equal(Model.isCandleSeriesStale(mon1W, "NVDA", "1W", thuRth, thuPre.getTime()), true)
   assert.equal(Model.isCandleSeriesStale(mon1W, "NVDA", "1W", thuRth, Date.UTC(2026, 10, 19, 14, 31, 0)), false)
 
-  // Pre-market & weekend: yesterday's / Friday's bars are fresh
+  // Pre-market & weekend: yesterday's / Friday's bars are fresh, older bars are stale
   assert.equal(Model.isCandleSeriesStale(wed1D, "NVDA", "1D", thuPre, 0), false)
-  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", satNoon, 0), false)
+  assert.equal(Model.isCandleSeriesStale(priorFri1D, "NVDA", "1D", thuPre, 0), true)
+  assert.equal(Model.isCandleSeriesStale(fri1D, "NVDA", "1D", satNoon, 0), false)
+  assert.equal(Model.isCandleSeriesStale(fri1D, "NVDA", "1D", sunEve, 0), false)
+  assert.equal(Model.isCandleSeriesStale(fri1D, "NVDA", "1D", monPre, 0), false)
+  assert.equal(Model.isCandleSeriesStale(priorFri1D, "NVDA", "1D", sunEve, 0), true)
+  assert.equal(Model.isCandleSeriesStale(priorFri1D, "NVDA", "1D", monPre, 0), true)
+  // Missing Friday on weekend is stale until fetched once (holiday protection once fetched on Sat/Sun)
+  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", satNoon, 0), true)
+  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", satNoon, satNoon.getTime()), false)
+  // Intraday cached mid-day Friday is stale on weekend; final 15:30 ET bar is fresh
+  assert.equal(Model.isCandleSeriesStale(friMidday60, "NVDA", "60", sunEve, 0), true)
+  assert.equal(Model.isCandleSeriesStale(friClose60, "NVDA", "60", sunEve, 0), false)
+  // HTF 1W cached with no fetchedAt on weekend refetches once, then stays fresh after post-close fetch
+  assert.equal(Model.isCandleSeriesStale(mon1W, "NVDA", "1W", sunEve, 0), true)
+  assert.equal(Model.isCandleSeriesStale(mon1W, "NVDA", "1W", sunEve, satNoon.getTime()), false)
 
-  // Post-market: missing today's 1D bar is stale, having today's 1D bar is fresh
+  // Post-market: missing today's 1D bar or mid-day fetch is stale; post-close bar is fresh
   assert.equal(Model.isCandleSeriesStale(wed1D, "NVDA", "1D", thuPost, 0), true)
   assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", thuPost, 0), false)
+  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", thuPost, thuRth.getTime()), true)
+  assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", thuPost, thuPost.getTime()), false)
 })
 
 test("canonical 7-category Strat setup detector covers all approved setups and rejects removed patterns", () => {

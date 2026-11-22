@@ -158,7 +158,7 @@ function normalizeYahooTick(decoded, nowDate) {
       out.changePercent = rawChangePct;
       out.regularChangePercent = rawChangePct;
     }
-  } else if (marketHours === 0 || marketHours === 2 || marketHours === 3) {
+  } else if (marketHours === 0 || marketHours === 2 || marketHours === 3 || marketHours === 4) {
     out.session = marketHours === 0 ? "pre" : "post";
     out.extendedPrice = price;
     out.hasExtended = true;
@@ -168,13 +168,10 @@ function normalizeYahooTick(decoded, nowDate) {
       out.extendedChangePercent = rawChangePct;
     }
   } else {
-    out.session = "regular";
-    out.regularPrice = price;
+    out.session = "closed";
+    out.hasExtended = false;
     if (rawChange !== null) out.change = rawChange;
-    if (rawChangePct !== null) {
-      out.changePercent = rawChangePct;
-      out.regularChangePercent = rawChangePct;
-    }
+    if (rawChangePct !== null) out.changePercent = rawChangePct;
   }
 
   return out;
@@ -608,6 +605,7 @@ class OffThreadCandleCache {
     this.cachePath = path.join(this.cacheDir, "candles.json");
     // Store compact v2 tuple arrays ([t,o,h,l,c,v]) in RAM to minimize V8 heap footprint
     this.packedEntries = {};
+    this.fetchedAt = {};
     this.accessTimes = {};
     this.protectedKeys = {};
     this.maxEntries = 600;
@@ -633,6 +631,7 @@ class OffThreadCandleCache {
         if (parsed && typeof parsed === "object") {
           const isV2 = parsed.version === 2 && parsed.entries && typeof parsed.entries === "object";
           const source = isV2 ? parsed.entries : parsed;
+          const savedFetchedAt = (isV2 && parsed.fetchedAt && typeof parsed.fetchedAt === "object") ? parsed.fetchedAt : null;
           const keys = Object.keys(source);
           for (let i = 0; i < keys.length; i++) {
             const k = keys[i];
@@ -645,6 +644,9 @@ class OffThreadCandleCache {
               if (Array.isArray(packed) && packed.length > 0) {
                 this.packedEntries[k] = packed;
               }
+            }
+            if (savedFetchedAt && Number.isFinite(Number(savedFetchedAt[k])) && Number(savedFetchedAt[k]) > 0) {
+              this.fetchedAt[k] = Number(savedFetchedAt[k]);
             }
           }
           // Auto-migrate legacy v1 17MB cache file down to compact v2 (~5MB)
@@ -668,6 +670,11 @@ class OffThreadCandleCache {
     return typeof Model.unpackCandles === "function" ? Model.unpackCandles(packed) : packed;
   }
 
+  getFetchedAt(key) {
+    const ts = Number(this.fetchedAt[key]);
+    return (Number.isFinite(ts) && ts > 0) ? ts : 0;
+  }
+
   getKeys(keys) {
     const out = {};
     for (const k of keys || []) {
@@ -679,12 +686,14 @@ class OffThreadCandleCache {
     return out;
   }
 
-  put(key, candles, protectedKeys) {
+  put(key, candles, protectedKeys, fetchedAtMs) {
     if (!key || !Array.isArray(candles) || candles.length === 0) return;
     const packed = typeof Model.packCandles === "function" ? Model.packCandles(candles) : candles;
     if (!Array.isArray(packed) || packed.length === 0) return;
+    const nowMs = Date.now();
     this.packedEntries[key] = packed;
-    this.accessTimes[key] = Date.now();
+    this.fetchedAt[key] = (Number.isFinite(Number(fetchedAtMs)) && Number(fetchedAtMs) > 0) ? Number(fetchedAtMs) : nowMs;
+    this.accessTimes[key] = nowMs;
     if (protectedKeys && typeof protectedKeys === "object") {
       this.protectedKeys = protectedKeys;
     }
@@ -715,7 +724,12 @@ class OffThreadCandleCache {
       await fsp.mkdir(this.cacheDir, { recursive: true });
       const pruned = Model.pruneChartCache(this.packedEntries, this.maxEntries, this.accessTimes, this.protectedKeys);
       this.packedEntries = pruned;
-      const payload = JSON.stringify({ version: 2, entries: pruned });
+      const prunedFetchedAt = {};
+      for (const k of Object.keys(pruned)) {
+        if (this.fetchedAt[k] > 0) prunedFetchedAt[k] = this.fetchedAt[k];
+      }
+      this.fetchedAt = prunedFetchedAt;
+      const payload = JSON.stringify({ version: 2, entries: pruned, fetchedAt: prunedFetchedAt });
       const tmpPath = this.cachePath + ".tmp." + process.pid;
       await fsp.writeFile(tmpPath, payload, "utf8");
       await fsp.rename(tmpPath, this.cachePath);
@@ -746,6 +760,12 @@ function updateTrailingCandleInPlace(candles, quote, tf, nowDate) {
   if (price === null) return candles;
 
   const now = (nowDate instanceof Date && Number.isFinite(nowDate.getTime())) ? nowDate : new Date();
+  if (quote.symbol && Model.isUsEquitySessionSymbol(quote.symbol)) {
+    const rthSched = Model.getUsSessionSchedule(now, quote);
+    if (rthSched.isWeekend || rthSched.mins < rthSched.openMins - 2 || rthSched.mins > rthSched.closeMins + 2) {
+      return candles;
+    }
+  }
   const nowSec = Math.floor(now.getTime() / 1000);
   const last = candles[candles.length - 1];
   if (!last || !Number.isFinite(last.timestamp)) return candles;
@@ -1014,9 +1034,11 @@ class SetupAlertScanner {
           }
         }
         const candidate = loadedFromCache || st.candles[tf];
-        const stale = !candidate || candidate.length < 2 || Model.isCandleSeriesStale(candidate, sym, tf, nowDate, st.fetchedAt[tf] || 0);
+        const cachedFetchedAt = (this.cache && typeof this.cache.getFetchedAt === "function") ? this.cache.getFetchedAt(key) : 0;
+        const effectiveFetchedAt = st.fetchedAt[tf] || cachedFetchedAt || 0;
+        const stale = !candidate || candidate.length < 2 || Model.isCandleSeriesStale(candidate, sym, tf, nowDate, effectiveFetchedAt);
         if (loadedFromCache) {
-          this.applyCandlesToState(st, tf, loadedFromCache, null, true, 0, !stale);
+          this.applyCandlesToState(st, tf, loadedFromCache, null, true, stale ? 0 : effectiveFetchedAt, !stale);
         }
         if (stale) {
           this.enqueueFetch(sym, tf, false);
@@ -1134,6 +1156,19 @@ class SetupAlertScanner {
         st.seeded["1M"] = true;
       }
     }
+  }
+
+  onExternalChartUpdate(sym, tf, parsed) {
+    if (!this.enabled || this.disposed) return;
+    if (tf !== "30" && tf !== "60" && tf !== "1D") return;
+    const st = this.symbolState.get(sym);
+    if (!st || !parsed || !Array.isArray(parsed.candles) || parsed.candles.length === 0) return;
+    const quoteOnly = Object.assign({}, parsed);
+    delete quoteOnly.candles;
+    const nowMs = this.now().getTime();
+    const isSeed = !st.seeded[tf];
+    this.applyCandlesToState(st, tf, parsed.candles, quoteOnly, isSeed, nowMs, true);
+    if (this.viewActive) this.scheduleSnapshot();
   }
 
   onTick(tick) {
@@ -1506,6 +1541,7 @@ function startDaemon() {
             key,
             ok: true,
             fromCache: true,
+            fetchedAt: cache.getFetchedAt(key),
             candles: hit
           });
           return;
@@ -1525,6 +1561,7 @@ function startDaemon() {
         const quoteOnly = Object.assign({}, parsed);
         delete quoteOnly.candles;
         cache.put(key, parsed.candles);
+        scanner.onExternalChartUpdate(sym, rk, parsed);
         emit({
           type: "chartResult",
           id: cmd.id || "",

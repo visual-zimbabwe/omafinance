@@ -1988,7 +1988,8 @@ function stratScenario(current, prev) {
 // so the grid's 2s live quote is honored instead of the 15s-stale candle close.
 function stratLivePrice(liveQuote) {
   if (!liveQuote) return null
-  var keys = ["regularMarketPrice", "regularPrice", "price"]
+  var isExtendedSession = liveQuote.session === "pre" || liveQuote.session === "post"
+  var keys = isExtendedSession ? ["regularMarketPrice", "regularPrice"] : ["regularMarketPrice", "regularPrice", "price"]
   for (var i = 0; i < keys.length; i++) {
     var v = finiteOrNull(liveQuote[keys[i]])
     if (v !== null) return v
@@ -6182,12 +6183,35 @@ function marketWeekStartEt(timestampSec) {
 function isUsEquitySessionSymbol(symbol) {
   var sym = normalizeSymbol(symbol);
   if (!sym || isCryptoSymbol(sym)) return false;
+  if (sym.indexOf("=") !== -1) return false;
   if (sym.indexOf(".") !== -1) {
     var parts = sym.split(".");
     var sfx = parts[parts.length - 1].toUpperCase();
     if (sfx !== "TO" && sfx !== "V") return false;
   }
   return true;
+}
+
+function expectedLastSessionEt(nowMs, sched) {
+  var offsetMs = (isUsDstUtc(nowMs) ? -4 : -5) * 3600000;
+  var et = new Date(nowMs + offsetMs);
+  var day = et.getUTCDay();
+  var deltaDays = 0;
+  if (day === 6) {
+    deltaDays = -1;
+  } else if (day === 0) {
+    deltaDays = -2;
+  } else if (sched.mins < sched.openMins) {
+    deltaDays = (day === 1) ? -3 : -1;
+  }
+  var target = new Date(Date.UTC(et.getUTCFullYear(), et.getUTCMonth(), et.getUTCDate() + deltaDays, 12, 0, 0));
+  var m = target.getUTCMonth() + 1;
+  var d = target.getUTCDate();
+  return {
+    dateStr: target.getUTCFullYear() + "-" + (m < 10 ? "0" : "") + m + "-" + (d < 10 ? "0" : "") + d,
+    weekStart: marketWeekStartEt(Math.floor(target.getTime() / 1000)),
+    closeMins: getUsSessionSchedule(target).closeMins
+  };
 }
 
 function isCandleSeriesStale(candles, symbol, rangeKey, nowDate, fetchedAtMs) {
@@ -6254,24 +6278,46 @@ function isCandleSeriesStale(candles, symbol, rangeKey, nowDate, fetchedAtMs) {
     return false;
   }
 
-  // Outside RTH on a weekday after market close: stale if missing today's regular session
-  if (!sched.isWeekend && sched.mins >= sched.closeMins) {
-    if (isIntraday || tf === "1D" || tf === "D" || tf === "1d" || tf === "day") {
-      return lastEt < curEt;
+  // Outside RTH (weekday post-close, weekends, and weekday pre-market):
+  // Validate against the most recent completed weekday regular session.
+  var expected = expectedLastSessionEt(nowMs, sched);
+
+  if (fetchedMs !== null && fetchedMs > 0) {
+    var fetchedEt = marketDateEt(fetchedMs / 1000);
+    if (fetchedEt > expected.dateStr) {
+      return false;
     }
-    if (fetchedMs !== null && fetchedMs > 0 && marketDateEt(fetchedMs / 1000) === curEt) {
+    if (fetchedEt === expected.dateStr) {
       var fetchedSched = getUsSessionSchedule(new Date(fetchedMs));
-      if (fetchedSched.mins >= sched.closeMins) return false;
+      if (fetchedSched.mins >= fetchedSched.closeMins) {
+        return false;
+      }
+      return true;
     }
-    if (tf === "1W" || tf === "W" || tf === "1w" || tf === "week") {
-      return marketWeekStartEt(lastTs) < marketWeekStartEt(nowSec);
+    return true;
+  }
+
+  if (isIntraday) {
+    if (lastEt < expected.dateStr) return true;
+    if (lastEt === expected.dateStr) {
+      var lastOffsetMs = (isUsDstUtc(lastTs * 1000) ? -4 : -5) * 3600000;
+      var lastEtDt = new Date(lastTs * 1000 + lastOffsetMs);
+      var lastEtMins = lastEtDt.getUTCHours() * 60 + lastEtDt.getUTCMinutes();
+      var barMins = tfNorm === "60" ? 60 : (tfNorm === "30" ? 30 : (tfNorm === "15" ? 15 : (tfNorm === "5" ? 5 : 1)));
+      var finalStartMins = expected.closeMins - Math.min(30, barMins);
+      if (lastEtMins < finalStartMins) return true;
     }
-    if (tf === "1M" || tf === "M") {
-      return lastEt.slice(0, 7) < curEt.slice(0, 7);
-    }
-    if (tf === "1Y" || tf === "Y") {
-      return lastEt.slice(0, 4) < curEt.slice(0, 4);
-    }
+    return false;
+  }
+  if (tf === "1D" || tf === "D" || tf === "1d" || tf === "day") {
+    return lastEt < expected.dateStr;
+  }
+  if (tf === "1W" || tf === "W" || tf === "1w" || tf === "week" ||
+      tf === "1M" || tf === "M" ||
+      tf === "1Y" || tf === "Y") {
+    // HTF bar timestamps are anchored to period start (Monday / 1st / Jan 1), so without a
+    // known post-close fetchedAt timestamp we cannot trust mid-period cached bars.
+    return true;
   }
 
   return false;
@@ -6288,6 +6334,14 @@ function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
     return candles;
   }
 
+  var now = (nowDate instanceof Date && isFinite(nowDate.getTime())) ? nowDate : new Date();
+  if (quote.symbol && isUsEquitySessionSymbol(quote.symbol)) {
+    var rthSched = getUsSessionSchedule(now, quote);
+    if (rthSched.isWeekend || rthSched.mins < rthSched.openMins - 2 || rthSched.mins > rthSched.closeMins + 2) {
+      return candles;
+    }
+  }
+
   var rawPrice = quote.regularPrice != null ? quote.regularPrice : (quote.regularMarketPrice != null ? quote.regularMarketPrice : (quote.price != null ? quote.price : null));
   var price = finiteOrNull(rawPrice);
   if (price === null) return candles;
@@ -6296,7 +6350,6 @@ function updateDevelopingCandle(candles, quote, rangeKey, nowDate) {
   var lastIdx = list.length - 1;
   var last = Object.assign({}, list[lastIdx]);
   var range = String(rangeKey || "1D");
-  var now = (nowDate instanceof Date) ? nowDate : new Date();
   var nowSec = Math.floor(now.getTime() / 1000);
 
   if (range === "1D" || range === "D" || range === "1d" || range === "day") {
@@ -6525,6 +6578,7 @@ function updateCachedDevelopingCandles(cache, sym, quote, timeframes, nowDate) {
   var changedKeys = [];
   var seen = {};
   var tsNow = nowDate || new Date();
+  var quoteWithSym = quote.symbol ? quote : Object.assign({ symbol: sym }, quote);
   for (var i = 0; i < timeframes.length; i++) {
     var tf = timeframes[i];
     if (!tf || seen[tf]) continue;
@@ -6532,7 +6586,7 @@ function updateCachedDevelopingCandles(cache, sym, quote, timeframes, nowDate) {
     var k = cacheKey(sym, tf);
     var existing = cache[k];
     if (existing && existing.length > 0) {
-      var updated = updateDevelopingCandle(existing, quote, tf, tsNow);
+      var updated = updateDevelopingCandle(existing, quoteWithSym, tf, tsNow);
       if (updated !== existing) {
         cache[k] = updated;
         changedKeys.push(k);

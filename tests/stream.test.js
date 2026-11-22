@@ -92,6 +92,30 @@ test("decodeYahooPricingProtobuf and normalizeYahooTick handle regular, pre/post
   assert.equal(tickCrypto.symbol, "ETH-USD")
   assert.equal(tickCrypto.session, "live")
   assert.equal(tickCrypto.hasExtended, false)
+
+  // Overnight tick (marketHours=4) maps to extended "post" and never regular; unknown marketHours maps to "closed"
+  const overnightBuf = Buffer.concat([
+    pbString(1, "MPWR"),
+    pbFloat(2, 1142.05),
+    pbVarint(6, 8),
+    pbVarint(7, 4) // OVERNIGHT_MARKET
+  ])
+  const tickOvernight = Stream.normalizeYahooTick(Stream.decodeYahooPricingProtobuf(overnightBuf))
+  assert.equal(tickOvernight.symbol, "MPWR")
+  assert.equal(tickOvernight.session, "post")
+  assert.equal(tickOvernight.hasExtended, true)
+  assert.ok(Math.abs(tickOvernight.extendedPrice - 1142.05) < 1e-2)
+  assert.equal(tickOvernight.regularPrice, undefined)
+
+  const unknownHoursBuf = Buffer.concat([
+    pbString(1, "MPWR"),
+    pbFloat(2, 1142.05),
+    pbVarint(6, 8),
+    pbVarint(7, 9) // unknown / closed
+  ])
+  const tickClosed = Stream.normalizeYahooTick(Stream.decodeYahooPricingProtobuf(unknownHoursBuf))
+  assert.equal(tickClosed.session, "closed")
+  assert.equal(tickClosed.regularPrice, undefined)
 })
 
 test("normalizeCoinbaseTick and normalizeHyperliquidMids normalize exchange WS messages", () => {
@@ -345,4 +369,91 @@ test("SetupAlertScanner seeds on hydration without firing, fires once on live RT
   } finally {
     scanner.dispose()
   }
+})
+
+test("OffThreadCandleCache persists fetchedAt and SetupAlertScanner rehydrates stale prior-week cache on weekends", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "omafinance-stale-cache-"))
+  try {
+    const c1 = new Stream.OffThreadCandleCache(tmpDir)
+    await c1.load()
+    const priorFri = Date.UTC(2026, 10, 13, 14, 30) / 1000
+    const prevWeek = Date.UTC(2026, 10, 6, 14, 30) / 1000
+    const stale1D = [
+      { timestamp: prevWeek, open: 200, high: 210, low: 170, close: 180, volume: 100 },
+      { timestamp: priorFri, open: 178, high: 188, low: 173, close: 184, volume: 100 }
+    ]
+    const savedAt = Date.UTC(2026, 10, 13, 21, 10)
+    c1.put("DDOG_1D", stale1D, null, savedAt)
+    await c1.flush()
+
+    const c2 = new Stream.OffThreadCandleCache(tmpDir)
+    await c2.load()
+    assert.equal(c2.getFetchedAt("DDOG_1D"), savedAt)
+
+    const fetchedCalls = []
+    const sunNov22 = new Date("2026-11-22T22:55:00Z")
+    const freshFri = Date.UTC(2026, 10, 20, 14, 30) / 1000
+    const fresh1D = [
+      ...stale1D,
+      { timestamp: freshFri, open: 182, high: 182, low: 156, close: 157, volume: 120 }
+    ]
+    const scanner = new Stream.SetupAlertScanner({
+      cache: c2,
+      now: () => sunNov22,
+      resolveHoldings: async () => ({ holdings: [] }),
+      fetchChart: async (sym, tf) => {
+        fetchedCalls.push(`${sym}_${tf}`)
+        if (sym === "DDOG" && tf === "1D") return { symbol: "DDOG", candles: fresh1D }
+        return null
+      }
+    })
+    try {
+      await scanner.setConfig(["DDOG"], {}, true)
+      await new Promise(r => setTimeout(r, 40))
+      assert.ok(fetchedCalls.includes("DDOG_1D"), "stale prior-week 1D must be refetched on weekend")
+      const st = scanner.symbolState.get("DDOG")
+      assert.equal(st.candles["1D"].length, 3)
+      // External chart update (e.g. from GridWindow) updates tracked state immediately
+      scanner.onExternalChartUpdate("DDOG", "1D", {
+        symbol: "DDOG",
+        candles: [
+          ...fresh1D.slice(0, 2),
+          { timestamp: freshFri, open: 182, high: 182, low: 155, close: 155.5, volume: 130 }
+        ]
+      })
+      assert.equal(st.candles["1D"][2].close, 155.5)
+    } finally {
+      scanner.dispose()
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
+
+test("updateTrailingCandleInPlace blocks off-RTH and weekend phantom rollovers on US equities", () => {
+  const Model = require("../src/Model.js")
+  const sunEve = new Date("2026-11-22T23:23:00Z")
+  const fri30 = [
+    { timestamp: Date.UTC(2026, 10, 20, 20, 0) / 1000, open: 1161.26, high: 1163.58, low: 1147.01, close: 1149.96, volume: 100 },
+    { timestamp: Date.UTC(2026, 10, 20, 20, 30) / 1000, open: 1149.31, high: 1157.00, low: 1132.78, close: 1142.05, volume: 100 }
+  ]
+  const fri60 = [
+    { timestamp: Date.UTC(2026, 10, 20, 19, 30) / 1000, open: 1163.74, high: 1167.92, low: 1147.01, close: 1149.96, volume: 100 },
+    { timestamp: Date.UTC(2026, 10, 20, 20, 30) / 1000, open: 1149.31, high: 1157.00, low: 1132.78, close: 1142.05, volume: 100 }
+  ]
+  const fri1D = [
+    { timestamp: Date.UTC(2026, 10, 19, 14, 30) / 1000, open: 1368.30, high: 1378.06, low: 1288.08, close: 1295.86, volume: 100 },
+    { timestamp: Date.UTC(2026, 10, 20, 14, 30) / 1000, open: 1260.38, high: 1271.13, low: 1132.78, close: 1142.05, volume: 100 }
+  ]
+  const spoofTick = { symbol: "MPWR", price: 1142.05, regularPrice: 1142.05, session: "regular" }
+
+  const res30 = Stream.updateTrailingCandleInPlace(fri30, spoofTick, "30", sunEve)
+  const res60 = Stream.updateTrailingCandleInPlace(fri60, spoofTick, "60", sunEve)
+  const res1D = Stream.updateTrailingCandleInPlace(fri1D, spoofTick, "1D", sunEve)
+  assert.equal(res30.length, 2)
+  assert.equal(res60.length, 2)
+  assert.equal(res1D.length, 2)
+  assert.equal(Model.stratScenario(res30[1], res30[0]), "2d")
+  assert.equal(Model.stratScenario(res60[1], res60[0]), "2d")
+  assert.equal(Model.stratScenario(res1D[1], res1D[0]), "2d")
 })
