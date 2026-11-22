@@ -54,7 +54,6 @@ Panel {
     property string layoutActionStatus: ""
     property string discordWebhook: ""
     property var symbolLevels: ({})
-    property var signalStates: ({})
     property var symbolPriceMemory: ({})
     property var alertLog: []
     // 0 = live, -1 = muted until unmuted, >0 = muted until epoch ms (see Model.isAlertsMuted)
@@ -63,11 +62,6 @@ Panel {
     readonly property bool alertsMuted: Model.isAlertsMuted(alertsMutedUntil, new Date(muteClockMs))
     readonly property string alertsMuteStatus: Model.alertsMuteStatusText(alertsMutedUntil, new Date(muteClockMs))
     readonly property string alertSoundPath: "/usr/share/sounds/freedesktop/stereo/message-new-instant.oga"
-    property var armedWatchlistSetups: []
-    property var bgCandleCache: ({})
-    property var bgScanQueue: []
-    property string bgFetchSymbol: ""
-    property string bgFetchRange: ""
     property bool gridOpened: false
     property string chartFetchSymbol: ""
     property string chartFetchRange: ""
@@ -411,7 +405,6 @@ Panel {
     function persist() {
         stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, discordWebhook, gridTimeframes, gridZooms, {
             symbolLevels: root.symbolLevels,
-            signalStates: root.signalStates,
             alertLog: root.alertLog,
             alertsMutedUntil: root.alertsMutedUntil
         }));
@@ -517,7 +510,6 @@ Panel {
     function openAlerts() {
         root.clearSearch();
         root.view = "alerts";
-        root.triggerWatchlistStratScan();
     }
 
     function quoteFor(sym) {
@@ -576,7 +568,6 @@ Panel {
             var w = root.activeGridWindows[i];
             if (w && w.visible) {
                 w.symbolLevels = root.symbolLevels;
-                w.signalStates = root.signalStates;
             }
         }
     }
@@ -679,106 +670,6 @@ Panel {
         }
     }
 
-    function triggerWatchlistStratScan() {
-        var list = root.watchlist || [];
-        if (list.length === 0)
-            return;
-        var queue = [];
-        for (var i = 0; i < list.length; i++) {
-            var sym = list[i];
-            if (!sym)
-                continue;
-            queue.push({
-                symbol: sym,
-                rangeKey: "60"
-            });
-            queue.push({
-                symbol: sym,
-                rangeKey: "1D"
-            });
-        }
-        root.bgScanQueue = queue;
-        if (!bgChartProc.running)
-            root.processNextBgStratFetch();
-    }
-
-    function processNextBgStratFetch() {
-        if (!root.bgScanQueue || root.bgScanQueue.length === 0)
-            return;
-        if (streamProc.running && root.streamReady) {
-            var nowMs = Date.now();
-            while (root.bgScanQueue.length > 0) {
-                var item = root.bgScanQueue.shift();
-                var k = Model.cacheKey(item.symbol, item.rangeKey);
-                var lastTs = root.streamFetchedAt[k] || 0;
-                if (lastTs > 0 && (nowMs - lastTs) < 55000 && root.chartCache && root.chartCache[k] && root.chartCache[k].length > 0) {
-                    if (item.rangeKey === "1D")
-                        root.evaluateBgSymbolStrat(item.symbol);
-                    continue;
-                }
-                root.requestSharedChartFetch(item.symbol, item.rangeKey, true);
-            }
-            return;
-        }
-        var next = root.bgScanQueue.shift();
-        root.bgFetchSymbol = next.symbol;
-        root.bgFetchRange = next.rangeKey;
-        bgChartProc.command = Model.chartCommand(next.symbol, next.rangeKey);
-        bgChartProc.running = true;
-    }
-
-    function evaluateBgSymbolStrat(sym) {
-        if (!sym)
-            return;
-        var hCandles = (root.chartCache && root.chartCache[Model.cacheKey(sym, "60")]) || root.bgCandleCache[sym + "_60"] || [];
-        var dCandles = (root.chartCache && root.chartCache[Model.cacheKey(sym, "1D")]) || root.bgCandleCache[sym + "_1D"] || [];
-        if (hCandles.length < 3 || dCandles.length < 3)
-            return;
-        var q = root.quotes[sym] || null;
-        var chk = Model.evaluateStratChecklist(sym, hCandles, dCandles, q, new Date());
-        if (!chk)
-            return;
-
-        // Update Watchlist Strat Radar list
-        var currentRadar = (root.armedWatchlistSetups || []).filter(function (item) {
-            return item && item.symbol !== sym;
-        });
-        if (chk.status === "TRADEABLE" || chk.status === "ARMED") {
-            currentRadar.unshift({
-                symbol: chk.symbol,
-                direction: chk.direction,
-                setupTimeframe: chk.setupTimeframe,
-                status: chk.status,
-                passedCount: chk.passedCount,
-                totalCount: chk.totalCount,
-                triggerPrice: chk.triggerPrice,
-                stopPrice: chk.stopPrice,
-                targetPrice: chk.targetPrice
-            });
-        }
-        root.armedWatchlistSetups = currentRadar;
-
-        var transition = Model.evaluateStratAlertTransition(chk, q, root.signalStates, root.symbolPriceMemory, {
-            replayActive: false,
-            nowDate: new Date(),
-            enableArmedAlerts: true
-        });
-        root.symbolPriceMemory = transition.nextPriceMemory;
-        if (transition.stateUpdated) {
-            root.signalStates = transition.nextStates;
-            root.syncActiveGridsAlertState();
-            root.persist();
-        }
-        if (transition.shouldNotify && transition.eventType) {
-            root.dispatchAlert({
-                title: transition.title,
-                body: transition.body,
-                discordPayload: Model.discordAlertPayload(chk, transition.eventType),
-                logEntry: transition.logEntry
-            });
-        }
-    }
-
     function applyState(raw) {
         var state = Model.parseState(raw);
         var before = (watchlist || []).join("\n");
@@ -807,8 +698,6 @@ Panel {
             discordWebhook = state.discordWebhook;
         if (state.symbolLevels)
             symbolLevels = state.symbolLevels;
-        if (state.signalStates)
-            signalStates = state.signalStates;
         if (state.alertLog)
             alertLog = state.alertLog;
         alertsMutedUntil = state.alertsMutedUntil !== undefined ? state.alertsMutedUntil : 0;
@@ -2037,8 +1926,6 @@ Panel {
                         dp.chartUpdatedAt = Date.now();
                     }
                 }
-                if (msg.rangeKey === "1D" && (root.watchlist || []).indexOf(msg.symbol) !== -1)
-                    root.evaluateBgSymbolStrat(msg.symbol);
             } else {
                 if (cKey) {
                     var allPanelsErr = HubRegistry.allPanels();
@@ -2137,28 +2024,6 @@ Panel {
 
     Process {
         id: barMoveProc
-    }
-
-    Process {
-        id: bgChartProc
-        onExited: function (exitCode) {
-            var raw = String(bgChartStdout.text || "");
-            var sym = root.bgFetchSymbol;
-            var rk = root.bgFetchRange;
-            var parsed = (exitCode === 0 && raw && sym && rk) ? Model.parseChart(raw, rk, sym) : null;
-            if (parsed && parsed.candles) {
-                var sharedKey = Model.cacheKey(sym, rk);
-                root.updateSharedCandles(sharedKey, parsed.candles, parsed.symbol ? parsed : null);
-                if (rk === "1D")
-                    root.evaluateBgSymbolStrat(sym);
-            }
-            if (root.bgScanQueue && root.bgScanQueue.length > 0)
-                Qt.callLater(root.processNextBgStratFetch);
-        }
-        stdout: StdioCollector {
-            id: bgChartStdout
-            waitForEnd: true
-        }
     }
 
     Process {
@@ -2494,17 +2359,6 @@ Panel {
         running: root.showBarData && (root.pinned || []).length > 1
         repeat: true
         onTriggered: root.pinIndex = root.pinIndex + 1
-    }
-
-    Timer {
-        id: bgStratScanTimer
-        interval: 60000
-        running: root.isStreamLeader && root.showBarQuote && (root.watchlist || []).length > 0
-        repeat: true
-        onTriggered: {
-            if (Model.isUsMarketOpen(new Date(), false))
-                root.triggerWatchlistStratScan();
-        }
     }
 
     Timer {
@@ -3044,7 +2898,6 @@ Panel {
             cellTimeframes: initialTfs,
             cellZooms: initialZooms,
             symbolLevels: root.symbolLevels || ({}),
-            signalStates: root.signalStates || ({}),
             symbolPriceMemory: root.symbolPriceMemory || ({}),
             rowSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].rowRatio ? currentSplits[currentMode].rowRatio : 0.5,
             topColSplitRatio: currentSplits[currentMode] && currentSplits[currentMode].colTopRatio ? currentSplits[currentMode].colTopRatio : 0.5,
@@ -3123,12 +2976,6 @@ Panel {
                 var nextMap = Object.assign({}, root.symbolLevels || ({}));
                 nextMap[sym] = nextLevels || [];
                 root.symbolLevels = nextMap;
-                root.syncActiveGridsAlertState();
-                root.persist();
-            }
-
-            onSignalStatesUpdated: function (nextStates) {
-                root.signalStates = Object.assign({}, root.signalStates || ({}), nextStates || ({}));
                 root.syncActiveGridsAlertState();
                 root.persist();
             }

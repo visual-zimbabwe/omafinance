@@ -1786,15 +1786,12 @@ FloatingWindow {
                             companyName: tileWrapper.name || ""
                             timeframe: root.timeframe
                             showBroadening: root.showBroadening
-                            hideStratBadge: true
                             disableTickerSearch: true
                             activeFocusCell: root.activeTileIndex === tileWrapper.index
                             zoomCount: root.globalBarCount
 
                             quote: (tileWrapper.dataRev >= 0) ? (root.quotes[tileWrapper.symbol] || null) : null
                             candles: (tileWrapper.dataRev >= 0) ? root.getCandles(tileWrapper.symbol, root.timeframe) : []
-                            hourlyCandles: (tileWrapper.dataRev >= 0) ? root.getCandles(tileWrapper.symbol, "60") : []
-                            dailyCandles: (tileWrapper.dataRev >= 0) ? root.getCandles(tileWrapper.symbol, "1D") : []
                             priceLevels: root.symbolLevels[tileWrapper.symbol] || []
 
                             onFocusRequested: function (idx) {
@@ -1938,8 +1935,6 @@ FloatingWindow {
                                         zoomCount: root.globalBarCount
                                         quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
                                         candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "30") : []
-                                        hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                        dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
                                         onZoomChangedManually: function (idx, nextZoom) {
                                             root.setGlobalBarCountDebounced(nextZoom);
                                         }
@@ -1958,8 +1953,6 @@ FloatingWindow {
                                         zoomCount: root.globalBarCount
                                         quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
                                         candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                        hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                        dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
                                         onZoomChangedManually: function (idx, nextZoom) {
                                             root.setGlobalBarCountDebounced(nextZoom);
                                         }
@@ -1985,8 +1978,6 @@ FloatingWindow {
                                         zoomCount: root.globalBarCount
                                         quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
                                         candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
-                                        hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                        dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
                                         onZoomChangedManually: function (idx, nextZoom) {
                                             root.setGlobalBarCountDebounced(nextZoom);
                                         }
@@ -2005,8 +1996,6 @@ FloatingWindow {
                                         zoomCount: root.globalBarCount
                                         quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
                                         candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1W") : []
-                                        hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                        dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
                                         onZoomChangedManually: function (idx, nextZoom) {
                                             root.setGlobalBarCountDebounced(nextZoom);
                                         }
@@ -2025,8 +2014,6 @@ FloatingWindow {
                                         zoomCount: root.globalBarCount
                                         quote: (root.drillDownDataRev >= 0) ? (root.quotes[root.drillDownSymbol] || null) : null
                                         candles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1M") : []
-                                        hourlyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "60") : []
-                                        dailyCandles: (root.drillDownDataRev >= 0) ? root.getCandles(root.drillDownSymbol, "1D") : []
                                         onZoomChangedManually: function (idx, nextZoom) {
                                             root.setGlobalBarCountDebounced(nextZoom);
                                         }

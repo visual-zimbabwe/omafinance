@@ -24,7 +24,6 @@ const qmlFiles = [
   "FtfcStrip.qml",
   "FinanceSurface.qml",
   "FinanceLayoutsView.qml",
-  "StratChecklistPopup.qml",
   "InlineExpandSelector.qml",
   "FinanceInputBox.qml",
   "FinanceChipButton.qml",
@@ -444,25 +443,18 @@ test("fetch-etf-holdings script exists and integrates with SEC EDGAR dynamic dis
   assert.match(scriptContent, /Model\.parseNportXml/)
 })
 
-test("grid cells provide live 9-rule Strat checklist text status on execution timeframe with localized inspector popup", () => {
-  const popup = fs.readFileSync(source("StratChecklistPopup.qml"), "utf8")
+test("strat checklist UI, badge, popup, and checklist-driven strat alerts are completely removed", () => {
   const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
   const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+  const panel = fs.readFileSync(source("Panel.qml"), "utf8")
+  const alertsView = fs.readFileSync(source("FinanceAlertsView.qml"), "utf8")
 
-  assert.match(popup, /STRAT CHECKLIST/)
-  assert.match(popup, /STRAT RATIONALE/)
-  assert.match(popup, /TRADEABLE/)
-  assert.match(popup, /BLOCKED/)
-  assert.match(popup, /Color\.background/)
-  assert.doesNotMatch(grid, /masterStratChecklist/)
-  assert.match(cell, /stratChecklist/)
-  assert.match(cell, /isExecutionTimeframeCell/)
-  assert.match(cell, /id:\s*stratBadgeText/)
-  assert.match(cell, /id:\s*cellChecklistPopup/)
-  assert.match(cell, /signal stratTradeableDetected/)
-  assert.match(grid, /notifyStratTradeable/)
+  assert.equal(fs.existsSync(source("StratChecklistPopup.qml")), false)
+  assert.doesNotMatch(cell, /stratChecklist|isExecutionTimeframeCell|stratBadgeText|cellChecklistPopup|stratTradeableDetected|hideStratBadge/)
+  assert.doesNotMatch(grid, /masterStratChecklist|notifyStratTradeable|evaluateStratAlertTransition|discordAlertPayload|signalStates/)
+  assert.doesNotMatch(panel, /evaluateStratChecklist|evaluateStratAlertTransition|discordAlertPayload|triggerWatchlistStratScan|armedWatchlistSetups|signalStates/)
+  assert.doesNotMatch(alertsView, /Watchlist Strat Radar|armedWatchlistSetups/)
   assert.match(grid, /alertDispatchRequested/)
-  assert.match(grid, /discordAlertPayload/)
   assert.doesNotMatch(grid, /notify-send/)
 })
 
@@ -584,22 +576,18 @@ test("candlestick chart renders broadening formation lines with white #FFFFFF an
   assert.match(chart, /var anchorMode = isThirtyMinChart \? "day" : \(isHourlyChart \? "week" : \(isWeeklyChart \? "quarter" : \(isMonthlyChart \? "year" : "month"\)\)\)/)
 })
 
-test("alert engine integrates RTH session gating, edge-crossing state sync, price level alerts, and FinanceAlertsView", () => {
-  const cell = fs.readFileSync(source("GridCell.qml"), "utf8")
+test("alert engine integrates RTH session gating, price level alerts, and FinanceAlertsView", () => {
   const win = fs.readFileSync(source("GridWindow.qml"), "utf8")
   const chart = fs.readFileSync(source("CandlestickChart.qml"), "utf8")
   const panel = fs.readFileSync(source("Panel.qml"), "utf8")
   const alertsView = fs.readFileSync(source("FinanceAlertsView.qml"), "utf8")
 
-  assert.match(cell, /new Date\(root\.liveClockMs\)/)
-  assert.match(win, /Model\.evaluateStratAlertTransition/)
   assert.match(win, /Model\.evaluatePriceLevelAlerts/)
   assert.match(chart, /function toggleEditingLevelAlert\(\)/)
   assert.match(chart, /function cycleEditingLevelCondition\(\)/)
   assert.match(panel, /FinanceAlertsView\s*\{/)
   assert.match(panel, /function evaluateWatchlistPriceAlerts\(incomingQuotes\)/)
-  assert.match(panel, /function triggerWatchlistStratScan\(\)/)
-  assert.match(alertsView, /Alert Book & Study Radar/)
+  assert.match(alertsView, /Alert Book/)
 })
 
 test("grid window supports F fullscreen toggle, Tab/Backtab timeframe cycling in 1x1, chart double-click, and transient 1x1 persistence protection", () => {
@@ -634,7 +622,6 @@ test("sector analysis window supports multi-tier recursive locking, 4-worker cha
   assert.match(win, /id:\s*lockBtn/)
   assert.match(win, /\(Locked\)/)
   assert.match(cell, /companyName/)
-  assert.match(cell, /hideStratBadge/)
   assert.match(win, /readonly property var sectorTickers:\s*Model\.parseSectorTickers/)
   assert.match(win, /readonly property bool isMultiTicker:\s*sectorTickers\.length > 1/)
   const inputBox = fs.readFileSync(source("FinanceInputBox.qml"), "utf8")
