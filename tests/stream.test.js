@@ -183,7 +183,7 @@ test("market-stream daemon starts, reports ready over NDJSON stdio, and exits cl
   assert.ok(lines.some(m => m.type === "ready"))
 })
 
-test("OffThreadCandleCache reads legacy v1 format, cleans attack.json, writes compact v2, and reloads cleanly", async () => {
+test("OffThreadCandleCache reads legacy v1 format, writes compact v2, and reloads cleanly", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "omafinance-cache-"))
   try {
     const legacy = {
@@ -192,7 +192,6 @@ test("OffThreadCandleCache reads legacy v1 format, cleans attack.json, writes co
       ]
     }
     fs.writeFileSync(path.join(tmpDir, "candles.json"), JSON.stringify(legacy))
-    fs.writeFileSync(path.join(tmpDir, "attack.json"), "{}")
 
     const cache1 = new Stream.OffThreadCandleCache(tmpDir)
     await cache1.load()

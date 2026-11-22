@@ -348,14 +348,12 @@ FloatingWindow {
         }
     }
 
-    // Breadth Attack Metrics Calculation (Equal-Weighted, throttled via breadthUpdateTimer)
-    property var breadthMetrics: Model.computeBasketAttackMetrics("", "", "Sector", [], {}, {}, "1W")
+    // Sector Breadth Calculation (Equal-Weighted, throttled via breadthUpdateTimer)
+    property var breadthMetrics: Model.computeSectorBreadth([], {}, {})
 
     function recomputeBreadthMetrics() {
-        var dailyCandlesMap = {};
+        var candlesMap = {};
         var targetHoldings = [];
-        var labelSym = root.sectorSymbol;
-        var labelName = root.sectorFullName;
         var tickers = Model.parseSectorTickers(root.sectorSymbol);
         var isMulti = tickers.length > 1;
 
@@ -365,19 +363,19 @@ FloatingWindow {
                 targetHoldings.push({
                     symbol: sym
                 });
-                dailyCandlesMap[sym] = root.getCandles(sym, root.timeframe);
+                candlesMap[sym] = root.getCandles(sym, root.timeframe);
             }
         } else {
             for (var j = 0; j < root.holdings.length; j++) {
                 var h = root.holdings[j];
                 if (h && h.symbol) {
                     var s = h.symbol;
-                    dailyCandlesMap[s] = root.getCandles(s, root.timeframe);
+                    candlesMap[s] = root.getCandles(s, root.timeframe);
                 }
             }
             targetHoldings = root.holdings;
         }
-        root.breadthMetrics = Model.computeBasketAttackMetrics(labelSym, labelName, "Sector", targetHoldings, dailyCandlesMap, root.quotes, root.timeframe);
+        root.breadthMetrics = Model.computeSectorBreadth(targetHoldings, candlesMap, root.quotes);
     }
 
     Timer {

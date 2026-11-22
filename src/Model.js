@@ -4062,100 +4062,17 @@ function computeHoldingsStratMap(holdings, hourlyCandlesMap, dailyCandlesMap, li
   return map
 }
 
-function detectStratAttack(candles, liveQuote) {
-  var emptyResult = {
-    attackType: "none",
-    direction: "neutral",
-    state: "none",
-    consecutiveCount: 0,
-    triggerPrice: null,
-    label: "-"
-  }
-  if (!isArrayLike(candles) || candles.length < 2) return emptyResult
-
-  var n = candles.length
-  var c0 = Object.assign({}, candles[n - 1])
-  var c1 = candles[n - 2]
-  var c2 = n >= 3 ? candles[n - 3] : null
-  var c3 = n >= 4 ? candles[n - 4] : null
-
-  var livePx = stratLivePrice(liveQuote)
-  if (livePx !== null && isFinite(livePx)) {
-    c0.close = livePx
-    if (c0.high === null || livePx > c0.high) c0.high = livePx
-    if (c0.low === null || livePx < c0.low) c0.low = livePx
-  }
-
-  var s1 = stratScenario(c1, c2)
-  var color1 = (c1.close >= c1.open) ? "G" : "R"
-
-  var s0 = stratScenario(c0, c1)
-  var color0 = (c0.close >= c0.open) ? "G" : "R"
-
-  var s2 = c2 && c3 ? stratScenario(c2, c3) : "-"
-  var color2 = c2 ? ((c2.close >= c2.open) ? "G" : "R") : "-"
-
-  // 1. Bullish Attack (2u-2u / 2u-2u-2u)
-  if (s1 === "2u" && color1 === "G") {
-    var hasBrokenHigh = Number(c0.high) > Number(c1.high)
-    var isGreenToday = color0 === "G"
-    var isScenario2u = s0 === "2u"
-    var inForce = livePx !== null ? (livePx > Number(c1.high) && livePx >= Number(c0.open) && isScenario2u) : (hasBrokenHigh && isGreenToday && isScenario2u)
-
-    if (hasBrokenHigh && isGreenToday && isScenario2u) {
-      var isTriple = (s2 === "2u" && color2 === "G")
-      var attackType = isTriple ? "2u-2u-2u" : "2u-2u"
-      return {
-        attackType: attackType,
-        direction: "bullish",
-        state: inForce ? "in-force" : "confirmed",
-        consecutiveCount: isTriple ? 3 : 2,
-        triggerPrice: Number(c1.high),
-        label: attackType + " Attack"
-      }
-    }
-  }
-
-  // 2. Bearish Attack (2d-2d / 2d-2d-2d)
-  if (s1 === "2d" && color1 === "R") {
-    var hasBrokenLow = Number(c0.low) < Number(c1.low)
-    var isRedToday = color0 === "R"
-    var isScenario2d = s0 === "2d"
-    var inForceDown = livePx !== null ? (livePx < Number(c1.low) && livePx < Number(c0.open) && isScenario2d) : (hasBrokenLow && isRedToday && isScenario2d)
-
-    if (hasBrokenLow && isRedToday && isScenario2d) {
-      var isTripleDown = (s2 === "2d" && color2 === "R")
-      var attackTypeDown = isTripleDown ? "2d-2d-2d" : "2d-2d"
-      return {
-        attackType: attackTypeDown,
-        direction: "bearish",
-        state: inForceDown ? "in-force" : "confirmed",
-        consecutiveCount: isTripleDown ? 3 : 2,
-        triggerPrice: Number(c1.low),
-        label: attackTypeDown + " Attack"
-      }
-    }
-  }
-
-  return emptyResult
-}
-
 var SIMULTANEOUS_BREAK_THRESHOLD = 80
 
-function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings, dailyCandlesMap, liveQuotesMap, timeframe) {
-  var tf = timeframe || "1D"
+function computeSectorBreadth(holdings, candlesMap, liveQuotesMap) {
   var list = isArrayLike(holdings) ? holdings : []
   var total = 0
   var count1 = 0
   var count2u = 0
   var count2d = 0
   var count3 = 0
-  var count2uGreen = 0
-  var count2dRed = 0
   var countF2u = 0
   var countF2d = 0
-  var countAttack2u = 0
-  var countAttack2d = 0
 
   for (var i = 0; i < list.length; i++) {
     var h = list[i]
@@ -4163,12 +4080,11 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     var sym = normalizeSymbol(h.symbol)
     if (!sym) continue
 
-    var candles = dailyCandlesMap ? dailyCandlesMap[sym] : null
+    var candles = candlesMap ? candlesMap[sym] : null
     if (!isArrayLike(candles) || candles.length < 2) continue
 
     total++
     var quote = liveQuotesMap ? liveQuotesMap[sym] : null
-    var attack = detectStratAttack(candles, quote)
     var cLast = Object.assign({}, candles[candles.length - 1])
     var livePx = stratLivePrice(quote)
     if (livePx !== null && isFinite(livePx)) {
@@ -4178,26 +4094,17 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
     }
     var cPrev = candles[candles.length - 2]
     var s0 = stratScenario(cLast, cPrev)
-    var isGreen = Number(cLast.close) >= Number(cLast.open)
-    var isRed = Number(cLast.close) <= Number(cLast.open)
 
-    if (s0 === "1") count1++
-    if (s0 === "2u") {
+    if (s0 === "1") {
+      count1++
+    } else if (s0 === "2u") {
       count2u++
-      if (isGreen) count2uGreen++
-      else countF2u++
-    }
-    if (s0 === "2d") {
+      if (Number(cLast.close) < Number(cLast.open)) countF2u++
+    } else if (s0 === "2d") {
       count2d++
-      if (isRed) count2dRed++
-      else countF2d++
-    }
-    if (s0 === "3") count3++
-
-    if (attack.direction === "bullish") {
-      countAttack2u++
-    } else if (attack.direction === "bearish") {
-      countAttack2d++
+      if (Number(cLast.close) > Number(cLast.open)) countF2d++
+    } else if (s0 === "3") {
+      count3++
     }
   }
 
@@ -4205,74 +4112,25 @@ function computeBasketAttackMetrics(basketSymbol, basketName, category, holdings
   var pct2u = total > 0 ? (count2u / total) * 100 : 0
   var pct2d = total > 0 ? (count2d / total) * 100 : 0
   var pct3 = total > 0 ? (count3 / total) * 100 : 0
-  var pct2uGreen = total > 0 ? (count2uGreen / total) * 100 : 0
-  var pct2dRed = total > 0 ? (count2dRed / total) * 100 : 0
   var pctF2u = total > 0 ? (countF2u / total) * 100 : 0
   var pctF2d = total > 0 ? (countF2d / total) * 100 : 0
-  var pctAttack2u = total > 0 ? (countAttack2u / total) * 100 : 0
-  var pctAttack2d = total > 0 ? (countAttack2d / total) * 100 : 0
-  var netAttackDelta = pctAttack2u - pctAttack2d
-
-  var evidenceBullishCount = count2uGreen + countF2d
-  var evidenceBearishCount = count2dRed + countF2u
-  var evidenceBullishPct = total > 0 ? (evidenceBullishCount / total) * 100 : 0
-  var evidenceBearishPct = total > 0 ? (evidenceBearishCount / total) * 100 : 0
-
-  var status = "NEUTRAL"
-  if (pct2uGreen > pct2dRed) {
-    if ((pct2uGreen >= 70 && pctAttack2u >= 15) || pctAttack2u >= 25 || (pctAttack2u >= 15 && pctAttack2u > pctAttack2d * 1.5)) {
-      status = "BULLISH ATTACK"
-    } else if (pct2uGreen >= 60 || pctAttack2u >= 10) {
-      status = "DEVELOPING BUY"
-    }
-  } else if (pct2dRed > pct2uGreen) {
-    if ((pct2dRed >= 70 && pctAttack2d >= 15) || pctAttack2d >= 25 || (pctAttack2d >= 15 && pctAttack2d > pctAttack2u * 1.5)) {
-      status = "BEARISH ATTACK"
-    } else if (pct2dRed >= 60 || pctAttack2d >= 10) {
-      status = "DEVELOPING SELL"
-    }
-  }
 
   return {
-    symbol: basketSymbol,
-    name: basketName,
-    category: category || "Sector",
-    timeframe: tf,
     totalHoldings: total,
     count1: count1,
     pct1: pct1,
     count2u: count2u,
-    count2d: count2d,
     pct2u: pct2u,
+    count2d: count2d,
     pct2d: pct2d,
-    count2uGreen: count2uGreen,
-    pct2uGreen: pct2uGreen,
-    count2dRed: count2dRed,
-    pct2dRed: pct2dRed,
     count3: count3,
     pct3: pct3,
     countF2u: countF2u,
     pctF2u: pctF2u,
     countF2d: countF2d,
     pctF2d: pctF2d,
-    countFailed2u: countF2u,
-    pctFailed2u: pctF2u,
-    countFailed2d: countF2d,
-    pctFailed2d: pctF2d,
-    evidenceBullishCount: evidenceBullishCount,
-    evidenceBullishPct: evidenceBullishPct,
-    evidenceBearishCount: evidenceBearishCount,
-    evidenceBearishPct: evidenceBearishPct,
-    countAttack2u: countAttack2u,
-    countAttack2d: countAttack2d,
-    pctAttack2u: pctAttack2u,
-    pctAttack2d: pctAttack2d,
-    netAttackDelta: netAttackDelta,
     isSimultaneous2u: Math.round(pct2u) >= SIMULTANEOUS_BREAK_THRESHOLD,
-    isSimultaneous2d: Math.round(pct2d) >= SIMULTANEOUS_BREAK_THRESHOLD,
-    isSimultaneousBreak: (Math.round(pct2uGreen) >= SIMULTANEOUS_BREAK_THRESHOLD || Math.round(pct2dRed) >= SIMULTANEOUS_BREAK_THRESHOLD),
-    isSimultaneousExpansion: (Math.round(pct2u) >= SIMULTANEOUS_BREAK_THRESHOLD || Math.round(pct2d) >= SIMULTANEOUS_BREAK_THRESHOLD),
-    status: status
+    isSimultaneous2d: Math.round(pct2d) >= SIMULTANEOUS_BREAK_THRESHOLD
   }
 }
 
@@ -8907,8 +8765,7 @@ if (typeof module !== "undefined") {
     parseNportXml: parseNportXml,
     sortHoldings: sortHoldings,
     prepareConstituentCandles: prepareConstituentCandles,
-    detectStratAttack: detectStratAttack,
-    computeBasketAttackMetrics: computeBasketAttackMetrics,
+    computeSectorBreadth: computeSectorBreadth,
     stratRuleRationales: stratRuleRationales,
     resolveDominoHtfSignal: resolveDominoHtfSignal,
     resolveUntaggedHtfTargets: resolveUntaggedHtfTargets,

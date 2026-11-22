@@ -731,7 +731,9 @@ test("sector breadth and chartCache lifecycle preserve JS arrays and recompute o
 
   // Model.js must use QVariantList-safe isArrayLike for candle/holding sequences
   assert.match(modelSrc, /function isArrayLike\(v\)/)
-  assert.match(modelSrc, /function computeBasketAttackMetrics[\s\S]*?if \(!isArrayLike\(candles\)/)
+  assert.match(modelSrc, /function computeSectorBreadth[\s\S]*?if \(!isArrayLike\(candles\)/)
+  assert.doesNotMatch(modelSrc, /function detectStratAttack|function computeBasketAttackMetrics/)
+  assert.doesNotMatch(sectorWin, /detectStratAttack|computeBasketAttackMetrics/)
   assert.match(modelSrc, /function buildScenarioContext[\s\S]*?if \(!isArrayLike\(candles\)/)
 
   // Panel.qml must emit candleCacheUpdated on disk load and assign chartCache after createObject

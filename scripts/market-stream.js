@@ -605,7 +605,6 @@ class OffThreadCandleCache {
   constructor(cacheDir) {
     this.cacheDir = cacheDir || path.join(os.homedir(), ".cache", "omafinance");
     this.cachePath = path.join(this.cacheDir, "candles.json");
-    this.legacyAttackPath = path.join(this.cacheDir, "attack.json");
     // Store compact v2 tuple arrays ([t,o,h,l,c,v]) in RAM to minimize V8 heap footprint
     this.packedEntries = {};
     this.accessTimes = {};
@@ -619,8 +618,6 @@ class OffThreadCandleCache {
   async load() {
     if (this.loaded) return this.packedEntries;
     try {
-      // Remove legacy dead attack.json cache file if present
-      fsp.unlink(this.legacyAttackPath).catch(() => {});
       const raw = await fsp.readFile(this.cachePath, "utf8");
       if (raw && raw.length > 2) {
         const parsed = JSON.parse(raw);
