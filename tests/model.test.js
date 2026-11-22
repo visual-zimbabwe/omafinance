@@ -2165,107 +2165,55 @@ test("parseNportXml resolves international holdings via ISIN and custom mappings
   assert.equal(parsed.holdings[1].relativeRatio, 0.5)
 })
 
-test("detectStratAttack detects 2u-2u, 2u-2u-2u, 2d-2d, 2d-2d-2d and in-force vs confirmed states", () => {
-  assert.equal(Model.detectStratAttack([]).attackType, "none")
-  assert.equal(Model.detectStratAttack([{ open: 10, high: 12, low: 9, close: 11 }]).attackType, "none")
-
-  // Setup candles for 2u-2u bullish attack:
-  const c2 = { open: 100, high: 105, low: 95, close: 102 }
-  const c1 = { open: 101, high: 110, low: 98, close: 108 }
-  const c0 = { open: 109, high: 115, low: 107, close: 114 }
-
-  const res2u = Model.detectStratAttack([c2, c1, c0])
-  assert.equal(res2u.attackType, "2u-2u")
-  assert.equal(res2u.direction, "bullish")
-  assert.equal(res2u.consecutiveCount, 2)
-  assert.equal(res2u.triggerPrice, 110)
-  assert.equal(res2u.label, "2u-2u Attack")
-
-  // Setup candles for 2u-2u-2u triple bullish attack:
-  const c3 = { open: 90, high: 95, low: 88, close: 92 }
-  const c2Triple = { open: 93, high: 102, low: 91, close: 100 }
-  const c1Triple = { open: 101, high: 110, low: 99, close: 108 }
-  const c0Triple = { open: 109, high: 116, low: 107, close: 115 }
-
-  const resTriple = Model.detectStratAttack([c3, c2Triple, c1Triple, c0Triple])
-  assert.equal(resTriple.attackType, "2u-2u-2u")
-  assert.equal(resTriple.direction, "bullish")
-  assert.equal(resTriple.consecutiveCount, 3)
-  assert.equal(resTriple.triggerPrice, 110)
-
-  // Setup candles for 2d-2d bearish attack:
-  const c2Bear = { open: 100, high: 105, low: 95, close: 98 }
-  const c1Bear = { open: 97, high: 99, low: 88, close: 90 }
-  const c0Bear = { open: 89, high: 91, low: 82, close: 84 }
-
-  const res2d = Model.detectStratAttack([c2Bear, c1Bear, c0Bear])
-  assert.equal(res2d.attackType, "2d-2d")
-  assert.equal(res2d.direction, "bearish")
-  assert.equal(res2d.consecutiveCount, 2)
-  assert.equal(res2d.triggerPrice, 88)
-  assert.equal(res2d.label, "2d-2d Attack")
-
-  // In-force detection via live quote:
-  const liveQuoteInForce = { regularMarketPrice: 112 }
-  const resInForce = Model.detectStratAttack([c2, c1, c0], liveQuoteInForce)
-  assert.equal(resInForce.state, "in-force")
-
-  const liveQuotePullback = { regularMarketPrice: 109.5 }
-  const resPullback = Model.detectStratAttack([c2, c1, c0], liveQuotePullback)
-  assert.equal(resPullback.state, "confirmed")
-})
-
-test("computeBasketAttackMetrics evaluates group attacks and breakout metrics", () => {
+test("computeSectorBreadth counts 2u, 2d, 1, 3, 2u Red, and 2d Green with live quotes", () => {
   const holdings = [
-    { symbol: "AAA", name: "Alpha Inc", pctVal: 40 },
-    { symbol: "BBB", name: "Beta Corp", pctVal: 30 },
-    { symbol: "CCC", name: "Gamma Ltd", pctVal: 20 },
-    { symbol: "DDD", name: "Delta Co", pctVal: 10 }
+    { symbol: "AAA", name: "Alpha Inc", pctVal: 25 },
+    { symbol: "BBB", name: "Beta Corp", pctVal: 25 },
+    { symbol: "CCC", name: "Gamma Ltd", pctVal: 15 },
+    { symbol: "DDD", name: "Delta Co", pctVal: 15 },
+    { symbol: "EEE", name: "Epsilon Co", pctVal: 10 },
+    { symbol: "FFF", name: "Zeta Co", pctVal: 10 }
   ]
 
-  const c2Bull = { open: 100, high: 105, low: 95, close: 102 }
-  const c1Bull = { open: 101, high: 110, low: 98, close: 108 }
-  const c0Bull = { open: 109, high: 115, low: 107, close: 114 }
-
-  const c1CCC = { open: 92, high: 100, low: 90, close: 97 }
-  const c0CCC = { open: 96, high: 99, low: 95, close: 98.5 }
-
-  const c1DDD = { open: 100, high: 105, low: 95, close: 98 }
-  const c0DDD = { open: 96, high: 97, low: 88, close: 90 }
-
-  const dailyMap = {
-    "AAA": [c2Bull, c1Bull, c0Bull],
-    "BBB": [c2Bull, c1Bull, c0Bull],
-    "CCC": [c1CCC, c0CCC],
-    "DDD": [c1DDD, c0DDD]
+  const base = { open: 100, high: 105, low: 95, close: 102 }
+  const candlesMap = {
+    // 2u green
+    "AAA": [base, { open: 103, high: 108, low: 101, close: 107 }],
+    // 2u red (broke 105 high, closed below open)
+    "BBB": [base, { open: 104, high: 107, low: 98, close: 101 }],
+    // 2d red (live quote pushes low below 95)
+    "CCC": [base, { open: 99, high: 101, low: 96, close: 97 }],
+    // 2d green (broke 95 low, closed above open)
+    "DDD": [base, { open: 96, high: 102, low: 93, close: 100 }],
+    // 1 inside bar
+    "EEE": [base, { open: 98, high: 103, low: 97, close: 101 }],
+    // 3 outside bar
+    "FFF": [base, { open: 100, high: 108, low: 92, close: 104 }]
   }
 
   const liveQuotes = {
-    "AAA": { regularMarketPrice: 114 },
-    "BBB": { regularMarketPrice: 114 },
-    "CCC": { regularMarketPrice: 98.5 },
-    "DDD": { regularMarketPrice: 90 }
+    "CCC": { regularMarketPrice: 92 }
   }
 
-  const metrics = Model.computeBasketAttackMetrics("MOCK", "Mock ETF", "Sector", holdings, dailyMap, liveQuotes)
+  const metrics = Model.computeSectorBreadth(holdings, candlesMap, liveQuotes)
 
-  assert.equal(metrics.symbol, "MOCK")
-  assert.equal(metrics.totalHoldings, 4)
+  assert.equal(metrics.totalHoldings, 6)
   assert.equal(metrics.count2u, 2)
-  assert.equal(metrics.countAttack2u, 2)
-  assert.equal(metrics.pctAttack2u, 50)
-  assert.equal(metrics.count2d, 1)
-  assert.equal(metrics.pctAttack2d, 0)
+  assert.equal(metrics.count2d, 2)
   assert.equal(metrics.count1, 1)
-  assert.equal(metrics.pct1, 25)
-  assert.equal(metrics.count3, 0)
-  assert.equal(metrics.pct3, 0)
-  assert.equal(metrics.countF2u, 0)
-  assert.equal(metrics.pctF2u, 0)
-  assert.equal(metrics.countF2d, 0)
-  assert.equal(metrics.pctF2d, 0)
-  assert.equal(metrics.netAttackDelta, 50)
-  assert.equal(metrics.status, "BULLISH ATTACK")
+  assert.equal(metrics.count3, 1)
+  assert.equal(metrics.countF2u, 1)
+  assert.equal(metrics.countF2d, 1)
+  assert.equal(Math.round(metrics.pct2u), 33)
+  assert.equal(Math.round(metrics.pct2d), 33)
+  assert.equal(Math.round(metrics.pct1), 17)
+  assert.equal(Math.round(metrics.pct3), 17)
+  assert.equal(Math.round(metrics.pctF2u), 17)
+  assert.equal(Math.round(metrics.pctF2d), 17)
+  assert.equal(metrics.isSimultaneous2u, false)
+  assert.equal(metrics.isSimultaneous2d, false)
+  assert.equal(Model.detectStratAttack, undefined)
+  assert.equal(Model.computeBasketAttackMetrics, undefined)
 })
 
 test("mergePeriodCandles collapses Yahoo intraday live ticks preventing false inside bars on 30m and 60m", () => {
@@ -2502,7 +2450,7 @@ test("Update 2: detectMotherbarProblem and Rule 6 block Compound 1 Motherbar tra
   assert.equal(mbCleared.isMotherbarProblem, false)
 })
 
-test("Update 3: computeBasketAttackMetrics classifies all 2u bars under Truth #1 while distinguishing green vs failed red 2u bars", () => {
+test("Update 3: computeSectorBreadth classifies all 2u bars under Truth #1 while distinguishing failed red 2u bars", () => {
   const holdings = [
     { symbol: "AAA", name: "Alpha", pctVal: 50 },
     { symbol: "BBB", name: "Beta", pctVal: 50 }
@@ -2519,17 +2467,14 @@ test("Update 3: computeBasketAttackMetrics classifies all 2u bars under Truth #1
       { open: 104, high: 106, low: 100, close: 101 }
     ]
   }
-  const metrics = Model.computeBasketAttackMetrics("SMH", "Semis", "Sector", holdings, candlesMap, null, "60")
+  const metrics = Model.computeSectorBreadth(holdings, candlesMap, null)
   assert.equal(metrics.count2u, 2) // Both AAA and BBB took out prior high -> Truth #1 Scenario 2u
   assert.equal(metrics.pct2u, 100)
-  assert.equal(metrics.count2uGreen, 1)
-  assert.equal(metrics.pct2uGreen, 50)
   assert.equal(metrics.countF2u, 1)
   assert.equal(metrics.pctF2u, 50)
   assert.equal(metrics.countF2d, 0)
   assert.equal(metrics.pctF2d, 0)
-  assert.equal(metrics.isSimultaneousBreak, false)
-
+  assert.equal(metrics.isSimultaneous2u, true)
 })
 
 test("Update 4: evaluateStratChecklist exposes 3-tier stopLevels and caps Scenario 3 signal bar stops to entry extreme", () => {
@@ -2607,7 +2552,7 @@ test("Update 5 & 6: detectCandleShape, expanded binary signals (3-1-2, 3-2-2, 1-
   assert.equal(res30.targets[1].price, 520)
 })
 
-test("Update 7: evaluateStratChecklist Rule 9 blocks opposing sector attack and SPY/QQQ 60m Motherbar context", () => {
+test("Update 7: evaluateStratChecklist Rule 10 blocks SPY/QQQ 60m Motherbar context", () => {
   const daily = [
     { timestamp: 100, open: 200, high: 205, low: 195, close: 203 },
     { timestamp: 200, open: 203, high: 215, low: 200, close: 210 },
@@ -3612,26 +3557,22 @@ test("Contradiction 13: Simultaneous Break Concentration Threshold (80% standard
     ]
   }
 
-  const metrics70 = Model.computeBasketAttackMetrics("XLK", "Tech", "Sector", holdings, candlesMap, null, "1D")
+  const metrics70 = Model.computeSectorBreadth(holdings, candlesMap, null)
   assert.equal(metrics70.count2u, 7)
   assert.equal(metrics70.pct2u, 70)
   assert.equal(metrics70.isSimultaneous2u, false)
   assert.equal(metrics70.isSimultaneous2d, false)
-  assert.equal(metrics70.isSimultaneousExpansion, false)
-  assert.equal(metrics70.isSimultaneousBreak, false)
 
   // Now make 8th holding break 2u -> 8 out of 10 (80% -> true)
   candlesMap["SYM7"] = [
     { open: 100, high: 105, low: 95, close: 104 },
     { open: 104, high: 109, low: 103, close: 108 } // 2u Green
   ]
-  const metrics80 = Model.computeBasketAttackMetrics("XLK", "Tech", "Sector", holdings, candlesMap, null, "1D")
+  const metrics80 = Model.computeSectorBreadth(holdings, candlesMap, null)
   assert.equal(metrics80.count2u, 8)
   assert.equal(metrics80.pct2u, 80)
   assert.equal(metrics80.isSimultaneous2u, true)
   assert.equal(metrics80.isSimultaneous2d, false)
-  assert.equal(metrics80.isSimultaneousExpansion, true)
-  assert.equal(metrics80.isSimultaneousBreak, true)
 
   // Verify rounded comparison logic (e.g., 14 holdings: 11/14 = 78.57% -> 79% does not trigger, 12/14 = 85.71% -> 86% triggers)
   const holdings14 = []
@@ -3652,23 +3593,20 @@ test("Contradiction 13: Simultaneous Break Concentration Threshold (80% standard
       ]
     }
   }
-  const metrics11of14 = Model.computeBasketAttackMetrics("XLE", "Energy", "Sector", holdings14, candles14, null, "1D")
+  const metrics11of14 = Model.computeSectorBreadth(holdings14, candles14, null)
   assert.equal(metrics11of14.count2d, 11)
   assert.equal(Math.round(metrics11of14.pct2d), 79)
   assert.equal(metrics11of14.isSimultaneous2d, false)
-  assert.equal(metrics11of14.isSimultaneousExpansion, false)
 
   // Add 12th 2d break -> 12 / 14 = 85.71% -> 86%
   candles14["H11"] = [
     { open: 100, high: 105, low: 95, close: 104 },
     { open: 100, high: 101, low: 91, close: 92 } // 2d Red
   ]
-  const metrics12of14 = Model.computeBasketAttackMetrics("XLE", "Energy", "Sector", holdings14, candles14, null, "1D")
+  const metrics12of14 = Model.computeSectorBreadth(holdings14, candles14, null)
   assert.equal(metrics12of14.count2d, 12)
   assert.equal(Math.round(metrics12of14.pct2d), 86)
   assert.equal(metrics12of14.isSimultaneous2d, true)
-  assert.equal(metrics12of14.isSimultaneousExpansion, true)
-  assert.equal(metrics12of14.isSimultaneousBreak, true)
 })
 
 test("Contradiction 3: Pure Canon Triggered vs. In-Force Definition (stratInForce, computeStratDetails, and Checklist Rule 5)", () => {
@@ -4560,14 +4498,10 @@ test("QML QVariantList non-Array sequence compatibility for breadth, scenario fi
   assert.equal(Array.isArray(qmlHoldings), false)
   assert.equal(Model.isArrayLike(cNvda), true)
 
-  const metrics = Model.computeBasketAttackMetrics(
-    "SMH",
-    "Semiconductors",
-    "Sector",
+  const metrics = Model.computeSectorBreadth(
     qmlHoldings,
     { NVDA: cNvda, AMD: cAmd },
-    {},
-    "1W"
+    {}
   )
   assert.equal(metrics.totalHoldings, 2)
   assert.equal(metrics.count2u, 1)
@@ -4577,7 +4511,6 @@ test("QML QVariantList non-Array sequence compatibility for breadth, scenario fi
 
   assert.equal(Model.matchesScenarioQuery(cNvda, null, "2ug"), true)
   assert.equal(Model.matchesScenarioQuery(cAmd, null, "2dr"), true)
-  assert.equal(Model.detectStratAttack(cNvda, null).direction, "bullish")
 
   const sorted = Model.sortSectorHoldings(qmlHoldings, "weight", "asc", {})
   assert.equal(sorted.length, 2)
