@@ -15,19 +15,10 @@ Item {
     property string timeframe: "1D"
     property var quote: null
     property var candles: []
-    property var hourlyCandles: []
-    property var dailyCandles: []
     property var priceLevels: []
     property int zoomCount: -1
     property real replayCutoffTs: 0
-    property double liveClockMs: Date.now()
-    onQuoteChanged: root.liveClockMs = Date.now()
-    onHourlyCandlesChanged: root.liveClockMs = Date.now()
-    onDailyCandlesChanged: root.liveClockMs = Date.now()
-    property bool hideStratBadge: false
-    readonly property var stratChecklist: (!root.cellActive || root.hideStratBadge) ? null : Model.evaluateStratChecklist(root.symbol, root.hourlyCandles, root.dailyCandles, root.quote, root.replayCutoffTs > 0 ? new Date((root.replayCutoffTs - 1) * 1000) : new Date(root.liveClockMs), { activeTimeframe: root.timeframe, activeCandles: root.candles })
     property bool syncSymbolActive: true
-    property bool isExecutionTimeframeCell: (!root.hideStratBadge && root.stratChecklist && root.stratChecklist.setupTimeframe && root.timeframe === root.stratChecklist.setupTimeframe)
     property bool activeFocusCell: false
     focus: activeFocusCell
     onActiveFocusCellChanged: {
@@ -64,18 +55,11 @@ Item {
     signal timeframeChangedManually(int index, string nextTimeframe)
     signal crosshairMoved(real timestamp, real price, var candle)
     signal crosshairCleared
-    signal stratTradeableDetected(var checklist)
     signal priceLevelsModified(string sym, var nextLevels)
     signal replayRequested(real timestamp)
     signal zoomChangedManually(int index, int nextZoom)
 
     onReplayCutoffTsChanged: chart.followLatestEdge()
-
-    onStratChecklistChanged: {
-        if (root.stratChecklist && root.isExecutionTimeframeCell) {
-            root.stratTradeableDetected(root.stratChecklist);
-        }
-    }
 
     readonly property var activeHoverCandle: chart.hoverCandle
     readonly property bool editingLevel: chart.editingLevel
@@ -405,40 +389,6 @@ Item {
                     }
                 }
 
-                // Strat Checklist Status (Text & Color Only, Execution Timeframe Only)
-                Text {
-                    id: stratBadgeText
-                    visible: root.stratChecklist !== null && root.stratChecklist.badgeText !== "" && root.isExecutionTimeframeCell
-                    anchors.verticalCenter: parent.verticalCenter
-                    textFormat: Text.PlainText
-                    text: root.stratChecklist ? root.stratChecklist.badgeText : ""
-                    color: {
-                        if (!root.stratChecklist)
-                            return root.dim;
-                        if (root.stratChecklist.isArmed)
-                            return (Color.accent !== undefined) ? Color.accent : Qt.rgba(0.92, 0.65, 0.15, 1);
-                        if (!root.stratChecklist.isTradeable)
-                            return root.dim;
-                        if (root.stratChecklist.direction === "CONFLICT")
-                            return root.dim;
-                        return root.stratChecklist.direction === "SHORT" ? root.downColor : root.upColor;
-                    }
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    font.bold: true
-
-                    MouseArea {
-                        anchors.fill: parent
-                        anchors.margins: -Style.space(4)
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            var pos = stratBadgeText.mapToItem(root, 0, 0);
-                            cellChecklistPopup.anchorX = pos.x + stratBadgeText.width / 2;
-                            cellChecklistPopup.anchorY = pos.y + stratBadgeText.height;
-                            cellChecklistPopup.open = !cellChecklistPopup.open;
-                        }
-                    }
-                }
             }
 
             // Active Candle Strat Tag (Right-aligned in header, always visible)
@@ -812,12 +762,6 @@ Item {
                 }
             }
         }
-    }
-
-    StratChecklistPopup {
-        id: cellChecklistPopup
-        checklistData: root.stratChecklist
-        fontFamily: root.fontFamily
     }
 
     // Hover Tooltip for Company Name on Ticker

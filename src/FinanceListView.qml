@@ -66,36 +66,12 @@ Column {
             PanelActionButton {
                 id: alertsBtn
                 iconText: controller.alertsMuted ? "\uf1f6" : "\uf0f3"
-                tooltipText: controller.alertsMuted ? ("Alerts & Study Radar · " + controller.alertsMuteStatus) : "Alerts & Study Radar"
+                tooltipText: controller.alertsMuted ? ("Alerts · " + controller.alertsMuteStatus) : "Alerts"
                 foreground: controller.alertsMuted ? controller.contentUrgent : controller.dim
                 fontFamily: controller.contentFontFamily
                 hasCursor: controller.listChrome === "alerts"
                 bordered: controller.listChrome === "alerts"
                 onClicked: controller.openAlerts()
-
-                Rectangle {
-                    readonly property int radarCount: controller.armedWatchlistSetups ? controller.armedWatchlistSetups.length : 0
-                    visible: radarCount > 0 && !controller.alertsMuted
-                    anchors.top: parent.top
-                    anchors.right: parent.right
-                    anchors.topMargin: Style.space(2)
-                    anchors.rightMargin: Style.space(2)
-                    width: Math.max(Style.space(13), badgeNum.implicitWidth + Style.space(4))
-                    height: Style.space(13)
-                    radius: height / 2
-                    color: Color.accent
-
-                    Text {
-                        id: badgeNum
-                        anchors.centerIn: parent
-                        textFormat: Text.PlainText
-                        text: parent.radarCount > 9 ? "9+" : String(parent.radarCount)
-                        color: Color.background
-                        font.family: controller.contentFontFamily
-                        font.pixelSize: Math.max(8, Style.font.caption - 2)
-                        font.bold: true
-                    }
-                }
             }
 
             PanelActionButton {

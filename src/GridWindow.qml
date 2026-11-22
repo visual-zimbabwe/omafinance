@@ -56,7 +56,6 @@ FloatingWindow {
     property bool quoteRefreshPending: false
     signal stateSaveRequested(string mode, var sync, var symbols, var splits)
     signal symbolLevelsChangedExternally(string sym, var nextLevels)
-    signal signalStatesUpdated(var nextStates)
     signal quotesReceived(var incomingQuotes)
     signal chartDataReceived(string key, var candles, var quoteEnriched)
     // Delivery (notification, sound, Discord, log) is owned by Panel.dispatchAlert so mute applies everywhere.
@@ -475,7 +474,7 @@ FloatingWindow {
                         var singleQuoteMap = ({});
                         singleQuoteMap[root.currentFetchSymbol] = mergedQuote;
                         root.evaluateActivePriceLevelAlerts(singleQuoteMap);
-                    } else if (parsed.ftfc || parsed.bar60) {
+                    } else if (parsed.ftfc) {
                         root.quotes[root.currentFetchSymbol] = mergedQuote;
                         root.notifyQuotesUpdated([root.currentFetchSymbol]);
                     }
@@ -492,8 +491,6 @@ FloatingWindow {
             waitForEnd: true
         }
     }
-
-    property var signalStates: ({})
 
     function evaluateActivePriceLevelAlerts(incomingQuotes) {
         if (root.replayCutoffTs > 0 || !incomingQuotes)
@@ -531,36 +528,6 @@ FloatingWindow {
         }
         if (memChanged)
             root.symbolPriceMemory = nextMem;
-    }
-
-    function notifyStratTradeable(chk) {
-        if (root.replayCutoffTs > 0)
-            return;
-        if (!chk || !chk.symbol || !chk.direction || !chk.setupTimeframe)
-            return;
-
-        var q = root.getQuote(chk.symbol);
-        var transition = Model.evaluateStratAlertTransition(chk, q, root.signalStates, root.symbolPriceMemory, {
-            replayActive: root.replayCutoffTs > 0,
-            nowDate: new Date(),
-            enableArmedAlerts: true
-        });
-
-        root.symbolPriceMemory = transition.nextPriceMemory;
-        if (transition.stateUpdated) {
-            root.signalStates = transition.nextStates;
-            root.signalStatesUpdated(transition.nextStates);
-        }
-
-        if (!transition.shouldNotify || !transition.eventType)
-            return;
-
-        root.alertDispatchRequested({
-            title: transition.title,
-            body: transition.body,
-            discordPayload: Model.discordAlertPayload(chk, transition.eventType),
-            logEntry: transition.logEntry
-        });
     }
 
     Timer {
@@ -1361,8 +1328,6 @@ FloatingWindow {
                         zoomCount: root.zoomForCell(root.activeCellIndex)
                         quote: root.getQuote(symbol, root.cellRev(cellIndex))
                         candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                        hourlyCandles: root.getCandles(symbol, "60", root.cellRev(cellIndex))
-                        dailyCandles: root.getCandles(symbol, "1D", root.cellRev(cellIndex))
                         priceLevels: root.symbolLevels[symbol] || []
                         replayCutoffTs: root.replayCutoffTs
                         activeFocusCell: true
@@ -1384,9 +1349,6 @@ FloatingWindow {
                         }
                         onZoomChangedManually: function (idx, z) {
                             root.setZoomForCell(idx, z);
-                        }
-                        onStratTradeableDetected: function (chk) {
-                            root.notifyStratTradeable(chk);
                         }
                         onPriceLevelsModified: function (sym, nextLevels) {
                             root.updateSymbolLevels(sym, nextLevels);
@@ -1427,8 +1389,6 @@ FloatingWindow {
                             zoomCount: root.zoomForCell(0)
                             quote: root.getQuote(symbol, root.cellRev(cellIndex))
                             candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                            hourlyCandles: root.getCandles(symbol, "60", root.cellRev(cellIndex))
-                            dailyCandles: root.getCandles(symbol, "1D", root.cellRev(cellIndex))
                             priceLevels: root.symbolLevels[symbol] || []
                             replayCutoffTs: root.replayCutoffTs
                             activeFocusCell: root.activeCellIndex === 0
@@ -1456,9 +1416,6 @@ FloatingWindow {
                             }
                             onCrosshairCleared: {
                                 root.handleCrosshairCleared(0);
-                            }
-                            onStratTradeableDetected: function (chk) {
-                                root.notifyStratTradeable(chk);
                             }
                             onPriceLevelsModified: function (sym, nextLevels) {
                                 root.updateSymbolLevels(sym, nextLevels);
@@ -1496,8 +1453,6 @@ FloatingWindow {
                             zoomCount: root.zoomForCell(1)
                             quote: root.getQuote(symbol, root.cellRev(cellIndex))
                             candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                            hourlyCandles: root.getCandles(symbol, "60", root.cellRev(cellIndex))
-                            dailyCandles: root.getCandles(symbol, "1D", root.cellRev(cellIndex))
                             priceLevels: root.symbolLevels[symbol] || []
                             replayCutoffTs: root.replayCutoffTs
                             activeFocusCell: root.activeCellIndex === 1
@@ -1525,9 +1480,6 @@ FloatingWindow {
                             }
                             onCrosshairCleared: {
                                 root.handleCrosshairCleared(1);
-                            }
-                            onStratTradeableDetected: function (chk) {
-                                root.notifyStratTradeable(chk);
                             }
                             onPriceLevelsModified: function (sym, nextLevels) {
                                 root.updateSymbolLevels(sym, nextLevels);
@@ -1583,8 +1535,6 @@ FloatingWindow {
                                 zoomCount: root.zoomForCell(2)
                                 quote: root.getQuote(symbol, root.cellRev(cellIndex))
                                 candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                                hourlyCandles: root.getCandles(symbol, "60", root.cellRev(cellIndex))
-                                dailyCandles: root.getCandles(symbol, "1D", root.cellRev(cellIndex))
                                 priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 2
@@ -1612,9 +1562,6 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(2);
-                                }
-                                onStratTradeableDetected: function (chk) {
-                                    root.notifyStratTradeable(chk);
                                 }
                                 onPriceLevelsModified: function (sym, nextLevels) {
                                     root.updateSymbolLevels(sym, nextLevels);
@@ -1652,8 +1599,6 @@ FloatingWindow {
                                 zoomCount: root.zoomForCell(3)
                                 quote: root.getQuote(symbol, root.cellRev(cellIndex))
                                 candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                                hourlyCandles: root.getCandles(symbol, "60", root.cellRev(cellIndex))
-                                dailyCandles: root.getCandles(symbol, "1D", root.cellRev(cellIndex))
                                 priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 3
@@ -1681,9 +1626,6 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(3);
-                                }
-                                onStratTradeableDetected: function (chk) {
-                                    root.notifyStratTradeable(chk);
                                 }
                                 onPriceLevelsModified: function (sym, nextLevels) {
                                     root.updateSymbolLevels(sym, nextLevels);
@@ -1717,8 +1659,6 @@ FloatingWindow {
                                 zoomCount: root.zoomForCell(2)
                                 quote: root.getQuote(symbol, root.cellRev(cellIndex))
                                 candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                                hourlyCandles: root.getCandles(symbol, "60", root.cellRev(cellIndex))
-                                dailyCandles: root.getCandles(symbol, "1D", root.cellRev(cellIndex))
                                 priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 2
@@ -1746,9 +1686,6 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(2);
-                                }
-                                onStratTradeableDetected: function (chk) {
-                                    root.notifyStratTradeable(chk);
                                 }
                                 onPriceLevelsModified: function (sym, nextLevels) {
                                     root.updateSymbolLevels(sym, nextLevels);
@@ -1786,8 +1723,6 @@ FloatingWindow {
                                 zoomCount: root.zoomForCell(3)
                                 quote: root.getQuote(symbol, root.cellRev(cellIndex))
                                 candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                                hourlyCandles: root.getCandles(symbol, "60", root.cellRev(cellIndex))
-                                dailyCandles: root.getCandles(symbol, "1D", root.cellRev(cellIndex))
                                 priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 3
@@ -1815,9 +1750,6 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(3);
-                                }
-                                onStratTradeableDetected: function (chk) {
-                                    root.notifyStratTradeable(chk);
                                 }
                                 onPriceLevelsModified: function (sym, nextLevels) {
                                     root.updateSymbolLevels(sym, nextLevels);
@@ -1855,8 +1787,6 @@ FloatingWindow {
                                 zoomCount: root.zoomForCell(4)
                                 quote: root.getQuote(symbol, root.cellRev(cellIndex))
                                 candles: root.getCandles(symbol, timeframe, root.cellRev(cellIndex))
-                                hourlyCandles: root.getCandles(symbol, "60", root.cellRev(cellIndex))
-                                dailyCandles: root.getCandles(symbol, "1D", root.cellRev(cellIndex))
                                 priceLevels: root.symbolLevels[symbol] || []
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 4
@@ -1884,9 +1814,6 @@ FloatingWindow {
                                 }
                                 onCrosshairCleared: {
                                     root.handleCrosshairCleared(4);
-                                }
-                                onStratTradeableDetected: function (chk) {
-                                    root.notifyStratTradeable(chk);
                                 }
                                 onPriceLevelsModified: function (sym, nextLevels) {
                                     root.updateSymbolLevels(sym, nextLevels);

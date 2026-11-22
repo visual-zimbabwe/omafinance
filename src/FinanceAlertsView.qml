@@ -80,7 +80,7 @@ Column {
         Text {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: alertsViewRoot.workingPriceAlerts.length + " Armed · " + (controller.armedWatchlistSetups ? controller.armedWatchlistSetups.length : 0) + " Radar"
+            text: alertsViewRoot.workingPriceAlerts.length + " Armed"
             color: controller.dim
             font.family: controller.contentFontFamily
             font.pixelSize: Style.font.bodySmall
@@ -88,7 +88,7 @@ Column {
     }
 
     Text {
-        text: "Alert Book & Study Radar"
+        text: "Alert Book"
         color: controller.contentForeground
         font.family: controller.contentFontFamily
         font.pixelSize: Style.font.heading
@@ -445,139 +445,7 @@ Column {
         }
     }
 
-    // Section 3: Watchlist Strat Radar
-    Column {
-        width: parent.width
-        spacing: Style.space(6)
-
-        Item {
-            width: parent.width
-            height: radarTitle.implicitHeight
-
-            Text {
-                id: radarTitle
-                anchors.left: parent.left
-                text: "Watchlist Strat Radar (" + (controller.armedWatchlistSetups ? controller.armedWatchlistSetups.length : 0) + ")"
-                color: controller.contentForeground
-                font.family: controller.contentFontFamily
-                font.pixelSize: Style.font.bodySmall
-                font.bold: true
-            }
-
-            Text {
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                text: "Scan Watchlist"
-                color: controller.dim
-                font.family: controller.contentFontFamily
-                font.pixelSize: Style.font.bodySmall - 1
-                font.underline: true
-
-                MouseArea {
-                    anchors.fill: parent
-                    anchors.margins: Style.space(-4)
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: controller.triggerWatchlistStratScan()
-                }
-            }
-        }
-
-        Text {
-            visible: !controller.armedWatchlistSetups || controller.armedWatchlistSetups.length === 0
-            width: parent.width
-            text: "No TRADEABLE or ARMED Strat setups detected across your watchlist."
-            color: controller.dim
-            font.family: controller.contentFontFamily
-            font.pixelSize: Style.font.bodySmall
-            wrapMode: Text.WordWrap
-        }
-
-        Repeater {
-            model: controller.armedWatchlistSetups || []
-
-            delegate: FinanceSurface {
-                required property var modelData
-                elevation: 1
-                radiusToken: "md"
-                foregroundColor: controller.contentForeground
-                width: alertsViewRoot.width
-                height: Style.space(42)
-
-                Row {
-                    anchors.fill: parent
-                    anchors.margins: Style.space(7)
-                    spacing: Style.space(8)
-
-                    Rectangle {
-                        width: Style.space(62)
-                        height: Style.space(20)
-                        anchors.verticalCenter: parent.verticalCenter
-                        radius: Style.space(4)
-                        color: modelData.status === "TRADEABLE" ? Qt.rgba(0.22, 0.50, 0.30, 0.28) : Qt.rgba(0.82, 0.60, 0.16, 0.25)
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: modelData.status
-                            color: controller.contentForeground
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall - 2
-                            font.bold: true
-                        }
-                    }
-
-                    Column {
-                        width: Math.max(Style.space(80), parent.width - Style.space(125))
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: Style.space(1)
-
-                        Text {
-                            width: parent.width
-                            text: modelData.symbol + " [" + modelData.direction + "] · " + modelData.setupTimeframe + " (" + modelData.passedCount + "/" + modelData.totalCount + ")"
-                            color: controller.contentForeground
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            font.bold: true
-                            elide: Text.ElideRight
-                        }
-
-                        Text {
-                            width: parent.width
-                            text: "Trigger $" + Number(modelData.triggerPrice || 0).toFixed(2) + " | Stop $" + Number(modelData.stopPrice || 0).toFixed(2) + (modelData.targetPrice ? (" | T1 $" + Number(modelData.targetPrice).toFixed(2)) : "")
-                            color: controller.dim
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall - 1
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                    Rectangle {
-                        width: Style.space(44)
-                        height: Style.space(22)
-                        anchors.verticalCenter: parent.verticalCenter
-                        radius: Style.space(4)
-                        color: Qt.rgba(controller.contentForeground.r, controller.contentForeground.g, controller.contentForeground.b, 0.12)
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Grid"
-                            color: controller.contentForeground
-                            font.family: controller.contentFontFamily
-                            font.pixelSize: Style.font.bodySmall - 1
-                            font.bold: true
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: controller.openGrid(modelData.symbol)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Section 4: Triggered Alert Log
+    // Section 3: Triggered Alert Log
     Column {
         width: parent.width
         spacing: Style.space(6)
