@@ -22,6 +22,7 @@ FloatingWindow {
     property bool syncCrosshair: true
     property bool syncTime: true
     property bool showBroadening: false
+    property bool showSetupLines: true
     property string discordWebhook: ""
 
     property int activeCellIndex: 0
@@ -248,7 +249,7 @@ FloatingWindow {
     onChartCacheChanged: root.notifyCacheKeyUpdated("")
 
     function activeTimeframesForSymbol(sym) {
-        var tfs = ["30", "60", "1D"];
+        var tfs = root.showSetupLines ? ["30", "60", "1D", "1W", "1M"] : ["30", "60", "1D"];
         var count = root.gridMode === "2x2" ? 4 : 5;
         for (var i = 0; i < count; i++) {
             if (root.symbolForCell(i) === sym) {
@@ -336,6 +337,26 @@ FloatingWindow {
             subBars = root.chartCache[cacheKey(sym, "5")] || root.chartCache[cacheKey(sym, "15")] || root.chartCache[cacheKey(sym, "1")] || [];
         }
         return Model.buildReplayQuote(q, root.chartCache[cacheKey(sym, "30")] || [], root.chartCache[cacheKey(sym, "60")] || [], root.chartCache[cacheKey(sym, "1D")] || [], root.replayCutoffTs, subBars);
+    }
+
+    function getSetupLines(sym, targetTf) {
+        if (!root.showSetupLines || !sym || !Model.isSetupLineTimeframe(targetTf))
+            return [];
+        var daily = root.getCandles(sym, "1D");
+        var weekly = root.getCandles(sym, "1W");
+        if ((!weekly || weekly.length < 2) && daily && daily.length >= 2)
+            weekly = Model.mergePeriodCandles(daily, "1W");
+        var monthly = root.getCandles(sym, "1M");
+        if ((!monthly || monthly.length < 2) && daily && daily.length >= 2)
+            monthly = Model.mergePeriodCandles(daily, "1M");
+        var candlesByTf = {
+            "30": root.getCandles(sym, "30"),
+            "60": root.getCandles(sym, "60"),
+            "1D": daily,
+            "1W": weekly,
+            "1M": monthly
+        };
+        return Model.computeTriggeredSetupLines(candlesByTf, root.getQuote(sym), targetTf);
     }
 
     function isChartFresh(sym, tf, key) {
@@ -569,6 +590,10 @@ FloatingWindow {
             requestChartFetch(sym1, "30", isForced);
             requestChartFetch(sym1, "60", isForced);
             requestChartFetch(sym1, "1D", isForced);
+            if (root.showSetupLines) {
+                requestChartFetch(sym1, "1W", isForced);
+                requestChartFetch(sym1, "1M", isForced);
+            }
             if (stepTf)
                 requestChartFetch(sym1, stepTf, isForced);
             return;
@@ -581,6 +606,10 @@ FloatingWindow {
             requestChartFetch(sym, "30", isForced);
             requestChartFetch(sym, "60", isForced);
             requestChartFetch(sym, "1D", isForced);
+            if (root.showSetupLines) {
+                requestChartFetch(sym, "1W", isForced);
+                requestChartFetch(sym, "1M", isForced);
+            }
         }
         if (stepTf) {
             var activeSym = symbolForCell(root.activeCellIndex);
@@ -739,7 +768,8 @@ FloatingWindow {
             timeframe: root.syncTimeframe,
             crosshair: root.syncCrosshair,
             time: root.syncTime,
-            broadening: root.showBroadening
+            broadening: root.showBroadening,
+            setupLines: root.showSetupLines
         };
         var persistedMode = (root.gridMode === "1x1") ? ((root.previousGridMode === "2+3" || root.previousGridMode === "2x2") ? root.previousGridMode : "2+3") : root.gridMode;
         root.stateSaveRequested(persistedMode, sync, root.cellSymbols, splits);
@@ -949,7 +979,7 @@ FloatingWindow {
                         tooltip: "Sync time scroll across all cells"
                     }
                 ]
-                readonly property real fullRightWidth: inlineSyncRow.implicitWidth + bfChip.implicitWidth + alertsMuteToggle.implicitWidth + (root.fetching ? Style.space(22) : 0) + Style.space(18)
+                readonly property real fullRightWidth: inlineSyncRow.implicitWidth + bfChip.implicitWidth + setupLinesChip.implicitWidth + alertsMuteToggle.implicitWidth + (root.fetching ? Style.space(22) : 0) + Style.space(24)
                 readonly property bool compactSync: (leftControlsRow.implicitWidth + fullRightWidth + Style.space(40)) > width
 
                 function toggleSyncOption(key) {
@@ -1274,6 +1304,20 @@ FloatingWindow {
                     }
 
                     SyncChip {
+                        id: setupLinesChip
+                        text: "SETUPS " + (root.showSetupLines ? "[ON]" : "[OFF]")
+                        checked: root.showSetupLines
+                        tooltipText: "Toggle automatic Strat setup trigger & target lines (30, 60, 1D, 1W, 1M)"
+                        anchors.verticalCenter: parent.verticalCenter
+                        onClicked: {
+                            root.showSetupLines = !root.showSetupLines;
+                            if (root.showSetupLines)
+                                root.refreshAllCharts(false);
+                            root.saveGridState();
+                        }
+                    }
+
+                    SyncChip {
                         id: alertsMuteToggle
                         text: "ALERTS " + (root.alertsMuted ? "[MUTED]" : "[ON]")
                         checked: true
@@ -1323,6 +1367,7 @@ FloatingWindow {
                         replayCutoffTs: root.replayCutoffTs
                         activeFocusCell: true
                         showBroadening: root.showBroadening
+                        setupLines: root.showSetupLines ? root.getSetupLines(symbol, timeframe, root.cellRev(cellIndex)) : []
 
                         onFocusRequested: function (idx) {
                             root.focusMovedByKeyboard = false;
@@ -1388,6 +1433,7 @@ FloatingWindow {
                             replayCutoffTs: root.replayCutoffTs
                             activeFocusCell: root.activeCellIndex === 0
                             showBroadening: root.showBroadening
+                        setupLines: root.showSetupLines ? root.getSetupLines(symbol, timeframe, root.cellRev(cellIndex)) : []
 
                             onFocusRequested: function (idx) {
                                 root.focusMovedByKeyboard = false;
@@ -1456,6 +1502,7 @@ FloatingWindow {
                             replayCutoffTs: root.replayCutoffTs
                             activeFocusCell: root.activeCellIndex === 1
                             showBroadening: root.showBroadening
+                        setupLines: root.showSetupLines ? root.getSetupLines(symbol, timeframe, root.cellRev(cellIndex)) : []
 
                             onFocusRequested: function (idx) {
                                 root.focusMovedByKeyboard = false;
@@ -1542,6 +1589,7 @@ FloatingWindow {
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 2
                                 showBroadening: root.showBroadening
+                        setupLines: root.showSetupLines ? root.getSetupLines(symbol, timeframe, root.cellRev(cellIndex)) : []
 
                                 onFocusRequested: function (idx) {
                                     root.focusMovedByKeyboard = false;
@@ -1610,6 +1658,7 @@ FloatingWindow {
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 3
                                 showBroadening: root.showBroadening
+                        setupLines: root.showSetupLines ? root.getSetupLines(symbol, timeframe, root.cellRev(cellIndex)) : []
 
                                 onFocusRequested: function (idx) {
                                     root.focusMovedByKeyboard = false;
@@ -1674,6 +1723,7 @@ FloatingWindow {
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 2
                                 showBroadening: root.showBroadening
+                        setupLines: root.showSetupLines ? root.getSetupLines(symbol, timeframe, root.cellRev(cellIndex)) : []
 
                                 onFocusRequested: function (idx) {
                                     root.focusMovedByKeyboard = false;
@@ -1742,6 +1792,7 @@ FloatingWindow {
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 3
                                 showBroadening: root.showBroadening
+                        setupLines: root.showSetupLines ? root.getSetupLines(symbol, timeframe, root.cellRev(cellIndex)) : []
 
                                 onFocusRequested: function (idx) {
                                     root.focusMovedByKeyboard = false;
@@ -1810,6 +1861,7 @@ FloatingWindow {
                                 replayCutoffTs: root.replayCutoffTs
                                 activeFocusCell: root.activeCellIndex === 4
                                 showBroadening: root.showBroadening
+                        setupLines: root.showSetupLines ? root.getSetupLines(symbol, timeframe, root.cellRev(cellIndex)) : []
 
                                 onFocusRequested: function (idx) {
                                     root.focusMovedByKeyboard = false;

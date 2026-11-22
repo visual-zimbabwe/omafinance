@@ -34,6 +34,8 @@ Item {
     readonly property int timeScaleHeight: showTimeScale ? Style.space(18) : 0
     property bool showBroadening: false
     onShowBroadeningChanged: refreshGeometry()
+    property var setupLines: []
+    onSetupLinesChanged: refreshGeometry()
 
     signal crosshairMoved(real timestamp, real price, var candle)
     signal crosshairCleared
@@ -47,6 +49,7 @@ Item {
     property int viewStart: 0
     property int viewCount: -1
     property bool followLatest: true
+    property int rightOffsetBars: -1 // -1 = TradingView-style default (~9 bars right margin)
 
     onConfiguredZoomChanged: {
         var target = (root.configuredZoom >= Model.MIN_BAR_COUNT) ? root.configuredZoom : -1;
@@ -118,6 +121,7 @@ Item {
         viewStart = 0;
         viewCount = (root.configuredZoom >= Model.MIN_BAR_COUNT) ? root.configuredZoom : -1;
         followLatest = true;
+        rightOffsetBars = -1;
         autoPriceScale = true;
         draggingPriceScale = false;
         priceScaleDragMode = "";
@@ -491,6 +495,9 @@ Item {
             candleW: 1,
             vStart: 0,
             vCount: 0,
+            flushStart: 0,
+            maxStart: 0,
+            rightOffsetBars: 0,
             totalCandles: 0,
             ticks: [],
             timeTicks: [],
@@ -506,15 +513,14 @@ Item {
         if (total === 0)
             return unset;
 
-        var minBars = Model.MIN_BAR_COUNT;
         var isDaily = (root.rangeKey === "1D" || root.rangeKey === "D" || root.rangeKey === "day" || root.rangeKey === "1d");
         var isWeekly = (root.rangeKey === "1W" || root.rangeKey === "W" || root.rangeKey === "week" || root.rangeKey === "1w");
         var defaultCount = (isDaily || isWeekly) ? Math.min(total, 140) : total;
-        var vCount = (root.viewCount > 0 && root.viewCount < total) ? Math.max(minBars, root.viewCount) : defaultCount;
-        var maxStart = Math.max(0, total - vCount);
-        var vStart = root.followLatest ? maxStart : Math.max(0, Math.min(maxStart, root.viewStart));
+        var vp = Model.resolveHorizontalViewport(total, root.viewCount, defaultCount, root.viewStart, root.followLatest, root.rightOffsetBars);
+        var vCount = vp.vCount;
+        var vStart = vp.vStart;
 
-        var list = all.slice(vStart, vStart + vCount);
+        var list = all.slice(vStart, Math.min(total, vStart + vCount));
         if (list.length === 0)
             return unset;
 
@@ -544,6 +550,20 @@ Item {
                             min = pl.price;
                         if (pl.price > max)
                             max = pl.price;
+                    }
+                }
+            }
+        }
+
+        if (root.setupLines && root.setupLines.length > 0) {
+            for (var sli = 0; sli < root.setupLines.length; sli++) {
+                var sl = root.setupLines[sli];
+                if (sl && isFinite(sl.price) && sl.price > 0) {
+                    if (sl.price >= candleMin * 0.85 && sl.price <= candleMax * 1.15) {
+                        if (sl.price < min)
+                            min = sl.price;
+                        if (sl.price > max)
+                            max = sl.price;
                     }
                 }
             }
@@ -580,7 +600,7 @@ Item {
 
         var innerW = right - left;
         var innerH = bot - top;
-        var slotW = innerW / Math.max(1, list.length);
+        var slotW = innerW / Math.max(1, vCount);
         var candleW = slotW >= 7 ? Math.max(1, slotW - 4) : (slotW >= 4 ? Math.max(1, slotW - 2) : (slotW >= 2.5 ? Math.max(1, slotW - 1) : Math.max(1, Math.round(slotW * 0.8))));
 
         function priceToY(price) {
@@ -757,6 +777,9 @@ Item {
             candleW: candleW,
             vStart: vStart,
             vCount: vCount,
+            flushStart: vp.flushStart,
+            maxStart: vp.maxStart,
+            rightOffsetBars: vp.rightOffsetBars,
             totalCandles: total,
             ticks: ticks,
             timeTicks: timeTicks,
@@ -855,8 +878,22 @@ Item {
         var idx = Math.floor(offset / Math.max(1, g.slotW));
         if (idx < 0)
             idx = 0;
-        if (idx >= g.candles.length)
-            idx = g.candles.length - 1;
+
+        // Cursor hovering in the empty TradingView-style right margin past the latest bar
+        if (idx >= g.candles.length) {
+            hoverIndex = -1;
+            hoverCandle = null;
+            hoverX = Math.max(g.left, Math.min(g.right, px));
+            hoverY = Math.max(g.top, Math.min(g.bot, py));
+            hoverPrice = yToPrice(hoverY);
+            hoverOhlcField = "scale";
+            hovering = true;
+            if (wasHoveringScale)
+                canvas.requestPaint();
+            if (!isSyncing)
+                root.crosshairMoved(-1, hoverPrice, null);
+            return;
+        }
 
         hoverIndex = idx;
         hoverCandle = g.candles[idx];
@@ -1153,6 +1190,80 @@ Item {
                         if (f.lower) drawBFRay(f.lower, false, fi);
                     }
                 }
+
+            // Automatic Triggered Strat Setup Lines (GridWindow Only: all solid; triggers colored by TF, targets green)
+            if (root.setupLines && root.setupLines.length > 0 && g.innerW > 0) {
+                var slIsLight = Model.isLightColor(Color.background);
+                var slPlacedPillYs = [];
+                var slFont = "bold " + Style.font.bodySmall + "px " + quotedFont;
+                var slPadX = Style.space(4);
+                var slPillH = Style.space(14);
+                for (var si = 0; si < root.setupLines.length; si++) {
+                    var sLine = root.setupLines[si];
+                    if (!sLine || !isFinite(sLine.price) || sLine.price <= 0)
+                        continue;
+
+                    var sLyRaw = root.priceToYVal(sLine.price, g);
+                    if (sLyRaw < g.top - Style.space(6) || sLyRaw > g.bot + Style.space(6))
+                        continue;
+
+                    var sAnchorIdx = Model.resolveLevelAnchorIndex(sLine, g.allCandles, root.rangeKey);
+                    var sRawX1 = root.globalIndexToX(sAnchorIdx, g);
+                    var sDrawX1 = Math.max(g.left, Math.min(g.right - Style.space(8), sRawX1));
+                    var sDrawX2 = g.right;
+                    if (sDrawX2 <= sDrawX1)
+                        sDrawX1 = g.left;
+
+                    var sLy = Math.round(sLyRaw) + 0.5;
+                    var sColor = Model.setupLineColor(sLine.timeframe, sLine.kind, slIsLight);
+
+                    ctx.save();
+                    ctx.strokeStyle = sColor;
+                    ctx.lineWidth = 1;
+                    ctx.globalAlpha = 0.92;
+                    if (typeof ctx.setLineDash === "function")
+                        ctx.setLineDash([]);
+                    ctx.beginPath();
+                    ctx.moveTo(Math.round(sDrawX1), sLy);
+                    ctx.lineTo(Math.round(sDrawX2), sLy);
+                    ctx.stroke();
+
+                    var sPriceStr = Model.formatPrice(sLine.price, root.currency, root.priceHint);
+                    var sBaseTxt = (sLine.label !== undefined && sLine.label !== null) ? String(sLine.label).trim() : "";
+                    var sFullLabel = sBaseTxt.length > 0 ? (sBaseTxt + " · " + sPriceStr) : sPriceStr;
+
+                    ctx.font = slFont;
+                    var sTextW = ctx.measureText(sFullLabel).width;
+                    var sPillW = sTextW + slPadX * 2;
+                    var sPillX = Math.max(g.left + Style.space(2), Math.round(sDrawX2 - sPillW - Style.space(2)));
+                    var sPillY = (sLy - slPillH - Style.space(2) >= g.top) ? Math.round(sLy - slPillH - Style.space(2)) : Math.round(sLy + Style.space(2));
+
+                    for (var pi = 0; pi < slPlacedPillYs.length; pi++) {
+                        if (Math.abs(sPillY - slPlacedPillYs[pi]) < slPillH) {
+                            var belowCand = Math.round(sLy + Style.space(2));
+                            var aboveCand = Math.round(slPlacedPillYs[pi] - slPillH - 1);
+                            if (Math.abs(belowCand - slPlacedPillYs[pi]) >= slPillH && belowCand + slPillH <= g.bot)
+                                sPillY = belowCand;
+                            else if (aboveCand >= g.top)
+                                sPillY = aboveCand;
+                            else if (slPlacedPillYs[pi] + slPillH + 1 + slPillH <= g.bot)
+                                sPillY = slPlacedPillYs[pi] + slPillH + 1;
+                        }
+                    }
+                    slPlacedPillYs.push(sPillY);
+
+                    ctx.globalAlpha = 0.84;
+                    ctx.fillStyle = Color.background;
+                    ctx.fillRect(sPillX, sPillY, sPillW, slPillH);
+
+                    ctx.globalAlpha = 1.0;
+                    ctx.fillStyle = sColor;
+                    ctx.textAlign = "left";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(sFullLabel, sPillX + slPadX, sPillY + slPillH / 2);
+                    ctx.restore();
+                }
+            }
 
             // User-Drawn Trigger / Target Price Level Lines
             if (root.priceLevels && root.priceLevels.length > 0 && g.innerW > 0) {
@@ -1513,37 +1624,46 @@ Item {
                 var total = all.length;
 
                 if (root.isShiftDrag && total > Model.MIN_BAR_COUNT) {
-                    // Shift+Drag = Zoom
+                    // Shift+Drag = Zoom (preserving right-side whitespace when at latest edge)
                     var deltaX = mouse.x - root.dragStartX;
                     var countDelta = Math.round(deltaX * 0.25);
                     var nextCount = Math.max(Model.MIN_BAR_COUNT, Math.min(total, root.dragStartViewCount - countDelta));
-                    var isAtLatestBar = (root.dragStartViewStart + root.dragStartViewCount >= total - 1) || root.dragStartRatio >= 0.85;
-                    var nextStart = isAtLatestBar ? Math.max(0, total - nextCount) : Math.max(0, Math.min(total - nextCount, Math.round(root.dragStartCenterIndex - nextCount * root.dragStartRatio)));
+                    var nextMaxStart = Model.maxChartViewStart(total, nextCount);
+                    var nextFlush = Math.max(0, total - nextCount);
+                    var isAtLatestBar = root.followLatest || (root.dragStartViewStart + root.dragStartViewCount >= total - 1) || root.dragStartRatio >= 0.85;
+                    var preservedRight = isAtLatestBar ? Math.min(g.rightOffsetBars, Math.max(0, nextMaxStart - nextFlush)) : 0;
+                    var nextStart = isAtLatestBar
+                        ? Math.min(nextMaxStart, nextFlush + preservedRight)
+                        : Math.max(0, Math.min(nextMaxStart, Math.round(root.dragStartCenterIndex - nextCount * root.dragStartRatio)));
 
                     var targetViewCount = nextCount >= total ? -1 : nextCount;
-                    var targetViewStart = nextCount >= total ? 0 : nextStart;
-                    var targetFollow = (nextCount >= total) || (nextStart >= Math.max(0, total - nextCount));
-                    if (targetViewCount !== root.viewCount || targetViewStart !== root.viewStart || targetFollow !== root.followLatest) {
+                    var targetFollow = (nextStart >= nextFlush);
+                    var targetRightOffset = targetFollow ? Math.max(0, nextStart - nextFlush) : 0;
+                    var targetViewStart = targetFollow ? nextStart : nextStart;
+                    if (targetViewCount !== root.viewCount || targetViewStart !== root.viewStart || targetFollow !== root.followLatest || targetRightOffset !== root.rightOffsetBars) {
                         var zoomChanged = (targetViewCount !== root.viewCount);
                         root.viewCount = targetViewCount;
                         root.viewStart = targetViewStart;
                         root.followLatest = targetFollow;
+                        root.rightOffsetBars = targetRightOffset;
                         root.refreshGeometry();
                         if (zoomChanged)
                             root.zoomChangedManually(root.viewCount);
                     }
                 } else if (!root.isShiftDrag) {
-                    // Normal Drag = PAN horizontally through time (+ vertically when manual Y-scale is active)
+                    // Normal Drag = PAN horizontally (including left into TradingView-style right margin) + vertically when manual Y-scale is active
                     var panChanged = false;
-                    if (g.totalCandles > g.vCount) {
+                    if (g.maxStart > 0) {
                         var deltaX = mouse.x - root.dragStartX;
                         var shiftBars = Math.round(deltaX / Math.max(1, g.slotW));
-                        var maxStart = Math.max(0, g.totalCandles - g.vCount);
-                        var nextStart = Math.max(0, Math.min(maxStart, root.dragStartViewStart - shiftBars));
+                        var nextStart = Math.max(0, Math.min(g.maxStart, root.dragStartViewStart - shiftBars));
+                        var nextFollow = (nextStart >= g.flushStart);
+                        var nextRightOffset = nextFollow ? Math.max(0, nextStart - g.flushStart) : 0;
 
-                        if (nextStart !== root.viewStart || root.followLatest !== (nextStart >= maxStart)) {
+                        if (nextStart !== root.viewStart || root.followLatest !== nextFollow || root.rightOffsetBars !== nextRightOffset) {
                             root.viewStart = nextStart;
-                            root.followLatest = (nextStart >= maxStart);
+                            root.followLatest = nextFollow;
+                            root.rightOffsetBars = nextRightOffset;
                             panChanged = true;
                         }
                     }
@@ -1654,17 +1774,19 @@ Item {
             var isShiftVertical = (wheel.modifiers & Qt.ShiftModifier) && wheel.angleDelta.y !== 0;
 
             if (isHorizontal || isShiftVertical) {
-                // Horizontal scroll or Shift+Scroll = PAN left/right (preserving zoom level)
-                if (g.totalCandles > g.vCount) {
+                // Horizontal scroll or Shift+Scroll = PAN left/right (including right-side margin, preserving zoom level)
+                if (g.maxStart > 0) {
                     var delta = isShiftVertical ? -wheel.angleDelta.y : -wheel.angleDelta.x;
                     var bars = Math.round((delta / 120) * Math.max(1, Math.round(curCount * 0.10)));
                     if (bars === 0 && delta !== 0)
                         bars = delta > 0 ? 1 : -1;
-                    var maxStart = Math.max(0, g.totalCandles - g.vCount);
-                    var nextStart = Math.max(0, Math.min(maxStart, curStart + bars));
-                    if (nextStart !== root.viewStart || root.followLatest !== (nextStart >= maxStart)) {
+                    var nextStart = Math.max(0, Math.min(g.maxStart, curStart + bars));
+                    var nextFollow = (nextStart >= g.flushStart);
+                    var nextRightOffset = nextFollow ? Math.max(0, nextStart - g.flushStart) : 0;
+                    if (nextStart !== root.viewStart || root.followLatest !== nextFollow || root.rightOffsetBars !== nextRightOffset) {
                         root.viewStart = nextStart;
-                        root.followLatest = (nextStart >= maxStart);
+                        root.followLatest = nextFollow;
+                        root.rightOffsetBars = nextRightOffset;
                         root.refreshGeometry();
                     }
                 }
@@ -1674,29 +1796,43 @@ Item {
                     deltaBars = 1;
 
                 var anchorBar = curStart + Math.round(ratio * curCount);
-                var isAtLatestBar = (curStart + curCount >= total - 1) || ratio >= 0.85;
+                var isAtLatestBar = root.followLatest || (curStart + curCount >= total - 1) || ratio >= 0.85;
 
                 if (wheel.angleDelta.y > 0) {
-                    // Zoom IN: reduce visible bar count, anchoring to latest bar or cursor bar
+                    // Zoom IN: reduce visible bar count, anchoring to latest bar (with preserved right margin) or cursor bar
                     var nextCount = Math.max(Model.MIN_BAR_COUNT, curCount - deltaBars);
-                    var nextStart = isAtLatestBar ? Math.max(0, total - nextCount) : Math.max(0, Math.min(total - nextCount, Math.round(anchorBar - ratio * nextCount)));
+                    var nextMaxStartIn = Model.maxChartViewStart(total, nextCount);
+                    var nextFlushIn = Math.max(0, total - nextCount);
+                    var preservedRightIn = isAtLatestBar ? Math.min(g.rightOffsetBars, Math.max(0, nextMaxStartIn - nextFlushIn)) : 0;
+                    var nextStart = isAtLatestBar
+                        ? Math.min(nextMaxStartIn, nextFlushIn + preservedRightIn)
+                        : Math.max(0, Math.min(nextMaxStartIn, Math.round(anchorBar - ratio * nextCount)));
+                    var nextFollowIn = (nextStart >= nextFlushIn);
                     root.viewCount = nextCount;
                     root.viewStart = nextStart;
-                    root.followLatest = (nextStart >= Math.max(0, total - nextCount));
+                    root.followLatest = nextFollowIn;
+                    root.rightOffsetBars = nextFollowIn ? Math.max(0, nextStart - nextFlushIn) : 0;
                     root.refreshGeometry();
                     root.zoomChangedManually(root.viewCount);
                 } else if (wheel.angleDelta.y < 0) {
-                    // Zoom OUT: increase visible bar count, expanding symmetrically or outward from right edge
+                    // Zoom OUT: increase visible bar count, preserving right margin when at latest edge
                     var nextCount = Math.min(total, curCount + deltaBars);
-                    var nextStart = isAtLatestBar ? Math.max(0, total - nextCount) : Math.max(0, Math.min(total - nextCount, Math.round(anchorBar - ratio * nextCount)));
+                    var nextMaxStartOut = Model.maxChartViewStart(total, nextCount);
+                    var nextFlushOut = Math.max(0, total - nextCount);
+                    var preservedRightOut = isAtLatestBar ? Math.min(g.rightOffsetBars, Math.max(0, nextMaxStartOut - nextFlushOut)) : 0;
+                    var nextStart = isAtLatestBar
+                        ? Math.min(nextMaxStartOut, nextFlushOut + preservedRightOut)
+                        : Math.max(0, Math.min(nextMaxStartOut, Math.round(anchorBar - ratio * nextCount)));
                     var targetViewCount = nextCount >= total ? -1 : nextCount;
-                    var targetViewStart = nextCount >= total ? 0 : nextStart;
-                    var targetFollow = (nextCount >= total) || (nextStart >= Math.max(0, total - nextCount));
-                    if (targetViewCount !== root.viewCount || targetViewStart !== root.viewStart || targetFollow !== root.followLatest) {
+                    var targetFollow = (nextStart >= nextFlushOut);
+                    var targetRightOffset = targetFollow ? Math.max(0, nextStart - nextFlushOut) : 0;
+                    var targetViewStart = nextStart;
+                    if (targetViewCount !== root.viewCount || targetViewStart !== root.viewStart || targetFollow !== root.followLatest || targetRightOffset !== root.rightOffsetBars) {
                         var zoomChanged = (targetViewCount !== root.viewCount);
                         root.viewCount = targetViewCount;
                         root.viewStart = targetViewStart;
                         root.followLatest = targetFollow;
+                        root.rightOffsetBars = targetRightOffset;
                         root.refreshGeometry();
                         if (zoomChanged)
                             root.zoomChangedManually(root.viewCount);

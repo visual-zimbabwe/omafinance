@@ -1113,9 +1113,9 @@ test("state persistence preserves discordWebhook setting", () => {
 
 test("evaluateStratChecklist locks target at inception and detects target hit exhaustion", () => {
   const hourly = [
-    { timestamp: 1000, open: 100, high: 105, low: 98, close: 104 },
-    { timestamp: 2000, open: 104, high: 108, low: 102, close: 106 }, // Signal bar (high=108, low=102)
-    { timestamp: 3000, open: 106, high: 109, low: 105, close: 109 }  // Triggered (currentPrice=109)
+    { timestamp: 1000, open: 106, high: 108, low: 104, close: 105 },
+    { timestamp: 2000, open: 105, high: 108, low: 102, close: 106 }, // 2d signal bar (high=108, low=102)
+    { timestamp: 3000, open: 106, high: 109, low: 105, close: 109 }  // 2d-2u triggered (currentPrice=109)
   ]
   const daily = [
     { timestamp: 100, open: 90, high: 100, low: 85, close: 95 },
@@ -1210,10 +1210,10 @@ test("evaluateStratChecklist detects Domino Effect when LTF 60m target is HTF Da
     { timestamp: 300, open: 769, high: 775, low: 768, close: 774 }
   ]
 
-  // Hourly: 2U -> 1 -> 2U
+  // Hourly: 2D -> 2U bullish reversal targeting Daily High 777.09
   const hourly = [
-    { timestamp: 1000, open: 768, high: 772, low: 767, close: 771 }, // 2U
-    { timestamp: 2000, open: 771, high: 773.50, low: 770, close: 772 }, // 1 (Signal bar: high 773.50, low 770)
+    { timestamp: 1000, open: 773, high: 773.50, low: 771, close: 772 },
+    { timestamp: 2000, open: 771, high: 773.50, low: 770, close: 772 }, // 2d (Signal bar: high 773.50, low 770)
     { timestamp: 3000, open: 772, high: 775, low: 771.50, close: 774.20 } // Triggered above 773.50
   ]
 
@@ -1292,8 +1292,8 @@ test("stratBarState and stratEntryState classify bar states, failed 2 reversals,
   assert.equal(entry2dShort.state, "IN_FORCE")
   assert.equal(entry2dShort.passes, true)
 
-  // 3. Failed 2u Reversal (Shooter / Bearish Reversal)
-  // Took out prior high 105 with high 106, but dropped below open 103 to 99 (Red)
+  // 3. Failed 2u (not a tradeable setup; waits for trigger break)
+  // Took out prior high 105 with high 106, dropped below open 103 to 99 (Red)
   const curFailed2u = { open: 103, high: 106, low: 98, close: 99 }
   const barFailed2u = Model.stratBarState(curFailed2u, prev, 99)
   assert.equal(barFailed2u.scenario, "2u")
@@ -1302,9 +1302,9 @@ test("stratBarState and stratEntryState classify bar states, failed 2 reversals,
   assert.equal(barFailed2u.code, "2u")
   assert.equal(barFailed2u.failedCode, "F2u")
   const entryFailed2uShort = Model.stratEntryState(barFailed2u, false)
-  assert.equal(entryFailed2uShort.state, "FAILED_2_REVERSAL")
-  assert.equal(entryFailed2uShort.passes, true)
-  assert.match(entryFailed2uShort.detail, /Failed 2u reversal/)
+  assert.equal(entryFailed2uShort.state, "WAIT_FAILED_2")
+  assert.equal(entryFailed2uShort.passes, false)
+  assert.match(entryFailed2uShort.detail, /not an actionable setup/)
 
   // 4. Counter-trend bar (2u Green against SHORT)
   const cur2uGreen = { open: 101, high: 107, low: 100, close: 106 }
@@ -1362,10 +1362,10 @@ test("evaluateStratChecklist executes tradeable short on 60m 2d-Red in-force", (
     { timestamp: 200, open: 195, high: 198, low: 170, close: 188 }, // 1D Low = 170 (Target)
     { timestamp: 300, open: 190, high: 191, low: 175, close: 178 }  // Red
   ]
-  // Hourly: p60 is 185-180, current c60 open 181, high 181.5, low 177, close 178 (2d Red)
+  // Hourly: 2u -> 2d bearish reversal (p60 is 185-180, current c60 breaks 180 -> 2d Red)
   const hourly = [
-    { timestamp: 1000, open: 188, high: 189, low: 182, close: 184 },
-    { timestamp: 2000, open: 184, high: 185, low: 180, close: 181 }, // Signal candle (low 180)
+    { timestamp: 1000, open: 181, high: 184, low: 170, close: 183 },
+    { timestamp: 2000, open: 184, high: 185, low: 180, close: 181 }, // 2u signal candle (low 180)
     { timestamp: 3000, open: 181, high: 181.5, low: 177, close: 178 } // Broke 180 -> 2d Red
   ]
   const quote = { regularMarketPrice: 178 }
@@ -1383,41 +1383,27 @@ test("evaluateStratChecklist executes tradeable short on 60m 2d-Red in-force", (
   assert.match(r9.detail, /In-Force/)
 })
 
-test("evaluateStratChecklist triggers tradeable Failed 2u Reversal with tight stop on current candle high", () => {
+test("evaluateStratChecklist rejects Failed 2u intrabar reversal as a non-setup", () => {
   const daily = [
     { timestamp: 100, open: 200, high: 205, low: 180, close: 195 },
     { timestamp: 200, open: 195, high: 198, low: 170, close: 188 },
-    { timestamp: 300, open: 190, high: 191, low: 181, close: 181 } // Day low 181 (target 180 untagged)
+    { timestamp: 300, open: 190, high: 191, low: 181, close: 181 }
   ]
-  // Hourly: p60 is 185-180.
-  // Current c60 opened at 183, pushed above 185 to 186 (2u break), but failed and dropped back to 181 (Red).
+  // Current c60 opened at 183, pushed above 185 to 186 (2u), dropped back below open to 181 (Red) without breaking 180
   const hourly = [
     { timestamp: 1000, open: 188, high: 189, low: 182, close: 184 },
-    { timestamp: 2000, open: 184, high: 185, low: 180, close: 182 }, // p60: high 185, low 180
-    { timestamp: 3000, open: 183, high: 186, low: 181, close: 181 }  // 2u Red (Failed 2u)
+    { timestamp: 2000, open: 184, high: 185, low: 180, close: 182 },
+    { timestamp: 3000, open: 183, high: 186, low: 181, close: 181 }
   ]
   const quote = { regularMarketPrice: 181 }
 
   const res = Model.evaluateStratChecklist("AMD", hourly, daily, quote)
   assert.equal(res.direction, "SHORT")
-  assert.equal(res.isTradeable, true)
-  assert.equal(res.signalName, "60m Failed 2u Bearish Reversal")
-  assert.equal(res.triggerPrice, 183) // Open of rejection candle
-  assert.equal(res.stopPrice, 186)    // High of failed 2u push (ultra-tight structural stop!)
-  assert.equal(res.targetPrice, 180)  // T1 is prior 60m low (turning bar into Scenario 3)
-  assert.equal(res.targetName, "60m Low (Outside Bar Trigger)")
-
-  const r9 = res.rules.find(r => r.id === 9)
-  assert.equal(r9.passed, true)
+  assert.equal(res.isTradeable, false)
+  assert.equal(res.entryState.state, "WAIT_FAILED_2")
+  assert.equal(res.entryState.passes, false)
   const r1 = res.rules.find(r => r.id === 1)
-  assert.equal(r1.passed, true)
-  assert.match(res.entryState.detail, /Failed 2u reversal/)
-
-  // Verify Discord alert includes Failed 2 Reversal execution mechanics
-  const alertStr = Model.discordAlertPayload(res, "TRIGGERED")
-  const alertJson = JSON.parse(alertStr)
-  assert.ok(alertJson.embeds[0].fields.some(f => f.name.includes("Failed 2 Reversal")))
-  assert.ok(!/[\u{1F300}-\u{1F9FF}]/u.test(alertStr), "Must contain no emojis")
+  assert.equal(r1.passed, false)
 })
 
 test("evaluateStratChecklist blocks trade when 60m is green against red HTF (profit taking / pullback)", () => {
@@ -1598,11 +1584,11 @@ test("evaluateStratChecklist enriches Rule 1 and checklist with HTF scenario ver
     { timestamp: tW2_2, open: 177, high: 177, low: 170, close: 174 }   // Current Day (Weekly 2d Red, Daily 2d Red)
   ]
 
-  // Hourly 60m 2d-Red in-force targeting Prior Month Low 150
-  // p60: high 179, low 175 (trigger 175)
+  // Hourly 60m 2u-2d bearish reversal targeting Prior Month Low 150
+  // p60: high 179, low 175 (2u trigger 175)
   // c60: open 175, high 176, low 172, cur=174 -> 2d in-force
   const hourly = [
-    { timestamp: tW2_2 - 7200, open: 180, high: 181, low: 176, close: 178 },
+    { timestamp: tW2_2 - 7200, open: 176, high: 178, low: 175, close: 177 },
     { timestamp: tW2_2 - 3600, open: 178, high: 179, low: 175, close: 177 },
     { timestamp: tW2_2, open: 175, high: 176, low: 172, close: 174 }
   ]
@@ -1897,9 +1883,9 @@ test("evaluateStratChecklist and resolveUntaggedHtfTargets scan lookback 1D/1W s
   ]
 
   const hourlyAt0701 = [
-    { timestamp: ts("2026-10-28T19:30:00Z"), open: 280.20, high: 281.39, low: 279.90, close: 281.10 },
-    { timestamp: ts("2026-10-29T13:30:00Z"), open: 282.41, high: 284.33, low: 282.20, close: 283.80 }, // 06:30 PT 60m
-    { timestamp: ts("2026-10-29T14:00:00Z"), open: 283.82, high: 284.36, low: 283.80, close: 284.34 }  // 07:00 PT 60m
+    { timestamp: ts("2026-10-28T19:30:00Z"), open: 283.20, high: 284.33, low: 282.30, close: 282.80 },
+    { timestamp: ts("2026-10-29T13:30:00Z"), open: 282.41, high: 284.33, low: 282.20, close: 283.80 }, // 06:30 PT 60m (2d)
+    { timestamp: ts("2026-10-29T14:00:00Z"), open: 283.82, high: 284.36, low: 283.80, close: 284.34 }  // 07:00 PT 60m (2d-2u)
   ]
 
   // 1. Before 284.64 is tagged: locks 284.64 ("1D/1W Pivot High"), skips gapped-over 281.48 & non-pivot 286.18
@@ -2469,9 +2455,9 @@ test("Update 1: evaluateStratChecklist allows 1D + 60m active in-force override 
     { timestamp: t3, open: 185, high: 193, low: 184, close: 192 }  // 1D 2u Green (broke 190, target 1M High 212)
   ]
   const hourly = [
-    { timestamp: t3 - 7200, open: 185, high: 190.5, low: 184, close: 190 },
-    { timestamp: t3 - 3600, open: 190, high: 191, low: 189, close: 190.5 }, // 60m signal high 191 (above 190)
-    { timestamp: t3, open: 190.5, high: 193, low: 190, close: 192 }         // 60m 2u Green in-force toward 1W High 212
+    { timestamp: t3 - 7200, open: 192, high: 195, low: 188, close: 190 },
+    { timestamp: t3 - 3600, open: 190, high: 191, low: 189, close: 190.5 }, // 60m inside bar (high 191)
+    { timestamp: t3, open: 190.5, high: 193, low: 190, close: 192 }         // 60m 2-1-2u Green in-force
   ]
   const res = Model.evaluateStratChecklist("NVDA", hourly, daily, { regularMarketPrice: 192 })
   assert.equal(res.direction, "LONG")
@@ -2682,9 +2668,9 @@ test("Batch 2 Update 1: evaluateStratChecklist supports Macro + Intraday Flip ne
     { timestamp: t3, open: 177, high: 179.5, low: 175, close: 179 } // Broke 180 low (2d), reclaimed 177 open (Green -> failed2d!)
   ]
   const hourlyGapper = [
-    { timestamp: t3 - 7200, open: 177, high: 178, low: 175, close: 176.5 },
-    { timestamp: t3 - 3600, open: 176.5, high: 178.2, low: 176, close: 177.8 },
-    { timestamp: t3, open: 177.8, high: 179.5, low: 177.5, close: 179 } // 60m 2u Green
+    { timestamp: t3 - 7200, open: 179, high: 180, low: 175, close: 176.5 },
+    { timestamp: t3 - 3600, open: 176.5, high: 178.2, low: 176, close: 177.8 }, // 1 inside bar
+    { timestamp: t3, open: 177.8, high: 179.5, low: 177.5, close: 179 } // 60m 2-1-2u Green
   ]
   const resGapper = Model.evaluateStratChecklist("AMD", hourlyGapper, dailyGapper, { regularMarketPrice: 179 })
   assert.equal(resGapper.bar1D.failed2d, true)
@@ -2781,31 +2767,40 @@ test("Batch 2 Update 2: 30m time exhaustion, 3/3 HTF In-Force exemption, resolve
   assert.equal(r7Exempt.passed, true)
 })
 
-test("Batch 2 Update 4: detectCandleShape identifies Doji vs Engulfing 3-bars and Rule 2 blocks 3-2 continuation off Doji 3", () => {
+test("Batch 2 Update 4: detectCandleShape removes Doji/Engulfing and 3-2 reversal requires opposite color on bar 3", () => {
   const prev = { open: 102, high: 105, low: 100, close: 104 }
-  const doji3 = Model.detectCandleShape({ open: 102.2, high: 108, low: 97, close: 102.8 }, prev)
-  assert.equal(doji3.isDoji, true)
-  assert.equal(doji3.shape, "Doji")
+  const neutralBar = Model.detectCandleShape({ open: 102.2, high: 108, low: 97, close: 102.8 }, prev)
+  assert.equal(neutralBar.isDoji, undefined)
+  assert.equal(neutralBar.isEngulfing, undefined)
+  assert.equal(neutralBar.shape, null)
 
-  const engulfing3 = Model.detectCandleShape({ open: 98, high: 108, low: 97, close: 107.2 }, prev)
-  assert.equal(engulfing3.isEngulfing, true)
-  assert.equal(engulfing3.shape, "Engulfing")
+  const wideGreenBar = Model.detectCandleShape({ open: 98, high: 108, low: 97, close: 107.2 }, prev)
+  assert.equal(wideGreenBar.isEngulfing, undefined)
+  assert.equal(wideGreenBar.shape, null)
 
-  // In evaluateStratChecklist, a 3-2 continuation off a Doji 3 bar fails Rule 2
   const daily = [
     { timestamp: 100, open: 95, high: 105, low: 92, close: 103 },
     { timestamp: 200, open: 103, high: 120, low: 101, close: 112 },
     { timestamp: 300, open: 105, high: 111, low: 104, close: 110 }
   ]
-  const hourlyDoji32 = [
+  // Same-color 3(green)-2u is a continuation (not a 3-2 reversal) -> rejected in Rule 1
+  const hourlyGreen32 = [
     { timestamp: 1000, open: 102, high: 105, low: 100, close: 104 },
-    { timestamp: 2000, open: 102.2, high: 108, low: 97, close: 102.8 }, // Doji 3 signal bar
+    { timestamp: 2000, open: 102.2, high: 108, low: 97, close: 106.8 }, // Green 3
     { timestamp: 3000, open: 107, high: 110.5, low: 106.5, close: 110 }
   ]
-  const resDoji = Model.evaluateStratChecklist("SPY", hourlyDoji32, daily, { regularMarketPrice: 110 })
-  const r1Doji = resDoji.rules.find(r => r.id === 1)
-  assert.equal(r1Doji.passed, false)
-  assert.match(r1Doji.detail, /Doji 3 indecision bar/)
+  const resGreen32 = Model.evaluateStratChecklist("SPY", hourlyGreen32, daily, { regularMarketPrice: 110 })
+  assert.equal(resGreen32.rules.find(r => r.id === 1).passed, false)
+
+  // Opposite-color 3(red)-2u(green) is a valid 3-2 Reversal Up
+  const hourlyRed32 = [
+    { timestamp: 1000, open: 102, high: 105, low: 100, close: 104 },
+    { timestamp: 2000, open: 106.8, high: 108, low: 97, close: 101.2 }, // Red 3
+    { timestamp: 3000, open: 107, high: 110.5, low: 106.5, close: 110 }
+  ]
+  const resRed32 = Model.evaluateStratChecklist("SPY", hourlyRed32, daily, { regularMarketPrice: 110 })
+  assert.equal(resRed32.signalName, "60m 3-2 Reversal Up")
+  assert.equal(resRed32.rules.find(r => r.id === 1).passed, true)
 })
 
 test("Batch 2 Update 5: I-O-I (1-3-1-2), Pivot Machine Gun (PMG), and Kicker pattern detection", () => {
@@ -2824,7 +2819,7 @@ test("Batch 2 Update 5: I-O-I (1-3-1-2), Pivot Machine Gun (PMG), and Kicker pat
     { timestamp: 300, open: 100, high: 106, low: 99, close: 104.5 }
   ]
   const chkIoi = Model.evaluateStratChecklist("QQQ", ioiCandles, daily, { regularMarketPrice: 104.5 })
-  assert.equal(chkIoi.signalName, "60m 1-3-1-2 I-O-I Up")
+  assert.equal(chkIoi.signalName, "60m 3-1-2 Reversal Up")
 
   // 2. Pivot Machine Gun (PMG): 5 consecutive lower highs followed by bullish reversal
   const pmgCandles = [
@@ -5209,4 +5204,262 @@ test("isCandleSeriesStale detects stale prior-session caches during RTH without 
   // Post-market: missing today's 1D bar is stale, having today's 1D bar is fresh
   assert.equal(Model.isCandleSeriesStale(wed1D, "NVDA", "1D", thuPost, 0), true)
   assert.equal(Model.isCandleSeriesStale(thu1D, "NVDA", "1D", thuPost, 0), false)
+})
+
+test("canonical 7-category Strat setup detector covers all approved setups and rejects removed patterns", () => {
+  const c = (ts, o, h, l, cl) => ({ timestamp: ts, open: o, high: h, low: l, close: cl })
+
+  // 1. Inside bar reversals: 2d-1-2u, 2u-1-2d, 3(red)-1-2u, 3(green)-1-2d
+  const s2d12u = Model.detectStratSetupOnCandles("1D", [c(1, 105, 110, 100, 108), c(2, 107, 108, 95, 97), c(3, 98, 102, 96, 100), c(4, 101, 104, 100, 103)])
+  assert.equal(s2d12u.category, "inside_reversal")
+  assert.equal(s2d12u.code, "2d-1-2u")
+  assert.equal(s2d12u.triggerPrice, 102)
+
+  const s2u12d = Model.detectStratSetupOnCandles("1D", [c(1, 95, 100, 90, 96), c(2, 97, 108, 95, 106), c(3, 104, 106, 100, 102), c(4, 101, 102, 98, 99)])
+  assert.equal(s2u12d.category, "inside_reversal")
+  assert.equal(s2u12d.code, "2u-1-2d")
+
+  const s3r12u = Model.detectStratSetupOnCandles("1D", [c(1, 100, 105, 98, 103), c(2, 106, 110, 92, 94), c(3, 96, 102, 94, 100), c(4, 101, 104, 100, 103)])
+  assert.equal(s3r12u.category, "inside_reversal")
+  assert.equal(s3r12u.code, "3-1-2u")
+  assert.match(s3r12u.name, /3-1-2 Reversal Up/)
+
+  const s3g12d = Model.detectStratSetupOnCandles("1D", [c(1, 100, 105, 98, 103), c(2, 94, 110, 92, 108), c(3, 106, 108, 100, 102), c(4, 101, 102, 98, 99)])
+  assert.equal(s3g12d.category, "inside_reversal")
+  assert.equal(s3g12d.code, "3-1-2d")
+  assert.match(s3g12d.name, /3-1-2 Reversal Down/)
+
+  // 2. Inside bar continuations: 2u-1-2u, 2d-1-2d, 3(green)-1-2u, 3(red)-1-2d
+  const s2u12u = Model.detectStratSetupOnCandles("1D", [c(1, 95, 100, 90, 96), c(2, 97, 110, 95, 108), c(3, 106, 108, 102, 105), c(4, 106, 111, 105, 109)])
+  assert.equal(s2u12u.category, "inside_continuation")
+  assert.equal(s2u12u.code, "2u-1-2u")
+
+  const s2d12d = Model.detectStratSetupOnCandles("1D", [c(1, 105, 110, 100, 104), c(2, 103, 106, 92, 94), c(3, 95, 100, 94, 96), c(4, 95, 96, 91, 92)])
+  assert.equal(s2d12d.category, "inside_continuation")
+  assert.equal(s2d12d.code, "2d-1-2d")
+
+  const s3g12u = Model.detectStratSetupOnCandles("1D", [c(1, 100, 105, 98, 103), c(2, 94, 110, 92, 108), c(3, 104, 106, 100, 105), c(4, 105, 109, 104, 108)])
+  assert.equal(s3g12u.category, "inside_continuation")
+  assert.equal(s3g12u.code, "3-1-2u")
+  assert.match(s3g12u.name, /3-1-2 Continuation Up/)
+
+  const s3r12d = Model.detectStratSetupOnCandles("1D", [c(1, 100, 105, 98, 103), c(2, 108, 110, 92, 94), c(3, 96, 102, 94, 95), c(4, 95, 96, 91, 92)])
+  assert.equal(s3r12d.category, "inside_continuation")
+  assert.equal(s3r12d.code, "3-1-2d")
+  assert.match(s3r12d.name, /3-1-2 Continuation Down/)
+
+  // 3. 2-2 reversals: 2d-2u, 2u-2d, 3-2d-2u, 3-2u-2d
+  const s2d2u = Model.detectStratSetupOnCandles("1D", [c(1, 102, 110, 100, 108), c(2, 106, 107, 96, 98), c(3, 99, 109, 98, 108)])
+  assert.equal(s2d2u.category, "2-2_reversal")
+  assert.equal(s2d2u.code, "2d-2u")
+
+  const s32d2u = Model.detectStratSetupOnCandles("1D", [c(1, 102, 105, 100, 104), c(2, 104, 110, 96, 98), c(3, 98, 103, 93, 95), c(4, 96, 105, 95, 104)])
+  assert.equal(s32d2u.category, "2-2_reversal")
+  assert.equal(s32d2u.code, "3-2d-2u")
+
+  const s32u2d = Model.detectStratSetupOnCandles("1D", [c(1, 102, 105, 100, 104), c(2, 98, 110, 96, 108), c(3, 108, 114, 103, 112), c(4, 111, 112, 101, 102)])
+  assert.equal(s32u2d.category, "2-2_reversal")
+  assert.equal(s32u2d.code, "3-2u-2d")
+
+  // 4. 1-bar rev-strat: 1-3 (green bullish / red bearish)
+  const s13u = Model.detectStratSetupOnCandles("1D", [c(1, 100, 110, 95, 104), c(2, 102, 106, 100, 103), c(3, 101, 108, 98, 107)])
+  assert.equal(s13u.category, "1-bar_revstrat")
+  assert.equal(s13u.code, "1-3u")
+  assert.equal(s13u.direction, "LONG")
+
+  const s13d = Model.detectStratSetupOnCandles("1D", [c(1, 100, 110, 95, 104), c(2, 102, 106, 100, 103), c(3, 105, 108, 98, 99)])
+  assert.equal(s13d.category, "1-bar_revstrat")
+  assert.equal(s13d.code, "1-3d")
+  assert.equal(s13d.direction, "SHORT")
+
+  // 5. 3-2 reversals: opposite color required (3 red -> 2u; 3 green -> 2d); same color rejected
+  const s32u = Model.detectStratSetupOnCandles("1D", [c(1, 100, 105, 98, 103), c(2, 107, 110, 94, 96), c(3, 98, 112, 97, 111)])
+  assert.equal(s32u.category, "3-2_reversal")
+  assert.equal(s32u.code, "3-2u")
+
+  const s32d = Model.detectStratSetupOnCandles("1D", [c(1, 100, 105, 98, 103), c(2, 96, 110, 94, 108), c(3, 106, 107, 92, 93)])
+  assert.equal(s32d.category, "3-2_reversal")
+  assert.equal(s32d.code, "3-2d")
+
+  assert.equal(Model.detectStratSetupOnCandles("1D", [c(1, 100, 105, 98, 103), c(2, 96, 110, 94, 108), c(3, 108, 113, 107, 112)]), null) // 3(green)-2u rejected
+  assert.equal(Model.detectStratSetupOnCandles("1D", [c(1, 100, 105, 98, 103), c(2, 108, 110, 94, 96), c(3, 95, 96, 90, 91)]), null)   // 3(red)-2d rejected
+
+  // 6. 2-bar rev-strat: 1-2d-2u, 1-2u-2d, 1-3(hammer)-2u, 1-3(shooter)-2d
+  const s122u = Model.detectStratSetupOnCandles("1D", [c(1, 100, 110, 95, 105), c(2, 102, 106, 100, 103), c(3, 102, 104, 97, 102), c(4, 103, 107, 102, 106)])
+  assert.equal(s122u.category, "2-bar_revstrat")
+  assert.equal(s122u.code, "1-2d-2u")
+
+  const s132u = Model.detectStratSetupOnCandles("1D", [c(1, 100, 112, 95, 105), c(2, 102, 106, 100, 103), c(3, 107, 108, 96, 107.5), c(4, 107, 110, 106, 109)])
+  assert.equal(s132u.category, "2-bar_revstrat")
+  assert.equal(s132u.code, "1-3(H)-2u")
+
+  const s132uNoHammer = Model.detectStratSetupOnCandles("1D", [c(1, 100, 112, 95, 105), c(2, 102, 106, 100, 103), c(3, 107, 108, 96, 97), c(4, 107, 110, 106, 109)])
+  assert.equal(s132uNoHammer, null)
+
+  // Reject removed setups: 2-2 continuation, 1-1-2, and scanner doji/engulfing modifiers
+  assert.equal(Model.detectStratSetupOnCandles("1D", [c(1, 100, 104, 98, 103), c(2, 103, 107, 102, 106), c(3, 106, 110, 105, 109)]), null) // 2u-2u
+  assert.equal(Model.detectStratSetupOnCandles("1D", [c(1, 100, 112, 92, 105), c(2, 102, 108, 96, 104), c(3, 103, 106, 98, 103), c(4, 104, 109, 103, 108)]), null) // 1-1-2u
+  assert.equal(Model.matchesScenarioQuery([c(1, 102, 105, 100, 104), c(2, 102.2, 108, 97, 102.8)], null, "doji"), false)
+  assert.equal(Model.matchesScenarioQuery([c(1, 102, 105, 100, 104), c(2, 98, 108, 97, 107.2)], null, "engulfing"), false)
+})
+
+test("computeTriggeredSetupLines enforces trigger gating, bar lifetime, cascade, colors, and progressive T1..TN reveal", () => {
+  const c = (ts, o, h, l, cl) => ({ timestamp: ts, open: o, high: h, low: l, close: cl })
+
+  // Color contract: Trigger uses TF color (1M yellow, 1W orange, 1D/60/30 white); all Targets are green
+  assert.equal(Model.setupLineColor("1M", "trigger", false), "#FACC15")
+  assert.equal(Model.setupLineColor("1W", "trigger", false), "#FB923C")
+  assert.equal(Model.setupLineColor("1D", "trigger", false), "#FFFFFF")
+  assert.equal(Model.setupLineColor("60", "trigger", false), "#FFFFFF")
+  assert.equal(Model.setupLineColor("30", "trigger", false), "#FFFFFF")
+  for (const tf of ["1M", "1W", "1D", "60", "30"]) {
+    assert.equal(Model.setupLineColor(tf, "target", false), "#22C55E")
+    assert.equal(Model.setupLineColor(tf, "target", true), "#15803D")
+  }
+
+  // Monthly bullish 2d-1-2u with 3 progressive targets: T1=220 (p2), T2=232 (p3), T3=245 (p5)
+  const mBase = [
+    c(100, 230, 245, 225, 235), // p5 peak = 245 (T3)
+    c(200, 235, 228, 220, 224), // p4 lower
+    c(300, 224, 232, 218, 222), // p3 peak = 232 (T2)
+    c(400, 220, 220, 200, 205), // p2 (2d): high = 220 (T1)
+    c(500, 206, 215, 202, 210)  // p1 (1): trigger = 215
+  ]
+
+  // 1. Before trigger break (cur high 214 <= 215): ZERO lines shown
+  const untriggered = Model.computeTriggeredSetupLines({ "1M": [...mBase, c(600, 210, 214, 208, 213)] }, { regularMarketPrice: 213 }, "1M")
+  assert.equal(untriggered.length, 0)
+
+  // 2. Triggered (cur high 217 > 215), close=217 < T1 (220): shows ONLY Trigger (215) + T1 (220)
+  const atTrig = Model.computeTriggeredSetupLines({ "1M": [...mBase, c(600, 210, 217, 209, 217)] }, { regularMarketPrice: 217 }, "1M")
+  assert.deepEqual(atTrig.map(l => [l.label, l.price, l.kind]), [
+    ["1M 2d-1-2u TRIG", 215, "trigger"],
+    ["1M T1", 220, "target"]
+  ])
+
+  // 3. Close crosses L1 (220) without hitting L2 (232): shows T1=220 and T2=232
+  const pastT1 = Model.computeTriggeredSetupLines({ "1M": [...mBase, c(600, 210, 226, 209, 225)] }, { regularMarketPrice: 225 }, "1M")
+  assert.deepEqual(pastT1.map(l => [l.label, l.price]), [
+    ["1M 2d-1-2u TRIG", 215],
+    ["1M T1", 220],
+    ["1M T2", 232]
+  ])
+
+  // 3b. Retrace below L1 (220) BEFORE L2 (232) was hit: T2 (232) hides, leaving Trigger + T1 (220)
+  const retraceBeforeL2 = Model.computeTriggeredSetupLines({ "1M": [...mBase, c(600, 210, 226, 209, 218)] }, { regularMarketPrice: 218 }, "1M")
+  assert.deepEqual(retraceBeforeL2.map(l => [l.label, l.price]), [
+    ["1M 2d-1-2u TRIG", 215],
+    ["1M T1", 220]
+  ])
+
+  // 4. Bar hits L2 (232) and close >= 232: old 220 drops, 232 promotes to T1, and 245 becomes T2 (max 2 targets)
+  const hitL2 = Model.computeTriggeredSetupLines({ "1M": [...mBase, c(600, 210, 237, 209, 236)] }, { regularMarketPrice: 236 }, "1M")
+  assert.deepEqual(hitL2.map(l => [l.label, l.price]), [
+    ["1M 2d-1-2u TRIG", 215],
+    ["1M T1", 232],
+    ["1M T2", 245]
+  ])
+
+  // 5. After L2 (232) was hit, retrace all the way below old L1 (218 < 220): 232 STAYS as T1, 245 hides
+  const retracedAfterL2 = Model.computeTriggeredSetupLines({ "1M": [...mBase, c(600, 210, 237, 209, 218)] }, { regularMarketPrice: 218 }, "1M")
+  assert.deepEqual(retracedAfterL2.map(l => [l.label, l.price]), [
+    ["1M 2d-1-2u TRIG", 215],
+    ["1M T1", 232]
+  ])
+
+  // 6. New bar opens (inside bar after bar 600): previous month's lines disappear
+  const nextMonth = Model.computeTriggeredSetupLines({
+    "1M": [...mBase, c(600, 210, 237, 209, 230), c(700, 230, 232, 225, 228)]
+  }, { regularMarketPrice: 228 }, "1M")
+  assert.equal(nextMonth.length, 0)
+
+  // 7. Bearish ratcheting [T1, T2] mirror: Trig=200, levels 190 -> 180 -> 168
+  const wBearBase = [
+    c(100, 175, 185, 168, 178), // p5 trough = 168 (L3)
+    c(200, 186, 192, 184, 188), // p4 bounce above p3 trough (not a trough)
+    c(300, 182, 195, 180, 192), // p3 trough = 180 (L2)
+    c(400, 192, 210, 190, 208), // p2 (2u): low = 190 (L1)
+    c(500, 206, 208, 200, 202)  // p1 (1): trigger = 200
+  ]
+  const bearAboveT1 = Model.computeTriggeredSetupLines({ "1W": [...wBearBase, c(600, 201, 202, 194, 195)] }, { regularMarketPrice: 195 }, "1W")
+  assert.deepEqual(bearAboveT1.map(l => [l.label, l.price]), [["1W 2u-1-2d TRIG", 200], ["1W T1", 190]])
+
+  const bearBelowT1 = Model.computeTriggeredSetupLines({ "1W": [...wBearBase, c(600, 201, 202, 187, 188)] }, { regularMarketPrice: 188 }, "1W")
+  assert.deepEqual(bearBelowT1.map(l => [l.label, l.price]), [["1W 2u-1-2d TRIG", 200], ["1W T1", 190], ["1W T2", 180]])
+
+  // Bar hits L2 (180) then bounces above old L1 (192 > 190): L2 (180) becomes T1, 190 dropped, 168 hidden
+  const bearHitL2Bounce = Model.computeTriggeredSetupLines({ "1W": [...wBearBase, c(600, 201, 202, 180, 192)] }, { regularMarketPrice: 192 }, "1W")
+  assert.deepEqual(bearHitL2Bounce.map(l => [l.label, l.price]), [["1W 2u-1-2d TRIG", 200], ["1W T1", 180]])
+
+  // Bar hits L2 (180) and close <= 180 (178): L2 (180) is T1, L3 (168) is T2
+  const bearBelowNewT1 = Model.computeTriggeredSetupLines({ "1W": [...wBearBase, c(600, 201, 202, 177, 178)] }, { regularMarketPrice: 178 }, "1W")
+  assert.deepEqual(bearBelowNewT1.map(l => [l.label, l.price]), [["1W 2u-1-2d TRIG", 200], ["1W T1", 180], ["1W T2", 168]])
+
+  // Bar hits final target L3 (168): 168 promotes to T1, no T2 beyond it
+  const bearHitL3 = Model.computeTriggeredSetupLines({ "1W": [...wBearBase, c(600, 201, 202, 166, 167)] }, { regularMarketPrice: 167 }, "1W")
+  assert.deepEqual(bearHitL3.map(l => [l.label, l.price]), [["1W 2u-1-2d TRIG", 200], ["1W T1", 168]])
+
+  // 8. Cascade-down visibility + strict timeframe eligibility (1Y, 15, 5 excluded)
+  const cascadeMap = {
+    "1M": [...mBase, c(600, 210, 217, 209, 217)],
+    "1W": [...wBearBase, c(600, 201, 202, 194, 195)]
+  }
+  assert.equal(Model.computeTriggeredSetupLines(cascadeMap, null, "1Y").length, 0)
+  assert.equal(Model.computeTriggeredSetupLines(cascadeMap, null, "15").length, 0)
+  assert.equal(Model.computeTriggeredSetupLines(cascadeMap, null, "5").length, 0)
+  // On 1M cell: only 1M lines
+  assert.deepEqual(Model.computeTriggeredSetupLines(cascadeMap, null, "1M").map(l => l.timeframe), ["1M", "1M"])
+  // On 1W, 1D, 60, 30 cells: both 1M and 1W lines cascade down
+  for (const tf of ["1W", "1D", "60", "30"]) {
+    assert.deepEqual(Model.computeTriggeredSetupLines(cascadeMap, null, tf).map(l => l.timeframe), ["1M", "1M", "1W", "1W"])
+  }
+
+  // 9. State persistence for gridSync.setupLines (default true, preserves explicit false)
+  assert.equal(Model.defaultGridSync().setupLines, true)
+  const savedOff = Model.serializeState(["AAPL"], [], "1D", "2x2", { symbol: true, timeframe: false, crosshair: true, time: true, broadening: false, setupLines: false })
+  assert.equal(Model.parseState(savedOff).gridSync.setupLines, false)
+  const savedOn = Model.serializeState(["AAPL"], [], "1D", "2x2", { symbol: true, timeframe: false, crosshair: true, time: true, broadening: false, setupLines: true })
+  assert.equal(Model.parseState(savedOn).gridSync.setupLines, true)
+})
+
+test("resolveHorizontalViewport supports TradingView-style ~9-bar default right margin and free left/right panning", () => {
+  // 1. Default ~9-bar right margin on standard 250-bar daily chart (defaultCount=140)
+  const vpStd = Model.resolveHorizontalViewport(250, -1, 140, 0, true, -1)
+  assert.equal(vpStd.vCount, 140)
+  assert.equal(vpStd.flushStart, 110)
+  assert.equal(vpStd.rightOffsetBars, Model.DEFAULT_RIGHT_OFFSET_BARS)
+  assert.equal(vpStd.vStart, 110 + Model.DEFAULT_RIGHT_OFFSET_BARS)
+  assert.ok(vpStd.maxStart > vpStd.vStart, "user can drag further left to expand right whitespace")
+
+  // 2. Dragging further left (e.g. 40 bars of right whitespace) works and is preserved on new bar arrival
+  const vpDraggedLeft = Model.resolveHorizontalViewport(250, -1, 140, 150, true, 40)
+  assert.equal(vpDraggedLeft.vStart, 150)
+  assert.equal(vpDraggedLeft.rightOffsetBars, 40)
+  const vpNextBar = Model.resolveHorizontalViewport(251, -1, 140, 150, true, 40)
+  assert.equal(vpNextBar.vStart, 151)
+  assert.equal(vpNextBar.rightOffsetBars, 40)
+
+  // 3. Dragging right back to flush (0 margin) and into older history (vStart < flushStart)
+  const vpFlush = Model.resolveHorizontalViewport(250, -1, 140, 110, true, 0)
+  assert.equal(vpFlush.vStart, 110)
+  assert.equal(vpFlush.rightOffsetBars, 0)
+  const vpHist = Model.resolveHorizontalViewport(250, -1, 140, 30, false, 0)
+  assert.equal(vpHist.vStart, 30)
+  assert.equal(vpHist.rightOffsetBars, 0)
+
+  // 4. Full-history chart (e.g. 40 monthly bars, vCount === total): still pans left into right margin and back to 0
+  const vpMonthly = Model.resolveHorizontalViewport(40, -1, 40, 0, true, -1)
+  assert.equal(vpMonthly.flushStart, 0)
+  assert.equal(vpMonthly.rightOffsetBars, 8) // floor(40 * 0.2) = 8
+  assert.equal(vpMonthly.vStart, 8)
+  assert.ok(vpMonthly.maxStart >= 30)
+
+  // 5. Tiny series (10 yearly bars, 1 bar) scale safely without hiding all candles
+  const vpTiny = Model.resolveHorizontalViewport(10, -1, 10, 0, true, -1)
+  assert.equal(vpTiny.rightOffsetBars, 2)
+  assert.equal(vpTiny.vStart, 2)
+  const vpSingle = Model.resolveHorizontalViewport(1, -1, 1, 0, true, -1)
+  assert.equal(vpSingle.vStart, 0)
+  assert.equal(vpSingle.maxStart, 0)
+  assert.equal(vpSingle.rightOffsetBars, 0)
 })
