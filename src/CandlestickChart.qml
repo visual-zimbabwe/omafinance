@@ -55,6 +55,7 @@ Item {
         if (root.viewCount !== target) {
             root.viewCount = target;
             root.followLatest = true;
+            root.rightOffsetBars = -1;
             root.refreshGeometry();
         }
     }
@@ -284,6 +285,7 @@ Item {
             candleW: 1,
             vStart: 0,
             vCount: 0,
+            slotCount: 0,
             flushStart: 0,
             maxStart: 0,
             rightOffsetBars: 0,
@@ -307,9 +309,10 @@ Item {
         var defaultCount = (isDaily || isWeekly) ? Math.min(total, 140) : total;
         var vp = Model.resolveHorizontalViewport(total, root.viewCount, defaultCount, root.viewStart, root.followLatest, root.rightOffsetBars);
         var vCount = vp.vCount;
+        var slotCount = vp.slotCount;
         var vStart = vp.vStart;
 
-        var list = all.slice(vStart, Math.min(total, vStart + vCount));
+        var list = all.slice(vStart, Math.min(total, vStart + slotCount));
         if (list.length === 0)
             return unset;
 
@@ -346,7 +349,7 @@ Item {
         }
 
         var extVal = Model.finiteOrNull(root.extendedPrice);
-        var hasExtended = (extVal !== null && extVal > 0 && (vStart + vCount >= total));
+        var hasExtended = (extVal !== null && extVal > 0 && (vStart + slotCount >= total));
         if (hasExtended) {
             if (extVal < min)
                 min = extVal;
@@ -376,7 +379,7 @@ Item {
 
         var innerW = right - left;
         var innerH = bot - top;
-        var slotW = innerW / Math.max(1, vCount);
+        var slotW = innerW / Math.max(1, slotCount);
         var candleW = slotW >= 7 ? Math.max(1, slotW - 4) : (slotW >= 4 ? Math.max(1, slotW - 2) : (slotW >= 2.5 ? Math.max(1, slotW - 1) : Math.max(1, Math.round(slotW * 0.8))));
 
         function priceToY(price) {
@@ -553,6 +556,7 @@ Item {
             candleW: candleW,
             vStart: vStart,
             vCount: vCount,
+            slotCount: slotCount,
             flushStart: vp.flushStart,
             maxStart: vp.maxStart,
             rightOffsetBars: vp.rightOffsetBars,
@@ -1186,7 +1190,8 @@ Item {
                 var innerW = g ? g.innerW : Math.max(1, root.width - root.scaleGutterWidth);
                 var leftBase = g ? g.left : root.pad;
                 root.dragStartRatio = Math.max(0, Math.min(1, (mouse.x - leftBase) / innerW));
-                root.dragStartCenterIndex = root.dragStartViewStart + root.dragStartViewCount * root.dragStartRatio;
+                var startSlots = (g && g.slotCount) ? g.slotCount : root.dragStartViewCount;
+                root.dragStartCenterIndex = root.dragStartViewStart + startSlots * root.dragStartRatio;
             }
         }
 
@@ -1216,18 +1221,24 @@ Item {
                     var deltaX = mouse.x - root.dragStartX;
                     var countDelta = Math.round(deltaX * 0.25);
                     var nextCount = Math.max(Model.MIN_BAR_COUNT, Math.min(total, root.dragStartViewCount - countDelta));
+                    var nextBaseRight = Model.defaultRightOffsetBars(nextCount);
+                    var nextSlotCount = nextCount + nextBaseRight;
                     var nextMaxStart = Model.maxChartViewStart(total, nextCount);
-                    var nextFlush = Math.max(0, total - nextCount);
-                    var isAtLatestBar = root.followLatest || (root.dragStartViewStart + root.dragStartViewCount >= total - 1) || root.dragStartRatio >= 0.85;
-                    var preservedRight = isAtLatestBar ? Math.min(g.rightOffsetBars, Math.max(0, nextMaxStart - nextFlush)) : 0;
+                    var nextFlush = Math.max(0, total - nextSlotCount);
+                    var nextMinRight = Math.max(0, nextSlotCount - total);
+                    var nextMaxRight = Math.max(nextMinRight, nextMaxStart + nextSlotCount - total);
+                    var dragInitSlots = root.dragStartViewCount + Model.defaultRightOffsetBars(root.dragStartViewCount);
+                    var isAtLatestBar = root.followLatest || (root.dragStartViewStart + dragInitSlots >= total - 1) || root.dragStartRatio >= 0.85;
+                    var keepAutoRight = (root.rightOffsetBars < 0);
+                    var desiredRight = keepAutoRight ? nextBaseRight : Math.max(nextMinRight, Math.min(nextMaxRight, g.rightOffsetBars));
                     var nextStart = isAtLatestBar
-                        ? Math.min(nextMaxStart, nextFlush + preservedRight)
-                        : Math.max(0, Math.min(nextMaxStart, Math.round(root.dragStartCenterIndex - nextCount * root.dragStartRatio)));
+                        ? Math.max(0, Math.min(nextMaxStart, total - nextSlotCount + desiredRight))
+                        : Math.max(0, Math.min(nextMaxStart, Math.round(root.dragStartCenterIndex - nextSlotCount * root.dragStartRatio)));
 
                     var targetViewCount = nextCount >= total ? -1 : nextCount;
                     var targetFollow = (nextStart >= nextFlush);
-                    var targetRightOffset = targetFollow ? Math.max(0, nextStart - nextFlush) : 0;
-                    var targetViewStart = targetFollow ? nextStart : nextStart;
+                    var targetRightOffset = targetFollow ? (keepAutoRight && isAtLatestBar ? -1 : Math.max(0, nextStart + nextSlotCount - total)) : 0;
+                    var targetViewStart = nextStart;
                     if (targetViewCount !== root.viewCount || targetViewStart !== root.viewStart || targetFollow !== root.followLatest || targetRightOffset !== root.rightOffsetBars) {
                         var zoomChanged = (targetViewCount !== root.viewCount);
                         root.viewCount = targetViewCount;
@@ -1246,7 +1257,7 @@ Item {
                         var shiftBars = Math.round(deltaX / Math.max(1, g.slotW));
                         var nextStart = Math.max(0, Math.min(g.maxStart, root.dragStartViewStart - shiftBars));
                         var nextFollow = (nextStart >= g.flushStart);
-                        var nextRightOffset = nextFollow ? Math.max(0, nextStart - g.flushStart) : 0;
+                        var nextRightOffset = nextFollow ? Math.max(0, nextStart + g.slotCount - total) : 0;
 
                         if (nextStart !== root.viewStart || root.followLatest !== nextFollow || root.rightOffsetBars !== nextRightOffset) {
                             root.viewStart = nextStart;
@@ -1344,7 +1355,7 @@ Item {
                         bars = delta > 0 ? 1 : -1;
                     var nextStart = Math.max(0, Math.min(g.maxStart, curStart + bars));
                     var nextFollow = (nextStart >= g.flushStart);
-                    var nextRightOffset = nextFollow ? Math.max(0, nextStart - g.flushStart) : 0;
+                    var nextRightOffset = nextFollow ? Math.max(0, nextStart + g.slotCount - total) : 0;
                     if (nextStart !== root.viewStart || root.followLatest !== nextFollow || root.rightOffsetBars !== nextRightOffset) {
                         root.viewStart = nextStart;
                         root.followLatest = nextFollow;
@@ -1357,37 +1368,47 @@ Item {
                 if (deltaBars < 1)
                     deltaBars = 1;
 
-                var anchorBar = curStart + Math.round(ratio * curCount);
-                var isAtLatestBar = root.followLatest || (curStart + curCount >= total - 1) || ratio >= 0.85;
+                var curSlotCount = g.slotCount ? g.slotCount : curCount;
+                var anchorBar = curStart + Math.round(ratio * curSlotCount);
+                var isAtLatestBar = root.followLatest || (curStart + curSlotCount >= total - 1) || ratio >= 0.85;
+                var keepAutoRightWheel = (root.rightOffsetBars < 0);
 
                 if (wheel.angleDelta.y > 0) {
-                    // Zoom IN: reduce visible bar count, anchoring to latest bar (with preserved right margin) or cursor bar
+                    // Zoom IN: reduce visible bar count, anchoring to latest bar (with additive right margin) or cursor bar
                     var nextCount = Math.max(Model.MIN_BAR_COUNT, curCount - deltaBars);
+                    var nextBaseRightIn = Model.defaultRightOffsetBars(nextCount);
+                    var nextSlotCountIn = nextCount + nextBaseRightIn;
                     var nextMaxStartIn = Model.maxChartViewStart(total, nextCount);
-                    var nextFlushIn = Math.max(0, total - nextCount);
-                    var preservedRightIn = isAtLatestBar ? Math.min(g.rightOffsetBars, Math.max(0, nextMaxStartIn - nextFlushIn)) : 0;
+                    var nextFlushIn = Math.max(0, total - nextSlotCountIn);
+                    var nextMinRightIn = Math.max(0, nextSlotCountIn - total);
+                    var nextMaxRightIn = Math.max(nextMinRightIn, nextMaxStartIn + nextSlotCountIn - total);
+                    var desiredRightIn = keepAutoRightWheel ? nextBaseRightIn : Math.max(nextMinRightIn, Math.min(nextMaxRightIn, g.rightOffsetBars));
                     var nextStart = isAtLatestBar
-                        ? Math.min(nextMaxStartIn, nextFlushIn + preservedRightIn)
-                        : Math.max(0, Math.min(nextMaxStartIn, Math.round(anchorBar - ratio * nextCount)));
+                        ? Math.max(0, Math.min(nextMaxStartIn, total - nextSlotCountIn + desiredRightIn))
+                        : Math.max(0, Math.min(nextMaxStartIn, Math.round(anchorBar - ratio * nextSlotCountIn)));
                     var nextFollowIn = (nextStart >= nextFlushIn);
                     root.viewCount = nextCount;
                     root.viewStart = nextStart;
                     root.followLatest = nextFollowIn;
-                    root.rightOffsetBars = nextFollowIn ? Math.max(0, nextStart - nextFlushIn) : 0;
+                    root.rightOffsetBars = nextFollowIn ? (keepAutoRightWheel && isAtLatestBar ? -1 : Math.max(0, nextStart + nextSlotCountIn - total)) : 0;
                     root.refreshGeometry();
                     root.zoomChangedManually(root.viewCount);
                 } else if (wheel.angleDelta.y < 0) {
-                    // Zoom OUT: increase visible bar count, preserving right margin when at latest edge
+                    // Zoom OUT: increase visible bar count, preserving additive right margin when at latest edge
                     var nextCount = Math.min(total, curCount + deltaBars);
+                    var nextBaseRightOut = Model.defaultRightOffsetBars(nextCount);
+                    var nextSlotCountOut = nextCount + nextBaseRightOut;
                     var nextMaxStartOut = Model.maxChartViewStart(total, nextCount);
-                    var nextFlushOut = Math.max(0, total - nextCount);
-                    var preservedRightOut = isAtLatestBar ? Math.min(g.rightOffsetBars, Math.max(0, nextMaxStartOut - nextFlushOut)) : 0;
+                    var nextFlushOut = Math.max(0, total - nextSlotCountOut);
+                    var nextMinRightOut = Math.max(0, nextSlotCountOut - total);
+                    var nextMaxRightOut = Math.max(nextMinRightOut, nextMaxStartOut + nextSlotCountOut - total);
+                    var desiredRightOut = keepAutoRightWheel ? nextBaseRightOut : Math.max(nextMinRightOut, Math.min(nextMaxRightOut, g.rightOffsetBars));
                     var nextStart = isAtLatestBar
-                        ? Math.min(nextMaxStartOut, nextFlushOut + preservedRightOut)
-                        : Math.max(0, Math.min(nextMaxStartOut, Math.round(anchorBar - ratio * nextCount)));
+                        ? Math.max(0, Math.min(nextMaxStartOut, total - nextSlotCountOut + desiredRightOut))
+                        : Math.max(0, Math.min(nextMaxStartOut, Math.round(anchorBar - ratio * nextSlotCountOut)));
                     var targetViewCount = nextCount >= total ? -1 : nextCount;
                     var targetFollow = (nextStart >= nextFlushOut);
-                    var targetRightOffset = targetFollow ? Math.max(0, nextStart - nextFlushOut) : 0;
+                    var targetRightOffset = targetFollow ? (keepAutoRightWheel && isAtLatestBar ? -1 : Math.max(0, nextStart + nextSlotCountOut - total)) : 0;
                     var targetViewStart = nextStart;
                     if (targetViewCount !== root.viewCount || targetViewStart !== root.viewStart || targetFollow !== root.followLatest || targetRightOffset !== root.rightOffsetBars) {
                         var zoomChanged = (targetViewCount !== root.viewCount);

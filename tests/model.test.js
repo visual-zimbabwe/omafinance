@@ -3683,82 +3683,85 @@ test("computeTriggeredSetupLines enforces trigger gating, bar lifetime, cascade,
   assert.equal(Model.parseState(savedOn).gridSync.setupLines, true)
 })
 
-test("resolveHorizontalViewport supports TradingView-style ~9-bar default right margin and free left/right panning", () => {
-  // 1. Default ~9-bar right margin on standard 250-bar daily chart (defaultCount=140)
+test("resolveHorizontalViewport supports additive TradingView-style right margin and free left/right panning", () => {
+  // 1. Default ~9-bar additive right margin on standard 250-bar daily chart (defaultCount=140 -> 140 candles + 9 right slots)
   const vpStd = Model.resolveHorizontalViewport(250, -1, 140, 0, true, -1)
   assert.equal(vpStd.vCount, 140)
-  assert.equal(vpStd.flushStart, 110)
+  assert.equal(vpStd.slotCount, 140 + Model.DEFAULT_RIGHT_OFFSET_BARS)
+  assert.equal(vpStd.flushStart, 250 - vpStd.slotCount)
   assert.equal(vpStd.rightOffsetBars, Model.DEFAULT_RIGHT_OFFSET_BARS)
-  assert.equal(vpStd.vStart, 110 + Model.DEFAULT_RIGHT_OFFSET_BARS)
+  assert.equal(vpStd.vStart, 110) // shows exact 140 candles [110..249] + 9 empty right slots
+  assert.equal(Math.min(250, vpStd.vStart + vpStd.slotCount) - vpStd.vStart, 140)
   assert.ok(vpStd.maxStart > vpStd.vStart, "user can drag further left to expand right whitespace")
 
   // 2. Dragging further left (e.g. 40 bars of right whitespace) works and is preserved on new bar arrival
-  const vpDraggedLeft = Model.resolveHorizontalViewport(250, -1, 140, 150, true, 40)
-  assert.equal(vpDraggedLeft.vStart, 150)
+  const vpDraggedLeft = Model.resolveHorizontalViewport(250, -1, 140, 141, true, 40)
+  assert.equal(vpDraggedLeft.vStart, 141)
   assert.equal(vpDraggedLeft.rightOffsetBars, 40)
-  const vpNextBar = Model.resolveHorizontalViewport(251, -1, 140, 150, true, 40)
-  assert.equal(vpNextBar.vStart, 151)
+  const vpNextBar = Model.resolveHorizontalViewport(251, -1, 140, 141, true, 40)
+  assert.equal(vpNextBar.vStart, 142)
   assert.equal(vpNextBar.rightOffsetBars, 40)
 
   // 3. Dragging right back to flush (0 margin) and into older history (vStart < flushStart)
-  const vpFlush = Model.resolveHorizontalViewport(250, -1, 140, 110, true, 0)
-  assert.equal(vpFlush.vStart, 110)
+  const vpFlush = Model.resolveHorizontalViewport(250, -1, 140, 101, true, 0)
+  assert.equal(vpFlush.vStart, 101)
   assert.equal(vpFlush.rightOffsetBars, 0)
   const vpHist = Model.resolveHorizontalViewport(250, -1, 140, 30, false, 0)
   assert.equal(vpHist.vStart, 30)
   assert.equal(vpHist.rightOffsetBars, 0)
 
-  // 4. Full-history chart (e.g. 40 monthly bars, vCount === total): still pans left into right margin and back to 0
+  // 4. Full-history chart (e.g. 40 monthly bars, vCount === total): shows ALL 40 bars + 8 right slots and pans freely
   const vpMonthly = Model.resolveHorizontalViewport(40, -1, 40, 0, true, -1)
+  assert.equal(vpMonthly.vCount, 40)
+  assert.equal(vpMonthly.slotCount, 48)
   assert.equal(vpMonthly.flushStart, 0)
   assert.equal(vpMonthly.rightOffsetBars, 8) // floor(40 * 0.2) = 8
-  assert.equal(vpMonthly.vStart, 8)
+  assert.equal(vpMonthly.vStart, 0)
+  assert.equal(Math.min(40, vpMonthly.vStart + vpMonthly.slotCount) - vpMonthly.vStart, 40)
   assert.ok(vpMonthly.maxStart >= 30)
+  const vpMonthlyPanned = Model.resolveHorizontalViewport(40, -1, 40, 0, true, 20)
+  assert.equal(vpMonthlyPanned.vStart, 12)
+  assert.equal(vpMonthlyPanned.rightOffsetBars, 20)
 
-  // 5. Tiny series (10 yearly bars, 1 bar) scale safely without hiding all candles
+  // 5. Tiny series (10 yearly bars, 1 bar) show all candles without hiding oldest bars
   const vpTiny = Model.resolveHorizontalViewport(10, -1, 10, 0, true, -1)
+  assert.equal(vpTiny.slotCount, 12)
   assert.equal(vpTiny.rightOffsetBars, 2)
-  assert.equal(vpTiny.vStart, 2)
+  assert.equal(vpTiny.vStart, 0)
+  assert.equal(Math.min(10, vpTiny.vStart + vpTiny.slotCount) - vpTiny.vStart, 10)
   const vpSingle = Model.resolveHorizontalViewport(1, -1, 1, 0, true, -1)
+  assert.equal(vpSingle.slotCount, 1)
   assert.equal(vpSingle.vStart, 0)
   assert.equal(vpSingle.maxStart, 0)
   assert.equal(vpSingle.rightOffsetBars, 0)
 
-  // 6. 1-bar viewport on a multi-bar series must show the current (latest) bar, not total - 2
+  // 6. Requested bar count N always displays exact N candles ending on the current bar (right spacing is additive)
+  for (const n of [1, 2, 3, 4, 5, 8, 10, 20, 40, 140]) {
+    const vp = Model.resolveHorizontalViewport(250, n, 140, 0, true, -1)
+    const expectedRight = Model.defaultRightOffsetBars(n)
+    assert.equal(vp.vCount, n, `vCount mismatch for N=${n}`)
+    assert.equal(vp.slotCount, n + expectedRight, `slotCount mismatch for N=${n}`)
+    assert.equal(vp.rightOffsetBars, expectedRight, `rightOffsetBars mismatch for N=${n}`)
+    assert.equal(vp.vStart, 250 - n, `vStart mismatch for N=${n}`)
+    const rendered = Math.min(250, vp.vStart + vp.slotCount) - vp.vStart
+    assert.equal(rendered, n, `rendered candles must equal requested N=${n}`)
+  }
+
+  // 7. 1-bar viewport edge cases (minVisibleChartBars, carried-over offset, 2-bar series, manual pan, live bar arrival)
   assert.equal(Model.minVisibleChartBars(250, 1), 1)
   assert.equal(Model.maxChartViewStart(250, 1), 249)
-  const vpOneOfMany = Model.resolveHorizontalViewport(250, 1, 140, 0, true, -1)
-  assert.equal(vpOneOfMany.vCount, 1)
-  assert.equal(vpOneOfMany.flushStart, 249)
-  assert.equal(vpOneOfMany.maxStart, 249)
-  assert.equal(vpOneOfMany.minVisibleBars, 1)
-  assert.equal(vpOneOfMany.rightOffsetBars, 0)
-  assert.equal(vpOneOfMany.vStart, 249)
-
-  // Non-zero carried-over rightOffsetBars still clamps cleanly onto the current bar at 1-bar zoom
   const vpOneCarriedOffset = Model.resolveHorizontalViewport(250, 1, 140, 0, true, 9)
   assert.equal(vpOneCarriedOffset.vStart, 249)
   assert.equal(vpOneCarriedOffset.rightOffsetBars, 0)
 
-  // 2-bar series with 1-bar viewport shows the 2nd (current) bar
   const vpOneOfTwo = Model.resolveHorizontalViewport(2, 1, 2, 0, true, -1)
   assert.equal(vpOneOfTwo.vStart, 1)
   assert.equal(vpOneOfTwo.maxStart, 1)
 
-  // Manual panning back to latest bar at 1-bar zoom is not clamped to total - 2
   const vpOnePannedToLatest = Model.resolveHorizontalViewport(250, 1, 140, 249, false, 0)
   assert.equal(vpOnePannedToLatest.vStart, 249)
 
-  // Live bar arrival at 1-bar zoom follows the newly appended current bar
   const vpOneNextBar = Model.resolveHorizontalViewport(251, 1, 140, 249, true, -1)
   assert.equal(vpOneNextBar.vStart, 250)
   assert.equal(vpOneNextBar.maxStart, 250)
-
-  // 2-bar viewport still includes the current bar with zero right margin
-  const vpTwoOfMany = Model.resolveHorizontalViewport(250, 2, 140, 0, true, -1)
-  assert.equal(vpTwoOfMany.vCount, 2)
-  assert.equal(vpTwoOfMany.flushStart, 248)
-  assert.equal(vpTwoOfMany.maxStart, 248)
-  assert.equal(vpTwoOfMany.vStart, 248)
-  assert.equal(vpTwoOfMany.rightOffsetBars, 0)
 })
