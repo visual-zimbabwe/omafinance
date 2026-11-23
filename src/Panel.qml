@@ -54,6 +54,7 @@ Panel {
     property string layoutActionStatus: ""
     property string discordWebhook: ""
     property var alertSources: Model.defaultAlertSources()
+    property var alertGateTimeframes: []
     property bool alertsAutoOpen: true
     property var firedSetupKeys: ({})
     property var activeSetupAlerts: []
@@ -63,6 +64,8 @@ Panel {
             hydrating: false,
             totalSymbols: 0,
             hydratedSymbols: 0,
+            qualifiedSymbols: 0,
+            gateTimeframes: [],
             sources: [],
             resolvedBaskets: ({})
         })
@@ -418,6 +421,7 @@ Panel {
     function persist() {
         stateFile.setText(Model.serializeState(watchlist, pinned, detailRange, gridMode, gridSync, gridSymbols, gridSplits, layouts, discordWebhook, gridTimeframes, gridZooms, {
             alertSources: root.alertSources,
+            alertGateTimeframes: root.alertGateTimeframes,
             alertsAutoOpen: root.alertsAutoOpen,
             firedSetupKeys: root.firedSetupKeys,
             alertLog: root.alertLog,
@@ -565,6 +569,29 @@ Panel {
         root.persist();
     }
 
+    function setAlertGateTimeframes(nextTfs) {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            HubRegistry.leader().setAlertGateTimeframes(nextTfs);
+            return;
+        }
+        root.alertGateTimeframes = Model.normalizeAlertGateTimeframes(nextTfs);
+        root.sendAlertGateToStream();
+        root.persist();
+    }
+
+    function sendAlertGateToStream() {
+        if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
+            HubRegistry.leader().sendAlertGateToStream();
+            return;
+        }
+        if (!streamProc.running || !root.streamReady)
+            return;
+        root.sendStreamCommand({
+            op: "setAlertGate",
+            gateTimeframes: root.alertGateTimeframes || []
+        });
+    }
+
     function setAlertsAutoOpen(enabled) {
         if (!root.isStreamLeader && HubRegistry.leader() && HubRegistry.leader() !== root) {
             HubRegistry.leader().setAlertsAutoOpen(enabled);
@@ -584,6 +611,7 @@ Panel {
         root.sendStreamCommand({
             op: "setAlertConfig",
             sources: root.alertSources || [],
+            gateTimeframes: root.alertGateTimeframes || [],
             firedKeys: root.firedSetupKeys || ({}),
             enabled: root.liveStreaming
         });
@@ -681,6 +709,7 @@ Panel {
         var before = (watchlist || []).join("\n");
         var after = (state.watchlist || []).join("\n");
         var beforeSources = (alertSources || []).join(",");
+        var beforeGate = (alertGateTimeframes || []).join(",");
         watchlist = state.watchlist;
         pinned = state.pinned;
         if (state.detailRange)
@@ -707,6 +736,7 @@ Panel {
             alertSources = state.alertSources;
         else
             alertSources = Model.defaultAlertSources();
+        alertGateTimeframes = state.alertGateTimeframes !== undefined ? state.alertGateTimeframes : [];
         if (state.alertsAutoOpen !== undefined)
             alertsAutoOpen = state.alertsAutoOpen;
         if (state.firedSetupKeys !== undefined)
@@ -716,8 +746,11 @@ Panel {
         alertsMutedUntil = state.alertsMutedUntil !== undefined ? state.alertsMutedUntil : 0;
         muteClockMs = Date.now();
         var afterSources = (alertSources || []).join(",");
+        var afterGate = (alertGateTimeframes || []).join(",");
         if (beforeSources !== afterSources)
             root.sendAlertConfigToStream();
+        else if (beforeGate !== afterGate)
+            root.sendAlertGateToStream();
         clampSelected();
         if (before !== after && (opened || showBarQuote))
             Qt.callLater(refresh);
@@ -2962,8 +2995,6 @@ Panel {
             id: gridWin
             visible: true
             discordWebhook: root.discordWebhook
-            alertsMuted: root.alertsMuted
-            alertsMuteStatus: root.alertsMuteStatus
             hubReady: root.streamReady
             hubStreamingActive: root.shouldStreamLive && root.streamConnected
 
@@ -3009,8 +3040,6 @@ Panel {
             onAlertDispatchRequested: function (alert) {
                 root.dispatchAlert(alert);
             }
-
-            onAlertsMuteToggleRequested: root.toggleAlertsMute()
 
             onStateSaveRequested: function (mode, sync, symbols, splits) {
                 root.gridMode = mode;
@@ -3099,9 +3128,7 @@ Panel {
 
         var win = sectorAnalysisComponent.createObject(root, {
             sectorSymbol: sym,
-            discordWebhook: root.discordWebhook,
-            alertsMuted: root.alertsMuted,
-            alertsMuteStatus: root.alertsMuteStatus
+            discordWebhook: root.discordWebhook
         });
 
         if (win) {
@@ -3121,8 +3148,6 @@ Panel {
             id: secWin
             visible: true
             discordWebhook: root.discordWebhook
-            alertsMuted: root.alertsMuted
-            alertsMuteStatus: root.alertsMuteStatus
             hubReady: root.streamReady
             hubStreamingActive: root.shouldStreamLive && root.streamConnected
 
@@ -3179,8 +3204,6 @@ Panel {
                 root.dispatchAlert(alert);
             }
 
-            onAlertsMuteToggleRequested: root.toggleAlertsMute()
-
             onVisibleChanged: {
                 if (!visible) {
                     var remaining = [];
@@ -3230,6 +3253,7 @@ Panel {
             visible: true
             alertItems: root.activeSetupAlerts
             alertSources: root.alertSources
+            alertGateTimeframes: root.alertGateTimeframes
             scannerStatus: root.alertScannerStatus
             alertsMuted: root.alertsMuted
             alertsMuteStatus: root.alertsMuteStatus
@@ -3240,6 +3264,9 @@ Panel {
             }
             onAlertSourcesChangedRequested: function (nextSources) {
                 root.setAlertSources(nextSources);
+            }
+            onAlertGateTimeframesChangedRequested: function (nextTfs) {
+                root.setAlertGateTimeframes(nextTfs);
             }
             onAlertsAutoOpenToggled: function (enabled) {
                 root.setAlertsAutoOpen(enabled);

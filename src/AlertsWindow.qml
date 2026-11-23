@@ -10,10 +10,13 @@ FloatingWindow {
 
     property var alertItems: []
     property var alertSources: ["@MARKET"]
+    property var alertGateTimeframes: []
     property var scannerStatus: ({
             hydrating: false,
             totalSymbols: 0,
             hydratedSymbols: 0,
+            qualifiedSymbols: 0,
+            gateTimeframes: [],
             sources: [],
             resolvedBaskets: ({})
         })
@@ -44,6 +47,7 @@ FloatingWindow {
 
     signal openGridRequested(string symbol)
     signal alertSourcesChangedRequested(var nextSources)
+    signal alertGateTimeframesChangedRequested(var nextTfs)
     signal alertsAutoOpenToggled(bool enabled)
     signal alertsMuteModeRequested(string mode)
     signal refreshRequested
@@ -121,6 +125,41 @@ FloatingWindow {
                 return false;
         }
         return true;
+    }
+
+    readonly property bool hasActiveGate: Boolean(root.alertGateTimeframes && root.alertGateTimeframes.length > 0)
+
+    function hasGateTf(tf) {
+        var list = root.alertGateTimeframes || [];
+        return list.indexOf(tf) !== -1;
+    }
+
+    function toggleGateTf(tf) {
+        var list = (root.alertGateTimeframes || []).slice();
+        var idx = list.indexOf(tf);
+        if (idx !== -1)
+            list.splice(idx, 1);
+        else
+            list.push(tf);
+        root.alertGateTimeframesChangedRequested(Model.normalizeAlertGateTimeframes(list));
+    }
+
+    function clearGateTfs() {
+        if (root.hasActiveGate)
+            root.alertGateTimeframesChangedRequested([]);
+    }
+
+    function formatGateList(tfs) {
+        var list = Array.isArray(tfs) ? tfs : [];
+        var labels = [];
+        for (var i = 0; i < list.length; i++) {
+            labels.push(Model.setupTimeframeLabel(list[i]));
+        }
+        return labels.join(", ");
+    }
+
+    function gateSummaryText() {
+        return root.formatGateList(root.alertGateTimeframes || []);
     }
 
     function hasSource(tok) {
@@ -630,6 +669,87 @@ FloatingWindow {
                 }
             }
 
+            // Row 2.5: Qualification Gate Bar (restrict alerts & watchlist to tickers triggered on selected TF(s))
+            Item {
+                id: gateBar
+                width: parent.width
+                height: Math.max(Style.space(28), gateFlow.implicitHeight + Style.space(6))
+
+                Flow {
+                    id: gateFlow
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: Style.space(12)
+                    anchors.rightMargin: Style.space(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(5)
+
+                    Text {
+                        textFormat: Text.PlainText
+                        text: "GATE:"
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        font.bold: true
+                        height: Style.space(22)
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    FinanceChipButton {
+                        text: "ANY"
+                        checked: !root.hasActiveGate
+                        bordered: true
+                        foreground: root.foreground
+                        dimColor: root.dim
+                        fontFamily: root.fontFamily
+                        fontSize: Style.font.caption
+                        horizontalPadding: Style.space(7)
+                        verticalPadding: Style.space(2)
+                        tooltipText: "Receive alerts for all tracked tickers (no timeframe gate)"
+                        onClicked: root.clearGateTfs()
+                    }
+
+                    Repeater {
+                        model: root.scenarioTfs
+
+                        FinanceChipButton {
+                            required property string modelData
+                            readonly property bool activeGate: root.hasGateTf(modelData)
+                            readonly property string tfLbl: Model.setupTimeframeLabel(modelData)
+                            text: activeGate ? (tfLbl + " ✓") : tfLbl
+                            checked: activeGate
+                            bordered: true
+                            foreground: root.foreground
+                            dimColor: root.dim
+                            accentColor: (modelData === "1W" || modelData === "1M") ? Model.setupLineColor(modelData, "trigger", root.isLightBg) : Color.accent
+                            fontFamily: root.fontFamily
+                            fontSize: Style.font.caption
+                            horizontalPadding: Style.space(7)
+                            verticalPadding: Style.space(2)
+                            tooltipText: "Restrict alerts to tickers with a triggered " + tfLbl + " setup (multi-select OR)"
+                            onClicked: root.toggleGateTf(modelData)
+                        }
+                    }
+
+                    Text {
+                        visible: root.hasActiveGate && root.scannerStatus && root.scannerStatus.totalSymbols > 0
+                        textFormat: Text.PlainText
+                        text: {
+                            var st = root.scannerStatus || ({});
+                            var qual = (st.qualifiedSymbols !== undefined) ? st.qualifiedSymbols : 0;
+                            var tot = st.totalSymbols || 0;
+                            return "· " + qual + "/" + tot + " QUALIFIED";
+                        }
+                        color: root.dim
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        font.bold: true
+                        height: Style.space(22)
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                }
+            }
+
             // Row 3: View Filter Bar (TF pills, IF ONLY, Search)
             Item {
                 id: filterBar
@@ -1031,7 +1151,7 @@ FloatingWindow {
             Item {
                 id: listArea
                 width: parent.width
-                height: parent.height - topBar.height - sourcesBar.height - filterBar.height - sortBar.height - columnHeader.height - 2
+                height: parent.height - topBar.height - sourcesBar.height - gateBar.height - filterBar.height - sortBar.height - columnHeader.height - 2
 
                 ListView {
                     id: watchlistView
@@ -1437,6 +1557,8 @@ FloatingWindow {
                             return qsTr("Scanning setup lines…");
                         if (root.tfFilter !== "ALL" || root.inForceOnly || root.searchQuery !== "")
                             return qsTr("No setups match current filters");
+                        if (root.hasActiveGate)
+                            return qsTr("No tickers match %1 gate").arg(root.gateSummaryText());
                         return qsTr("No triggered setups right now");
                     }
                     text: {
@@ -1446,6 +1568,8 @@ FloatingWindow {
                             return qsTr("Hydrating 30m, 60m, 1D, 1W, and 1M candles in the background.");
                         if (root.tfFilter !== "ALL" || root.inForceOnly || root.searchQuery !== "")
                             return qsTr("Try switching back to ALL timeframes or disabling IF ONLY.");
+                        if (root.hasActiveGate)
+                            return qsTr("Only tickers with a triggered setup on %1 will alert across 30m, 60m, 1D, 1W, and 1M.").arg(root.gateSummaryText());
                         return qsTr("Triggered setups across 30, 60, 1D, 1W, and 1M will appear automatically.");
                     }
                     actionText: {
@@ -1453,6 +1577,8 @@ FloatingWindow {
                             return qsTr("Track @MARKET");
                         if (root.tfFilter !== "ALL" || root.inForceOnly || root.searchQuery !== "")
                             return qsTr("Reset filters");
+                        if (root.hasActiveGate)
+                            return qsTr("Clear gate");
                         return "";
                     }
                     fontFamily: root.fontFamily
@@ -1461,11 +1587,13 @@ FloatingWindow {
                     onActionTriggered: {
                         if (!root.alertSources || root.alertSources.length === 0) {
                             root.alertSourcesChangedRequested(["@MARKET"]);
-                        } else {
+                        } else if (root.tfFilter !== "ALL" || root.inForceOnly || root.searchQuery !== "") {
                             root.tfFilter = "ALL";
                             root.inForceOnly = false;
                             root.searchQuery = "";
                             filterBox.clearText();
+                        } else if (root.hasActiveGate) {
+                            root.clearGateTfs();
                         }
                     }
                 }
@@ -1549,7 +1677,8 @@ FloatingWindow {
                                 if (!it)
                                     return "";
                                 var bTxt = (it.baskets && it.baskets.length > 0) ? it.baskets.join(", ") : "";
-                                return (it.setupGroup || "") + (bTxt ? ("  ·  " + bTxt) : "") + "  ·  Click to open Grid";
+                                var qTxt = (it.qualifiedBy && it.qualifiedBy.length > 0) ? ("  ·  Gate: " + root.formatGateList(it.qualifiedBy)) : "";
+                                return (it.setupGroup || "") + (bTxt ? ("  ·  " + bTxt) : "") + qTxt + "  ·  Click to open Grid";
                             }
                             color: root.dim
                             font.family: root.fontFamily

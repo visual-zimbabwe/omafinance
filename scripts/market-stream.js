@@ -745,7 +745,7 @@ class OffThreadCandleCache {
 // ---------------------------------------------------------------------------
 // Off-Thread Strat Setup Line Alert Scanner
 // ---------------------------------------------------------------------------
-const ALERT_HYDRATION_TFS = ["30", "60", "1D"];
+const ALERT_HYDRATION_TFS = ["1D", "60", "30"];
 const ALERT_EVAL_TFS = ["30", "60", "1D", "1W", "1M"];
 
 function updateTrailingCandleInPlace(candles, quote, tf, nowDate) {
@@ -825,6 +825,7 @@ class SetupAlertScanner {
     this.enabled = true;
     this.viewActive = false;
     this.sources = [];
+    this.gateTimeframes = [];
     this.resolvedBaskets = {};
     this.firedKeys = {};
     this.liveTriggeredAt = {};
@@ -933,10 +934,13 @@ class SetupAlertScanner {
     };
   }
 
-  async setConfig(sources, persistedFiredKeys, enabled) {
+  async setConfig(sources, persistedFiredKeys, enabled, gateTimeframes) {
     const ver = ++this.configVersion;
     this.enabled = enabled !== false;
     this.sources = Model.normalizeAlertSources(sources);
+    if (gateTimeframes !== undefined) {
+      this.gateTimeframes = Model.normalizeAlertGateTimeframes(gateTimeframes);
+    }
     if (persistedFiredKeys && typeof persistedFiredKeys === "object") {
       const merged = Object.assign({}, this.firedKeys, persistedFiredKeys);
       this.firedKeys = Model.normalizeFiredSetupKeys(merged, this.now().getTime());
@@ -1060,6 +1064,29 @@ class SetupAlertScanner {
     }
   }
 
+  setGateTimeframes(gateTimeframes) {
+    const next = Model.normalizeAlertGateTimeframes(gateTimeframes);
+    const beforeSig = (this.gateTimeframes || []).join(",");
+    const afterSig = next.join(",");
+    this.gateTimeframes = next;
+    if (beforeSig !== afterSig) {
+      this.emitMeta(true);
+      if (this.viewActive) {
+        this.emitSnapshot(true);
+      }
+    }
+  }
+
+  isGateReadyForSymbol(st) {
+    if (!st) return false;
+    const gateTfs = this.gateTimeframes || [];
+    if (gateTfs.length === 0) return true;
+    for (let i = 0; i < gateTfs.length; i++) {
+      if (st.seeded[gateTfs[i]] !== true) return false;
+    }
+    return true;
+  }
+
   forceRehydrate() {
     if (!this.enabled || this.symbolState.size === 0) return;
     for (const sym of this.symbolState.keys()) {
@@ -1155,6 +1182,12 @@ class SetupAlertScanner {
         st.seeded["1W"] = true;
         st.seeded["1M"] = true;
       }
+      if (this.gateTimeframes && this.gateTimeframes.length > 0) {
+        this.emitMeta(false);
+        if (this.viewActive) {
+          this.scheduleSnapshot();
+        }
+      }
     }
   }
 
@@ -1197,6 +1230,11 @@ class SetupAlertScanner {
     const nowMs = nowDate.getTime();
     const items = Model.evaluateSymbolSetupAlerts(sym, st.candles, st.quote, st.baskets);
     const sessionOpen = Model.isAlertSessionOpen(sym, st.quote, false, nowDate);
+    const gateTfs = this.gateTimeframes || [];
+    const hasGate = gateTfs.length > 0;
+    const gateReady = this.isGateReadyForSymbol(st);
+    const qualifiedBy = (hasGate && gateReady) ? Model.getQualifyingGateTimeframes(items, gateTfs) : [];
+    const passesGate = !hasGate || (gateReady && qualifiedBy.length > 0);
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -1214,11 +1252,16 @@ class SetupAlertScanner {
 
       if (!alreadyFired && sessionOpen) {
         this.firedKeys[item.key] = nowMs;
-        this.liveTriggeredAt[item.key] = nowMs;
-        item.triggeredAt = nowMs;
         this.firedKeys = Model.normalizeFiredSetupKeys(this.firedKeys, nowMs);
-        if (this.onTrigger) {
-          this.onTrigger(Object.assign({}, item), Object.assign({}, this.firedKeys));
+        if (passesGate) {
+          this.liveTriggeredAt[item.key] = nowMs;
+          item.triggeredAt = nowMs;
+          if (this.onTrigger) {
+            const payload = hasGate ? Object.assign({}, item, { qualifiedBy: qualifiedBy.slice() }) : Object.assign({}, item);
+            this.onTrigger(payload, Object.assign({}, this.firedKeys));
+          }
+        } else {
+          item.triggeredAt = this.liveTriggeredAt[item.key] || 0;
         }
       } else {
         item.triggeredAt = this.liveTriggeredAt[item.key] || 0;
@@ -1274,9 +1317,20 @@ class SetupAlertScanner {
 
   collectAllItems() {
     const out = [];
+    const gateTfs = this.gateTimeframes || [];
+    const hasGate = gateTfs.length > 0;
     for (const st of this.symbolState.values()) {
+      if (!hasGate) {
+        for (let i = 0; i < st.activeItems.length; i++) {
+          out.push(st.activeItems[i]);
+        }
+        continue;
+      }
+      if (!this.isGateReadyForSymbol(st)) continue;
+      const qualifiedBy = Model.getQualifyingGateTimeframes(st.activeItems, gateTfs);
+      if (qualifiedBy.length === 0) continue;
       for (let i = 0; i < st.activeItems.length; i++) {
-        out.push(st.activeItems[i]);
+        out.push(Object.assign({}, st.activeItems[i], { qualifiedBy: qualifiedBy.slice() }));
       }
     }
     return out;
@@ -1284,13 +1338,21 @@ class SetupAlertScanner {
 
   buildStatus() {
     let hydratedSymbols = 0;
+    let qualifiedSymbols = 0;
+    const gateTfs = this.gateTimeframes || [];
+    const hasGate = gateTfs.length > 0;
     for (const st of this.symbolState.values()) {
       if (st.seeded["30"] || st.seeded["60"] || st.seeded["1D"]) hydratedSymbols++;
+      if (hasGate && this.isGateReadyForSymbol(st) && Model.getQualifyingGateTimeframes(st.activeItems, gateTfs).length > 0) {
+        qualifiedSymbols++;
+      }
     }
     return {
       hydrating: this.hydrating || this.inFlightCount > 0 || this.queue.length > 0,
       totalSymbols: this.symbolState.size,
       hydratedSymbols,
+      qualifiedSymbols: hasGate ? qualifiedSymbols : this.symbolState.size,
+      gateTimeframes: gateTfs.slice(),
       sources: this.sources.slice(),
       resolvedBaskets: Object.assign({}, this.resolvedBaskets)
     };
@@ -1304,7 +1366,7 @@ class SetupAlertScanner {
       if (items[i].inForce) inForceCount++;
     }
     const status = this.buildStatus();
-    const sig = `${items.length}|${inForceCount}|${status.hydrating}|${status.hydratedSymbols}|${status.totalSymbols}|${status.sources.join(",")}`;
+    const sig = `${items.length}|${inForceCount}|${status.hydrating}|${status.hydratedSymbols}|${status.totalSymbols}|${status.qualifiedSymbols}|${status.gateTimeframes.join(",")}|${status.sources.join(",")}`;
     if (!force && sig === this.lastMetaSig) return;
     this.lastMetaSig = sig;
     this.onMeta({
@@ -1486,7 +1548,12 @@ function startDaemon() {
     }
 
     if (op === "setAlertConfig") {
-      await scanner.setConfig(cmd.sources, cmd.firedKeys, cmd.enabled !== false);
+      await scanner.setConfig(cmd.sources, cmd.firedKeys, cmd.enabled !== false, cmd.gateTimeframes);
+      return;
+    }
+
+    if (op === "setAlertGate") {
+      scanner.setGateTimeframes(cmd.gateTimeframes);
       return;
     }
 

@@ -55,15 +55,12 @@ FloatingWindow {
     property bool fetching: false
 
     property string discordWebhook: ""
-    property bool alertsMuted: false
-    property string alertsMuteStatus: ""
     property bool hubReady: false
     property bool hubStreamingActive: false
     property var hubPendingMap: ({})
     property int hubPendingCount: 0
 
     signal alertDispatchRequested(var alert)
-    signal alertsMuteToggleRequested
     signal quotesReceived(var incomingQuotes)
     signal chartDataReceived(string key, var candles, var quoteEnriched)
     signal symbolDataUpdated(string sym)

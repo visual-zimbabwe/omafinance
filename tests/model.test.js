@@ -2002,6 +2002,52 @@ test("alert log keeps the muted flag", () => {
   assert.equal(log2[1].muted, true)
 })
 
+test("alert gate timeframes normalize, qualify tickers via OR across all 5 TFs (both LONG and SHORT), and persist in state", () => {
+  // 1. Normalization supports arrays, comma strings, shorthands, deduplication, and canonical order
+  assert.deepEqual(Model.normalizeAlertGateTimeframes(undefined), [])
+  assert.deepEqual(Model.normalizeAlertGateTimeframes([]), [])
+  assert.deepEqual(Model.normalizeAlertGateTimeframes(["1m", "w", "60m", "30m", "d", "1W", "bad"]), ["30", "60", "1D", "1W", "1M"])
+  assert.deepEqual(Model.normalizeAlertGateTimeframes("1M, 1W, 1w"), ["1W", "1M"])
+
+  const nvda1W = { key: "NVDA:1W:1:LONG:2d-1-2u", symbol: "NVDA", timeframe: "1W", direction: "LONG", isLong: true }
+  const nvda30Short = { key: "NVDA:30:2:SHORT:2u-1-2d", symbol: "NVDA", timeframe: "30", direction: "SHORT", isLong: false }
+  const nvda60Long = { key: "NVDA:60:3:LONG:2d-2u", symbol: "NVDA", timeframe: "60", direction: "LONG", isLong: true }
+  const amd30 = { key: "AMD:30:2:LONG:2d-1-2u", symbol: "AMD", timeframe: "30", direction: "LONG", isLong: true }
+  const amd1D = { key: "AMD:1D:2:SHORT:2u-2d", symbol: "AMD", timeframe: "1D", direction: "SHORT", isLong: false }
+  const msft1M = { key: "MSFT:1M:1:SHORT:2u-1-2d", symbol: "MSFT", timeframe: "1M", direction: "SHORT", isLong: false }
+  const msft60Long = { key: "MSFT:60:3:LONG:2d-1-2u", symbol: "MSFT", timeframe: "60", direction: "LONG", isLong: true }
+
+  const allItems = [nvda1W, nvda30Short, nvda60Long, amd30, amd1D, msft1M, msft60Long]
+
+  // 2. Empty gate passes everything unchanged
+  assert.equal(Model.itemMatchesAlertGate(amd30, [amd30, amd1D], []), true)
+  assert.equal(Model.filterAlertItemsByGate(allItems, []).length, allItems.length)
+
+  // 3. Weekly-only gate: NVDA passes across 30m (SHORT), 60m (LONG), and 1W; AMD & MSFT excluded completely
+  assert.deepEqual(Model.getQualifyingGateTimeframes([nvda1W, nvda30Short], ["1W"]), ["1W"])
+  assert.equal(Model.itemMatchesAlertGate(nvda30Short, [nvda1W, nvda30Short], ["1W"]), true)
+  assert.equal(Model.itemMatchesAlertGate(amd30, [amd30, amd1D], ["1W"]), false)
+  const weeklyOnly = Model.filterAlertItemsByGate(allItems, ["1W"])
+  assert.deepEqual(weeklyOnly.map(i => i.key), [nvda1W.key, nvda30Short.key, nvda60Long.key])
+  assert.deepEqual(weeklyOnly[1].qualifiedBy, ["1W"])
+
+  // 4. Weekly OR Monthly gate: NVDA (1W) and MSFT (1M) both pass across all their TFs; AMD excluded
+  const weeklyOrMonthly = Model.filterAlertItemsByGate(allItems, ["1W", "1M"])
+  assert.deepEqual(weeklyOrMonthly.map(i => i.key), [nvda1W.key, nvda30Short.key, nvda60Long.key, msft1M.key, msft60Long.key])
+  assert.deepEqual(weeklyOrMonthly.find(i => i.key === msft60Long.key).qualifiedBy, ["1M"])
+
+  // 5. Persistence round-trip via serializeState / parseState (empty omitted)
+  const rawGated = Model.serializeState(["SPY"], ["SPY"], "1D", "2x2", {}, [], {}, {}, "", ["60"], [-1], {
+    alertGateTimeframes: ["1M", "1W"]
+  })
+  assert.deepEqual(Model.parseState(rawGated).alertGateTimeframes, ["1W", "1M"])
+
+  const rawEmpty = Model.serializeState(["SPY"], ["SPY"], "1D", "2x2", {}, [], {}, {}, "", ["60"], [-1], {
+    alertGateTimeframes: []
+  })
+  assert.equal(JSON.parse(rawEmpty).alertGateTimeframes, undefined)
+})
+
 test("sector analysis: sector definitions, query parsing, scenario matching, and sorting", () => {
   // 1. Sector Definitions & Ticker Parsing
   const smh = Model.getSectorInfo("SMH")
