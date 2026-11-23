@@ -3723,4 +3723,42 @@ test("resolveHorizontalViewport supports TradingView-style ~9-bar default right 
   assert.equal(vpSingle.vStart, 0)
   assert.equal(vpSingle.maxStart, 0)
   assert.equal(vpSingle.rightOffsetBars, 0)
+
+  // 6. 1-bar viewport on a multi-bar series must show the current (latest) bar, not total - 2
+  assert.equal(Model.minVisibleChartBars(250, 1), 1)
+  assert.equal(Model.maxChartViewStart(250, 1), 249)
+  const vpOneOfMany = Model.resolveHorizontalViewport(250, 1, 140, 0, true, -1)
+  assert.equal(vpOneOfMany.vCount, 1)
+  assert.equal(vpOneOfMany.flushStart, 249)
+  assert.equal(vpOneOfMany.maxStart, 249)
+  assert.equal(vpOneOfMany.minVisibleBars, 1)
+  assert.equal(vpOneOfMany.rightOffsetBars, 0)
+  assert.equal(vpOneOfMany.vStart, 249)
+
+  // Non-zero carried-over rightOffsetBars still clamps cleanly onto the current bar at 1-bar zoom
+  const vpOneCarriedOffset = Model.resolveHorizontalViewport(250, 1, 140, 0, true, 9)
+  assert.equal(vpOneCarriedOffset.vStart, 249)
+  assert.equal(vpOneCarriedOffset.rightOffsetBars, 0)
+
+  // 2-bar series with 1-bar viewport shows the 2nd (current) bar
+  const vpOneOfTwo = Model.resolveHorizontalViewport(2, 1, 2, 0, true, -1)
+  assert.equal(vpOneOfTwo.vStart, 1)
+  assert.equal(vpOneOfTwo.maxStart, 1)
+
+  // Manual panning back to latest bar at 1-bar zoom is not clamped to total - 2
+  const vpOnePannedToLatest = Model.resolveHorizontalViewport(250, 1, 140, 249, false, 0)
+  assert.equal(vpOnePannedToLatest.vStart, 249)
+
+  // Live bar arrival at 1-bar zoom follows the newly appended current bar
+  const vpOneNextBar = Model.resolveHorizontalViewport(251, 1, 140, 249, true, -1)
+  assert.equal(vpOneNextBar.vStart, 250)
+  assert.equal(vpOneNextBar.maxStart, 250)
+
+  // 2-bar viewport still includes the current bar with zero right margin
+  const vpTwoOfMany = Model.resolveHorizontalViewport(250, 2, 140, 0, true, -1)
+  assert.equal(vpTwoOfMany.vCount, 2)
+  assert.equal(vpTwoOfMany.flushStart, 248)
+  assert.equal(vpTwoOfMany.maxStart, 248)
+  assert.equal(vpTwoOfMany.vStart, 248)
+  assert.equal(vpTwoOfMany.rightOffsetBars, 0)
 })

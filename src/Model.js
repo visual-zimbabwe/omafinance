@@ -74,8 +74,8 @@ function defaultRightOffsetBars(vCount) {
 function minVisibleChartBars(total, vCount) {
   var t = isFinite(total) ? Math.max(0, Math.floor(total)) : 0
   if (t <= 1) return t
-  var c = isFinite(vCount) ? Math.max(1, Math.floor(vCount)) : t
-  return Math.min(t, Math.max(2, Math.round(c * 0.15)))
+  var c = (vCount !== null && vCount !== undefined && isFinite(vCount) && vCount >= 1) ? Math.floor(vCount) : t
+  return Math.min(t, c, Math.max(2, Math.round(c * 0.15)))
 }
 
 function maxChartViewStart(total, vCount) {
