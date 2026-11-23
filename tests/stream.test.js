@@ -457,3 +457,126 @@ test("updateTrailingCandleInPlace blocks off-RTH and weekend phantom rollovers o
   assert.equal(Model.stratScenario(res60[1], res60[0]), "2d")
   assert.equal(Model.stratScenario(res1D[1], res1D[0]), "2d")
 })
+
+test("SetupAlertScanner enforces multi-TF ticker qualification gate for both push delivery and snapshots without stale bursts", async () => {
+  const openRth = new Date("2026-07-15T15:10:00Z") // Wed 11:10 AM EDT
+  const bar30Ts = Date.UTC(2026, 6, 15, 15, 0) / 1000
+  const bar60Ts = Date.UTC(2026, 6, 15, 14, 30) / 1000
+
+  // Weekly structure:
+  //   Week 1 (Jun 22): high 108, low 102
+  //   Week 2 (Jun 29): 2d (high 106, low 98)
+  //   Week 3 (Jul 6):  1 inside Week 2 (high 104, low 100) -> 1W 2d-1-2u trigger = 104.00
+  //   Week 4 (Jul 13..15): currently inside/below 104.00 (high 103.2, low 101.0)
+  const makeUnbrokenWeekly1D = (curHigh, curClose) => ([
+    { timestamp: Date.UTC(2026, 5, 22, 13, 30) / 1000, open: 103, high: 108, low: 102, close: 106 },
+    { timestamp: Date.UTC(2026, 5, 29, 13, 30) / 1000, open: 105, high: 106, low: 98, close: 101 },
+    { timestamp: Date.UTC(2026, 6, 6, 13, 30) / 1000, open: 101, high: 104, low: 100, close: 103 },
+    { timestamp: Date.UTC(2026, 6, 15, 13, 30) / 1000, open: 102.5, high: curHigh, low: 101.0, close: curClose }
+  ])
+
+  // 30m inside bar (1) waiting to break UP above 103.50 (2d-1-2u) OR DOWN below 101.80 (2d-1-2d)
+  const makeReady30 = () => ([
+    { timestamp: bar30Ts - 5400, open: 105, high: 106, low: 103, close: 104 },
+    { timestamp: bar30Ts - 3600, open: 104, high: 104.5, low: 101, close: 101.5 },
+    { timestamp: bar30Ts - 1800, open: 102, high: 103.5, low: 101.8, close: 103.0 },
+    { timestamp: bar30Ts, open: 102.8, high: 103.2, low: 102.6, close: 102.8 }
+  ])
+
+  // 60m waiting for 2u-1-2d SHORT break below 102.00 (proving both LONG & SHORT pass once 1W qualifies)
+  const makeReady60Short = () => ([
+    { timestamp: bar60Ts - 10800, open: 99, high: 101, low: 98, close: 100 },
+    { timestamp: bar60Ts - 7200, open: 100, high: 106, low: 99.5, close: 105 }, // 2u
+    { timestamp: bar60Ts - 3600, open: 104.5, high: 105.0, low: 102.0, close: 102.5 }, // 1 (short trigger=102.00)
+    { timestamp: bar60Ts, open: 102.8, high: 104.2, low: 102.4, close: 103.0 }
+  ])
+
+  const mockCharts = {
+    // AMD: NO 1W/1M setup yet (curHigh 103.2 < 104.00)
+    "AMD_1D": { symbol: "AMD", candles: makeUnbrokenWeekly1D(103.2, 102.8) },
+    "AMD_30": { symbol: "AMD", candles: makeReady30() },
+    "AMD_60": { symbol: "AMD", candles: makeReady60Short() },
+    // NVDA: starts NOT triggered on 1W (curHigh 103.2 < 104.00), will break 1W on live tick
+    "NVDA_1D": { symbol: "NVDA", candles: makeUnbrokenWeekly1D(103.2, 102.8) },
+    "NVDA_30": { symbol: "NVDA", candles: makeReady30() },
+    "NVDA_60": { symbol: "NVDA", candles: makeReady60Short() }
+  }
+
+  let fetchCount = 0
+  const triggered = []
+  const snapshots = []
+  const metas = []
+
+  const scanner = new Stream.SetupAlertScanner({
+    fetchChart: async (sym, tf) => {
+      fetchCount++
+      return mockCharts[`${sym}_${tf}`] || null
+    },
+    resolveHoldings: async () => ({ holdings: [] }),
+    now: () => openRth,
+    snapshotThrottleMs: 10,
+    onTrigger: (ev) => triggered.push(ev),
+    onSnapshot: (snap) => snapshots.push(snap),
+    onMeta: (m) => metas.push(m)
+  })
+
+  try {
+    scanner.setViewActive(true)
+    await scanner.setConfig(["AMD", "NVDA"], {}, true, ["1W", "1M"])
+    await new Promise(r => setTimeout(r, 40))
+
+    assert.equal(triggered.length, 0)
+    assert.equal(scanner.collectAllItems().length, 0)
+    assert.deepEqual(scanner.buildStatus().gateTimeframes, ["1W", "1M"])
+    assert.equal(scanner.buildStatus().qualifiedSymbols, 0)
+
+    // 1. AMD breaks 30m UP (103.65 > 103.50) while NOT qualified on 1W/1M -> suppressed from push & watchlist!
+    scanner.onTick({ symbol: "AMD", price: 103.65, regularPrice: 103.65, session: "regular", timestamp: bar30Ts + 300 })
+    assert.equal(triggered.length, 0)
+    assert.equal(scanner.collectAllItems().length, 0)
+
+    // 2. Simultaneous break on NVDA: single tick at 104.25 breaks BOTH 1W (104.00) AND 30m (103.50) -> BOTH fire!
+    scanner.onTick({ symbol: "NVDA", price: 104.25, regularPrice: 104.25, session: "regular", timestamp: bar30Ts + 310 })
+    const nvdaTfs = triggered.map(e => `${e.symbol}:${e.timeframe}`).sort()
+    assert.ok(nvdaTfs.includes("NVDA:1W"), "1W setup fires immediately on break")
+    assert.ok(nvdaTfs.includes("NVDA:30"), "30m setup crossing on same tick as 1W also fires")
+    assert.deepEqual(triggered.find(e => e.timeframe === "30").qualifiedBy, ["1W"])
+    assert.equal(scanner.buildStatus().qualifiedSymbols, 1)
+    assert.ok(scanner.collectAllItems().every(i => i.symbol === "NVDA"))
+
+    // 3. Once NVDA is in the 1W-triggered subset, a counter-direction 60m SHORT break (101.90 < 102.00) ALSO passes!
+    scanner.onTick({ symbol: "NVDA", price: 101.90, regularPrice: 101.90, session: "regular", timestamp: bar30Ts + 320 })
+    const hit60Short = triggered.find(e => e.symbol === "NVDA" && e.timeframe === "60" && e.direction === "SHORT")
+    assert.ok(hit60Short, "both LONG and SHORT setups pass once ticker qualifies on gate TF")
+    assert.deepEqual(hit60Short.qualifiedBy, ["1W"])
+
+    // 4. Clearing gate back to ANY ([]) updates snapshots immediately with ZERO refetches and ZERO stale alert bursts for AMD!
+    const fetchesBeforeClear = fetchCount
+    const triggersBeforeClear = triggered.length
+    scanner.setGateTimeframes([])
+    assert.equal(fetchCount, fetchesBeforeClear)
+    assert.equal(triggered.length, triggersBeforeClear, "clearing gate must never burst previously suppressed setups")
+    assert.ok(scanner.collectAllItems().some(i => i.symbol === "AMD" && i.timeframe === "30"))
+    assert.ok(snapshots[snapshots.length - 1].items.some(i => i.symbol === "AMD"))
+
+    // 5. Fail-closed guard: while 1D/1W has not seeded yet on a ticker, a 30m live break does not leak past ["1W"] gate
+    const partialTriggers = []
+    const partialScanner = new Stream.SetupAlertScanner({
+      fetchChart: async (sym, tf) => (tf === "30" ? { symbol: sym, candles: makeReady30() } : null),
+      resolveHoldings: async () => ({ holdings: [] }),
+      now: () => openRth,
+      onTrigger: (ev) => partialTriggers.push(ev)
+    })
+    try {
+      await partialScanner.setConfig(["AMD"], {}, true, ["1W"])
+      await new Promise(r => setTimeout(r, 30))
+      partialScanner.onTick({ symbol: "AMD", price: 103.75, regularPrice: 103.75, session: "regular", timestamp: bar30Ts + 400 })
+      assert.equal(partialTriggers.length, 0)
+      assert.equal(partialScanner.collectAllItems().length, 0)
+    } finally {
+      partialScanner.dispose()
+    }
+  } finally {
+    scanner.dispose()
+  }
+})

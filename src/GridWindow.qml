@@ -57,9 +57,6 @@ FloatingWindow {
     signal chartDataReceived(string key, var candles, var quoteEnriched)
     // Delivery (notification, sound, Discord, log) is owned by Panel.dispatchAlert so mute applies everywhere.
     signal alertDispatchRequested(var alert)
-    signal alertsMuteToggleRequested
-    property bool alertsMuted: false
-    property string alertsMuteStatus: ""
     property bool hubReady: false
     property bool hubStreamingActive: false
     signal hubChartFetchRequested(string sym, string tf, bool force)
@@ -890,7 +887,7 @@ FloatingWindow {
                         tooltip: "Sync time scroll across all cells"
                     }
                 ]
-                readonly property real fullRightWidth: inlineSyncRow.implicitWidth + bfChip.implicitWidth + setupLinesChip.implicitWidth + alertsMuteToggle.implicitWidth + (root.fetching ? Style.space(22) : 0) + Style.space(24)
+                readonly property real fullRightWidth: inlineSyncRow.implicitWidth + bfChip.implicitWidth + setupLinesChip.implicitWidth + (root.fetching ? Style.space(22) : 0) + Style.space(24)
                 readonly property bool compactSync: (leftControlsRow.implicitWidth + fullRightWidth + Style.space(40)) > width
 
                 function toggleSyncOption(key) {
@@ -1226,17 +1223,6 @@ FloatingWindow {
                                 root.refreshAllCharts(false);
                             root.saveGridState();
                         }
-                    }
-
-                    SyncChip {
-                        id: alertsMuteToggle
-                        text: "ALERTS " + (root.alertsMuted ? "[MUTED]" : "[ON]")
-                        checked: true
-                        foreground: root.alertsMuted ? Color.urgent : root.foreground
-                        accentColor: root.alertsMuted ? Color.urgent : Color.accent
-                        tooltipText: root.alertsMuted ? (root.alertsMuteStatus + " · click to unmute") : "Click to mute alerts until the next market open"
-                        anchors.verticalCenter: parent.verticalCenter
-                        onClicked: root.alertsMuteToggleRequested()
                     }
                 }
             }

@@ -459,9 +459,10 @@ test("strat checklist UI, badge, popup, and checklist-driven strat alerts are co
   assert.doesNotMatch(grid, /notify-send/)
 })
 
-test("all alert delivery goes through Panel.dispatchAlert and honours mute", () => {
+test("all alert delivery goes through Panel.dispatchAlert and honours mute (mute UI strictly in AlertsWindow)", () => {
   const panel = fs.readFileSync(source("Panel.qml"), "utf8")
   const grid = fs.readFileSync(source("GridWindow.qml"), "utf8")
+  const sector = fs.readFileSync(source("SectorAnalysisWindow.qml"), "utf8")
   const bar = fs.readFileSync(source("BarWidget.qml"), "utf8")
   const alertsWin = fs.readFileSync(source("AlertsWindow.qml"), "utf8")
 
@@ -477,8 +478,13 @@ test("all alert delivery goes through Panel.dispatchAlert and honours mute", () 
   assert.match(panel, /alertsMutedUntil: root\.alertsMutedUntil/)
   assert.match(panel, /function toggleAlertsMute\(\): void/)
   assert.doesNotMatch(grid, /pw-play|webhooks\//)
-  assert.match(grid, /ALERTS /)
-  assert.match(bar, /Qt\.RightButton[\s\S]*toggleAlertsMute/)
+  // Alerts on/off & mute toggle controls exist ONLY in AlertsWindow (removed from GridWindow, SectorAnalysisWindow, and BarWidget)
+  assert.doesNotMatch(grid, /alertsMuteToggle|alertsMuteToggleRequested|alertsMuted|alertsMuteStatus|ALERTS \[/)
+  assert.doesNotMatch(sector, /alertsMuteToggleRequested|alertsMuted|alertsMuteStatus/)
+  assert.doesNotMatch(bar, /Qt\.RightButton[\s\S]*toggleAlertsMute|right-click to unmute/)
+  assert.doesNotMatch(panel, /gridWindowComponent[\s\S]*?onAlertsMuteToggleRequested/)
+  assert.doesNotMatch(panel, /sectorAnalysisComponent[\s\S]*?onAlertsMuteToggleRequested/)
+  assert.match(alertsWin, /id:\s*muteMenuBtn[\s\S]*?text:\s*"ALERTS "/)
   assert.match(alertsWin, /root\.alertsMuteModeRequested\(modelData\.mode\)/)
 })
 
@@ -580,24 +586,36 @@ test("setup line alert engine wires off-thread scanner, Thinkorswim-style popout
   // Manual price crossover alerts completely removed
   assert.doesNotMatch(panel, /FinanceAlertsView|createPriceAlert|evaluateWatchlistPriceAlerts|symbolLevels|armedAlertSymbols/)
 
-  // Off-thread scanner wired in market-stream.js with uiSymbols vs alertSymbols isolation
+  // Off-thread scanner wired in market-stream.js with uiSymbols vs alertSymbols isolation and HTF setup gate
   assert.match(stream, /class SetupAlertScanner/)
+  assert.match(stream, /ALERT_HYDRATION_TFS = \["1D",\s*"60",\s*"30"\]/)
   assert.match(stream, /op === "setAlertConfig"/)
+  assert.match(stream, /op === "setAlertGate"/)
   assert.match(stream, /op === "setAlertViewActive"/)
+  assert.match(stream, /Model\.getQualifyingGateTimeframes\(/)
   assert.match(stream, /if \(alertSymbols\.has\(tick\.symbol\)\)/)
   assert.match(stream, /if \(uiSymbols\.has\(tick\.symbol\)\)/)
 
-  // Panel hub wires alertSources, burst coalescer, and popout AlertsWindow with auto-open
+  // Panel hub wires alertSources, alertGateTimeframes, burst coalescer, and popout AlertsWindow with auto-open
   assert.match(panel, /property var alertSources:\s*Model\.defaultAlertSources\(\)/)
+  assert.match(panel, /property var alertGateTimeframes:\s*\[\]/)
+  assert.match(panel, /function setAlertGateTimeframes\(nextTfs\)/)
+  assert.match(panel, /op:\s*"setAlertGate"/)
   assert.match(panel, /id:\s*alertBurstTimer[\s\S]*?interval:\s*1500/)
   assert.match(panel, /msg\.type === "setupAlertTriggered"/)
   assert.match(panel, /msg\.type === "alertSnapshot"/)
   assert.match(panel, /function openAlertsWindow\(isAutoOpen\)/)
   assert.match(panel, /AlertsWindow\s*\{/)
 
-  // Thinkorswim-inspired popout AlertsWindow layout & columns
+  // Thinkorswim-inspired popout AlertsWindow layout, gate bar, & columns
   assert.match(alertsWin, /FloatingWindow\s*\{/)
   assert.match(alertsWin, /title:\s*"Omafinance Alerts"/)
+  assert.match(alertsWin, /property var alertGateTimeframes:\s*\[\]/)
+  assert.match(alertsWin, /signal alertGateTimeframesChangedRequested\(var nextTfs\)/)
+  assert.match(alertsWin, /id:\s*gateBar/)
+  assert.match(alertsWin, /text:\s*"GATE:"/)
+  assert.match(alertsWin, /text:\s*"ANY"/)
+  assert.match(alertsWin, /height:\s*parent\.height - topBar\.height - sourcesBar\.height - gateBar\.height - filterBar\.height - sortBar\.height - columnHeader\.height - 2/)
   assert.match(alertsWin, /Model\.buildGroupedAlertWatchlist\(/)
   assert.match(alertsWin, /text:\s*"TICKER"/)
   assert.match(alertsWin, /text:\s*"IN-FORCE"/)

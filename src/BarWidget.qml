@@ -92,7 +92,7 @@ BarWidget {
         fixedWidth: root.vertical ? -1 : statusLabel.implicitWidth + button.scaledHorizontalMargin * 2
         foreground: root.pillColor
         useActiveColor: false
-        tooltipText: root.alertsMuted && panelLoader.item ? (panelLoader.item.alertsMuteStatus + " · right-click to unmute") : ""
+        tooltipText: root.alertsMuted && panelLoader.item ? panelLoader.item.alertsMuteStatus : ""
         horizontalMargin: 8.75
         verticalPadding: Style.space(9)
         Accessible.role: Accessible.Button
@@ -123,8 +123,6 @@ BarWidget {
                 return;
             if (b === Qt.MiddleButton)
                 root.refresh();
-            else if (b === Qt.RightButton && panelLoader.item && panelLoader.item.toggleAlertsMute)
-                panelLoader.item.toggleAlertsMute();
             else
                 root.togglePanel();
         }

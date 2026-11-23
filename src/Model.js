@@ -325,6 +325,93 @@ function normalizeAlertSources(raw) {
   return out
 }
 
+function normalizeAlertGateTimeframes(raw) {
+  if (raw === undefined || raw === null) return []
+  var list = null
+  if (typeof raw === "string") {
+    list = raw.split(",")
+  } else if (isArrayLike(raw)) {
+    list = toArray(raw)
+  } else {
+    return []
+  }
+  var present = {}
+  for (var i = 0; i < list.length; i++) {
+    var tok = String(list[i] || "").trim().toUpperCase()
+    if (!tok) continue
+    if (tok === "30M") tok = "30"
+    else if (tok === "60M" || tok === "1H") tok = "60"
+    else if (tok === "D") tok = "1D"
+    else if (tok === "W") tok = "1W"
+    else if (tok === "M") tok = "1M"
+    if (ALERT_WATCH_TIMEFRAMES.indexOf(tok) !== -1) {
+      present[tok] = true
+    }
+  }
+  var out = []
+  for (var j = 0; j < ALERT_WATCH_TIMEFRAMES.length; j++) {
+    var tf = ALERT_WATCH_TIMEFRAMES[j]
+    if (present[tf]) out.push(tf)
+  }
+  return out
+}
+
+function getQualifyingGateTimeframes(symbolItems, gateTimeframes) {
+  var gate = normalizeAlertGateTimeframes(gateTimeframes)
+  if (gate.length === 0) return []
+  var list = isArrayLike(symbolItems) ? toArray(symbolItems) : []
+  var found = {}
+  for (var i = 0; i < list.length; i++) {
+    var it = list[i]
+    if (!it || !it.timeframe) continue
+    var tf = String(it.timeframe)
+    if (gate.indexOf(tf) !== -1) found[tf] = true
+  }
+  var out = []
+  for (var j = 0; j < gate.length; j++) {
+    if (found[gate[j]]) out.push(gate[j])
+  }
+  return out
+}
+
+function itemMatchesAlertGate(item, symbolItems, gateTimeframes) {
+  if (!item || !item.symbol || !item.timeframe) return false
+  var gate = normalizeAlertGateTimeframes(gateTimeframes)
+  if (gate.length === 0) return true
+  return getQualifyingGateTimeframes(symbolItems, gate).length > 0
+}
+
+function filterAlertItemsByGate(items, gateTimeframes) {
+  var list = isArrayLike(items) ? toArray(items) : []
+  var gate = normalizeAlertGateTimeframes(gateTimeframes)
+  if (gate.length === 0) return list.slice()
+  var bySym = {}
+  for (var i = 0; i < list.length; i++) {
+    var it = list[i]
+    if (!it || !it.symbol || !it.timeframe) continue
+    var sym = normalizeSymbol(it.symbol)
+    if (!sym) continue
+    if (!bySym[sym]) bySym[sym] = []
+    bySym[sym].push(it)
+  }
+  var qualBySym = {}
+  var syms = Object.keys(bySym)
+  for (var si = 0; si < syms.length; si++) {
+    var s = syms[si]
+    var q = getQualifyingGateTimeframes(bySym[s], gate)
+    if (q.length > 0) qualBySym[s] = q
+  }
+  var out = []
+  for (var j = 0; j < list.length; j++) {
+    var item = list[j]
+    if (!item || !item.symbol || !item.timeframe) continue
+    var k = normalizeSymbol(item.symbol)
+    if (!k || !qualBySym[k]) continue
+    out.push(Object.assign({}, item, { qualifiedBy: qualBySym[k].slice() }))
+  }
+  return out
+}
+
 function normalizeFiredSetupKeys(raw, nowMs) {
   var out = {}
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out
@@ -445,6 +532,9 @@ function parseState(raw) {
     if (data.alertSources !== undefined) {
       res.alertSources = normalizeAlertSources(data.alertSources)
     }
+    if (data.alertGateTimeframes !== undefined) {
+      res.alertGateTimeframes = normalizeAlertGateTimeframes(data.alertGateTimeframes)
+    }
     if (data.alertsAutoOpen !== undefined) {
       res.alertsAutoOpen = data.alertsAutoOpen !== false
     }
@@ -504,6 +594,10 @@ function serializeState(watchlist, pinned, detailRange, gridMode, gridSync, grid
   if (extra) {
     if (extra.alertSources !== undefined) {
       obj.alertSources = normalizeAlertSources(extra.alertSources)
+    }
+    if (extra.alertGateTimeframes !== undefined) {
+      var normGate = normalizeAlertGateTimeframes(extra.alertGateTimeframes)
+      if (normGate.length > 0) obj.alertGateTimeframes = normGate
     }
     if (extra.alertsAutoOpen !== undefined) {
       obj.alertsAutoOpen = extra.alertsAutoOpen !== false
@@ -6775,6 +6869,10 @@ if (typeof module !== "undefined") {
     ALERT_WATCH_TIMEFRAMES: ALERT_WATCH_TIMEFRAMES,
     defaultAlertSources: defaultAlertSources,
     normalizeAlertSources: normalizeAlertSources,
+    normalizeAlertGateTimeframes: normalizeAlertGateTimeframes,
+    getQualifyingGateTimeframes: getQualifyingGateTimeframes,
+    itemMatchesAlertGate: itemMatchesAlertGate,
+    filterAlertItemsByGate: filterAlertItemsByGate,
     normalizeFiredSetupKeys: normalizeFiredSetupKeys,
     extractFtfcAnchors: extractFtfcAnchors,
     computeFtfcFromAnchors: computeFtfcFromAnchors,
