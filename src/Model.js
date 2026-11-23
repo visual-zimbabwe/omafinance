@@ -74,8 +74,8 @@ function defaultRightOffsetBars(vCount) {
 function minVisibleChartBars(total, vCount) {
   var t = isFinite(total) ? Math.max(0, Math.floor(total)) : 0
   if (t <= 1) return t
-  var c = isFinite(vCount) ? Math.max(1, Math.floor(vCount)) : t
-  return Math.min(t, Math.max(2, Math.round(c * 0.15)))
+  var c = (vCount !== null && vCount !== undefined && isFinite(vCount) && vCount >= 1) ? Math.floor(vCount) : t
+  return Math.min(t, c, Math.max(2, Math.round(c * 0.15)))
 }
 
 function maxChartViewStart(total, vCount) {
@@ -84,35 +84,41 @@ function maxChartViewStart(total, vCount) {
   return Math.max(0, t - minVisibleChartBars(t, vCount))
 }
 
-// Resolve horizontal candlestick viewport with TradingView-style right-side whitespace.
-// rightOffsetBars < 0 uses the default (~9 bar) right margin scaled safely for short series.
+// Resolve horizontal candlestick viewport with additive TradingView-style right-side whitespace.
+// vCount is the requested visible candle count (at default right offset); slotCount = vCount + defaultRightOffset
+// is the fixed horizontal slot width for this zoom level so right spacing never subtracts from requested bars.
+// rightOffsetBars < 0 uses defaultRightOffsetBars(vCount).
 function resolveHorizontalViewport(total, viewCount, defaultCount, viewStart, followLatest, rightOffsetBars) {
   var t = isFinite(total) ? Math.max(0, Math.floor(total)) : 0
   if (t === 0) {
-    return { vStart: 0, vCount: 0, flushStart: 0, maxStart: 0, minVisibleBars: 0, rightOffsetBars: 0 }
+    return { vStart: 0, vCount: 0, slotCount: 0, flushStart: 0, maxStart: 0, minVisibleBars: 0, rightOffsetBars: 0 }
   }
   var defC = (isFinite(defaultCount) && defaultCount > 0) ? Math.min(t, Math.floor(defaultCount)) : t
   var vCount = (isFinite(viewCount) && viewCount > 0 && viewCount < t) ? Math.max(MIN_BAR_COUNT, Math.floor(viewCount)) : defC
-  var flushStart = Math.max(0, t - vCount)
+  var baseRight = defaultRightOffsetBars(vCount)
+  var slotCount = vCount + baseRight
+  var flushStart = Math.max(0, t - slotCount)
   var minVis = minVisibleChartBars(t, vCount)
   var maxStart = Math.max(0, t - minVis)
-  var maxRight = Math.max(0, maxStart - flushStart)
+  var minRight = Math.max(0, slotCount - t)
+  var maxRight = Math.max(minRight, maxStart + slotCount - t)
   var desiredRight = (isFinite(rightOffsetBars) && rightOffsetBars >= 0)
     ? Math.floor(rightOffsetBars)
-    : defaultRightOffsetBars(vCount)
-  var clampedRight = Math.max(0, Math.min(maxRight, desiredRight))
+    : baseRight
+  var clampedRight = Math.max(minRight, Math.min(maxRight, desiredRight))
 
   var vStart
   if (followLatest) {
-    vStart = Math.min(maxStart, flushStart + clampedRight)
+    vStart = Math.max(0, Math.min(maxStart, t - slotCount + clampedRight))
   } else {
-    var rawStart = isFinite(viewStart) ? Math.floor(viewStart) : flushStart
+    var rawStart = isFinite(viewStart) ? Math.floor(viewStart) : Math.max(0, t - vCount)
     vStart = Math.max(0, Math.min(maxStart, rawStart))
   }
-  var effectiveRight = Math.max(0, vStart - flushStart)
+  var effectiveRight = Math.max(0, vStart + slotCount - t)
   return {
     vStart: vStart,
     vCount: vCount,
+    slotCount: slotCount,
     flushStart: flushStart,
     maxStart: maxStart,
     minVisibleBars: minVis,

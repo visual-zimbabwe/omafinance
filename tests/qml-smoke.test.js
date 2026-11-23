@@ -972,10 +972,10 @@ test("GridWindow automatic Strat setup lines toggle, solid rendering, and strict
   assert.match(chart, /Model\.setupLineColor\(sLine\.timeframe, sLine\.kind, slIsLight\)/)
   assert.match(chart, /ctx\.setLineDash\(\[\]\)/)
 
-  // CandlestickChart supports TradingView-style right-side whitespace & unrestricted left/right horizontal panning
+  // CandlestickChart supports TradingView-style additive right-side whitespace & unrestricted left/right horizontal panning
   assert.match(chart, /property int rightOffsetBars:\s*-1/)
   assert.match(chart, /Model\.resolveHorizontalViewport\(/)
-  assert.match(chart, /var slotW = innerW \/ Math\.max\(1, vCount\);/)
+  assert.match(chart, /var slotW = innerW \/ Math\.max\(1, slotCount\);/)
   assert.match(chart, /if \(g\.maxStart > 0\)/)
   assert.match(chart, /if \(idx >= g\.candles\.length\)/)
 })
